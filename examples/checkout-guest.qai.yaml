@@ -1,0 +1,57 @@
+# Parcours critique : commande sans compte.
+# Ce scénario est destiné à tourner tel quel sur le web et sur l'app mobile.
+
+id: checkout-guest
+title: Un visiteur non connecté peut commander un article
+tags: [critical-path, revenue]
+
+given:
+  fixtures: [catalogue-standard, moyens-paiement-test]
+  state: visiteur-anonyme
+
+steps:
+  - id: s1
+    do: ouvrir la page d'accueil de la boutique
+
+  - id: s2
+    do: rechercher "chaise de bureau"
+    expect: la liste de résultats contient au moins un article
+
+  - id: s3
+    do: ouvrir le premier article de la liste
+    capture:
+      article: le nom de l'article
+      prix: le prix affiché
+
+  - id: s4
+    do: ajouter l'article au panier
+    expect: l'indicateur du panier affiche 1 article
+
+  # L'intention est commune, le geste diffère : en-tête sur le web,
+  # barre d'onglets sur mobile.
+  - id: s5
+    do: ouvrir le panier
+    per_platform:
+      web: cliquer sur l'icône panier dans l'en-tête
+      mobile: ouvrir l'onglet Panier de la barre de navigation
+    expect:
+      - le panier contient "{{article}}"
+      - le total est égal à {{prix}}
+
+  - id: s6
+    do: lancer la commande en tant qu'invité
+
+  - id: s7
+    do: renseigner l'adresse de livraison avec le jeu de données "client-fr"
+
+  - id: s8
+    do: payer avec la carte de test
+    expect:
+      - la commande est confirmée
+      - un numéro de commande est affiché
+    capture:
+      commande: le numéro de commande
+
+  - id: s9
+    do: vérifier que la commande apparaît dans le suivi
+    expect: le suivi affiche la commande "{{commande}}" au statut "en préparation"

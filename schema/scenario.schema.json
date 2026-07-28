@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qai.dev/schema/scenario.schema.json",
+  "title": "Scénario QAI",
+  "description": "Décrit une intention utilisateur, indépendamment de la plateforme. Ne contient jamais de sélecteur, d'identifiant technique ni de coordonnée : ceux-ci vivent dans le fichier de résolution.",
+  "type": "object",
+  "required": ["id", "title", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Identifiant stable du scénario. Ne doit jamais changer une fois attribué."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Ce que le scénario prouve, formulé du point de vue de l'utilisateur."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Sert au filtrage en CI (ex. critical-path pour le lot bloquant de pull request)."
+    },
+    "platforms": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/platform" },
+      "description": "Plateformes ciblées. Absent = toutes celles configurées pour le projet."
+    },
+    "given": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "État de départ requis. Déclaré, jamais construit à coups de clics.",
+      "properties": {
+        "fixtures": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Jeux de données nommés, définis hors du scénario et résolus par environnement."
+        },
+        "state": {
+          "type": "string",
+          "description": "État applicatif nommé (ex. visiteur-anonyme, compte-premium)."
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "string",
+      "enum": ["web", "mobile", "ios", "android"]
+    },
+    "step": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["do"] },
+        { "required": ["per_platform"] }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$",
+          "description": "Ancre stable à laquelle s'attache la résolution mise en cache. Attribué à la création, jamais modifié — y compris si le texte de l'étape est reformulé."
+        },
+        "do": {
+          "type": "string",
+          "minLength": 1,
+          "description": "L'intention, en langage naturel, dans la langue de l'équipe. Aucun sélecteur."
+        },
+        "per_platform": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "description": "Reformulation de l'intention pour une plateforme donnée, quand le geste diffère réellement. Exception à garder rare et visible. NE PAS renommer en 'on' : YAML 1.1 interprète cette clé comme le booléen true.",
+          "properties": {
+            "web": { "type": "string" },
+            "mobile": { "type": "string" },
+            "ios": { "type": "string" },
+            "android": { "type": "string" }
+          }
+        },
+        "only": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/platform" },
+          "minItems": 1,
+          "description": "Restreint l'étape à certaines plateformes (ex. un survol n'existe pas sur mobile)."
+        },
+        "expect": {
+          "description": "Assertion(s) sémantique(s). L'auto-réparation n'a jamais le droit de les modifier.",
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            }
+          ]
+        },
+        "capture": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "description": "Extrait des valeurs de l'écran, réutilisables plus loin via {{nom}}. Évite de figer des données de test dans les assertions.",
+          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+        }
+      }
+    }
+  }
+}

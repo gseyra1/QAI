@@ -1,0 +1,79 @@
+{
+  "$comment": "Fichier généré par QAI. Ne pas éditer à la main — il est régénérable. Il est versionné pour que la CI rejoue de façon déterministe et pour qu'une auto-réparation apparaisse en diff de revue.",
+  "scenario": "checkout-guest",
+  "platform": "web",
+  "recordedAt": "2026-07-28T20:11:04Z",
+  "appVersion": "a1b2c3d",
+  "runtime": { "driver": "playwright", "viewport": "1280x800" },
+  "steps": {
+    "s1": {
+      "action": "navigate",
+      "value": "/",
+      "healedAt": null
+    },
+    "s2": {
+      "action": "fill",
+      "target": {
+        "primary": { "role": "searchbox", "name": "Rechercher un produit" },
+        "fallback": { "testId": "search-input" }
+      },
+      "value": "chaise de bureau",
+      "then": { "action": "press", "key": "Enter" },
+      "assertions": {
+        "la liste de résultats contient au moins un article": {
+          "check": "countAtLeast",
+          "target": { "role": "listitem", "within": { "role": "list", "name": "Résultats" } },
+          "value": 1
+        }
+      },
+      "healedAt": null
+    },
+    "s3": {
+      "action": "click",
+      "target": {
+        "primary": { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } },
+        "fallback": { "testId": "product-card" }
+      },
+      "captures": {
+        "article": { "from": { "role": "heading", "level": 1 }, "extract": "text" },
+        "prix": { "from": { "testId": "product-price" }, "extract": "currency" }
+      },
+      "healedAt": null
+    },
+    "s4": {
+      "action": "click",
+      "target": {
+        "primary": { "role": "button", "name": "Ajouter au panier" },
+        "fallback": { "testId": "add-to-cart" }
+      },
+      "assertions": {
+        "l'indicateur du panier affiche 1 article": {
+          "check": "textEquals",
+          "target": { "testId": "cart-count" },
+          "value": "1"
+        }
+      },
+      "healedAt": "2026-07-12T09:33:51Z",
+      "healNote": "Le libellé du bouton est passé de « Ajouter » à « Ajouter au panier ». Cible relocalisée, assertion inchangée."
+    },
+    "s5": {
+      "action": "click",
+      "target": {
+        "primary": { "role": "link", "name": "Panier", "within": { "role": "banner" } }
+      },
+      "assertions": {
+        "le panier contient \"{{article}}\"": {
+          "check": "textContains",
+          "target": { "role": "list", "name": "Articles du panier" },
+          "value": "{{article}}"
+        },
+        "le total est égal à {{prix}}": {
+          "check": "currencyEquals",
+          "target": { "testId": "cart-total" },
+          "value": "{{prix}}"
+        }
+      },
+      "healedAt": null
+    }
+  }
+}
