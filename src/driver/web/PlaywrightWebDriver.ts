@@ -109,32 +109,51 @@ export class PlaywrightWebDriver implements Driver {
     return snapshot;
   }
 
-  async resolve(target: ResolvedTarget): Promise<ResolveOutcome> {
+  /**
+   * La cascade primary → repli, définie une seule fois.
+   *
+   * `resolve()` et `act()` doivent appliquer exactement les mêmes règles :
+   * deux implémentations parallèles finiraient par diverger, et le moteur
+   * agirait alors sur un élément différent de celui qu'il a validé.
+   */
+  async #pick(
+    target: ResolvedTarget,
+  ): Promise<{ locator: PWLocator | null; usedFallback: boolean; matches: number }> {
     const page = this.#activePage;
-    await this.#ensureCollector();
-
     const base = buildLocator(page, target.primary, false);
     const matches = await base.count();
 
     if (matches > 1 && target.primary.nth === undefined) {
-      return { found: false, reason: 'ambiguous', matches };
+      return { locator: null, usedFallback: false, matches };
     }
 
     if (matches >= 1) {
-      const picked = target.primary.nth !== undefined ? base.nth(target.primary.nth) : base.first();
-      const node = await this.#describe(picked);
-      if (!node.state.visible) return { found: false, reason: 'not-visible', matches };
-      return { found: true, node, usedFallback: false };
+      const locator =
+        target.primary.nth !== undefined ? base.nth(target.primary.nth) : base.first();
+      return { locator, usedFallback: false, matches };
     }
 
     const fallback = target.fallback ? buildFallback(page, target.fallback) : null;
     if (fallback !== null && (await fallback.count()) >= 1) {
-      const node = await this.#describe(fallback.first());
-      if (!node.state.visible) return { found: false, reason: 'not-visible', matches: 0 };
-      return { found: true, node, usedFallback: true };
+      return { locator: fallback.first(), usedFallback: true, matches: 0 };
     }
 
-    return { found: false, reason: 'no-match', matches: 0 };
+    return { locator: null, usedFallback: false, matches: 0 };
+  }
+
+  async resolve(target: ResolvedTarget): Promise<ResolveOutcome> {
+    await this.#ensureCollector();
+    const { locator, usedFallback, matches } = await this.#pick(target);
+
+    if (locator === null) {
+      return matches > 1
+        ? { found: false, reason: 'ambiguous', matches }
+        : { found: false, reason: 'no-match', matches: 0 };
+    }
+
+    const node = await this.#describe(locator);
+    if (!node.state.visible) return { found: false, reason: 'not-visible', matches };
+    return { found: true, node, usedFallback };
   }
 
   async #describe(locator: PWLocator): Promise<UINode> {
@@ -146,14 +165,12 @@ export class PlaywrightWebDriver implements Driver {
   }
 
   async #locatorFor(target: ResolvedTarget): Promise<PWLocator> {
-    const page = this.#activePage;
-    const base = buildLocator(page, target.primary, false);
-    if ((await base.count()) >= 1) {
-      return target.primary.nth !== undefined ? base.nth(target.primary.nth) : base.first();
-    }
-    const fallback = target.fallback ? buildFallback(page, target.fallback) : null;
-    if (fallback !== null && (await fallback.count()) >= 1) return fallback.first();
-    throw new DriverError('cible introuvable, y compris par le repli', 'unresolved');
+    const { locator, matches } = await this.#pick(target);
+    if (locator !== null) return locator;
+    throw new DriverError(
+      matches > 1 ? `cible ambiguë : ${matches} éléments` : 'cible introuvable, y compris par le repli',
+      'unresolved',
+    );
   }
 
   async act(action: Action): Promise<void> {

@@ -11,6 +11,8 @@ export class ResolutionError extends Error {
   }
 }
 
+const PLATFORMS: ReadonlySet<string> = new Set(['web', 'ios', 'android']);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -32,6 +34,12 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
 
   if (typeof scenario !== 'string') throw new ResolutionError('champ scenario manquant', path);
   if (typeof platform !== 'string') throw new ResolutionError('champ platform manquant', path);
+  if (!PLATFORMS.has(platform)) {
+    throw new ResolutionError(
+      `plateforme inconnue « ${platform} » (attendu : ${[...PLATFORMS].join(', ')})`,
+      path,
+    );
+  }
   if (typeof recordedAt !== 'string') throw new ResolutionError('champ recordedAt manquant', path);
   if (!isRecord(steps)) throw new ResolutionError('champ steps manquant', path);
 

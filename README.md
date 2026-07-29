@@ -5,6 +5,26 @@ que leur code — de plus en plus écrit par IA — vient de casser dans l'inter
 à partir de scénarios décrits en intentions plutôt qu'en sélecteurs, et donc
 rejouables tels quels sur le web puis sur le mobile.
 
+## Comment on s'en sert
+
+```mermaid
+flowchart TD
+    SC["Scénario .qai.yaml<br/>l'intention, écrite une fois, sans sélecteur"] --> RUN
+    RE["Résolution .json<br/>le cache, une par plateforme"] --> RUN
+    PR(["Le dev ouvre une pull request"]) --> RUN
+    RUN["QAI rejoue les parcours critiques<br/>aucun appel de modèle"] --> Q{"Résultat"}
+    Q -->|vert| A["Rien à faire"]
+    Q -->|orange| B["Le test avait vieilli<br/>relire le diff de résolution"]
+    Q -->|rouge| C["L'application a régressé<br/>corriger le code"]
+    A --> M(["Fusionner"])
+    B --> M
+    M --> P["Tests de fumée après déploiement,<br/>puis surveillance continue"]
+    SC -.->|"phase 2, sans réécriture"| MO["Les mêmes parcours sur iOS et Android"]
+```
+
+Le développeur n'écrit jamais de sélecteur, ne maintient pas un test cassé par un
+renommage, et ne tient pas une seconde suite pour le mobile.
+
 ## Pourquoi ce positionnement
 
 Le marché du test agentique est encombré (~1,5 Md$ investis, 40+ acteurs) et un
@@ -47,6 +67,8 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | [docs/driver.md](docs/driver.md) | Le contrat de plateforme et la correspondance des rôles web/iOS/Android |
 | [docs/getting-started.md](docs/getting-started.md) | **Prise en main en cinq minutes, sur une boutique de démonstration** |
 | [docs/engine.md](docs/engine.md) | Le moteur de rejeu, la frontière de sécurité, le rapport à trois états |
+| [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
+| [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
 | [src/driver/web/](src/driver/web/) | Implémentation Playwright et sa suite de conformité |
 | [src/engine/](src/engine/) | Rejeu, appariement, assertions, contrôle de cohérence |
@@ -63,6 +85,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | Moteur de rejeu — étage 1 | fait |
 | Assertions, captures, cohérence | fait |
 | CLI (`run`, `check`) et rapport | fait |
+| Contrat de modèle enfichable et plafond de dépense | fait |
 | Étage 3, génération de résolutions | à faire |
 | Étage 2, réparation | interface définie, implémentation à écrire |
 | Intégration CI et commentaire de PR | à faire |
