@@ -29,6 +29,9 @@ function formatStep(step: StepReport): string[] {
   for (const note of step.healNotes ?? []) {
     lines.push(`        réparé : ${note}`);
   }
+  for (const warning of step.warnings ?? []) {
+    lines.push(`        ⚠ ${warning}`);
+  }
   return lines;
 }
 

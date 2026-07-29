@@ -68,6 +68,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | [docs/getting-started.md](docs/getting-started.md) | **Prise en main en cinq minutes, sur une boutique de démonstration** |
 | [docs/engine.md](docs/engine.md) | Le moteur de rejeu, la frontière de sécurité, le rapport à trois états |
 | [docs/generation.md](docs/generation.md) | `qai resolve` : comment une résolution est produite et vérifiée |
+| [docs/reparation.md](docs/reparation.md) | `qai run --heal` : la réparation, ses deux barrières, et son diff |
 | [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
 | [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
@@ -88,7 +89,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | CLI (`run`, `check`) et rapport | fait |
 | Contrat de modèle enfichable et plafond de dépense | fait |
 | Étage 3, génération de résolutions (`qai resolve`) | fait |
-| Étage 2, réparation | interface définie, implémentation à écrire |
+| Étage 2, réparation (`qai run --heal`) | fait |
 | Intégration CI et commentaire de PR | à faire |
 | Drivers mobiles | à faire |
 

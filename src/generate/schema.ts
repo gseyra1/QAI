@@ -36,7 +36,7 @@ function locator(depth: number): Record<string, unknown> {
   return { type: 'object', properties, additionalProperties: false };
 }
 
-function target(): Record<string, unknown> {
+export function targetSchema(): Record<string, unknown> {
   return {
     type: 'object',
     properties: {
@@ -127,12 +127,12 @@ export function stepProposalSchema(): Record<string, unknown> {
         items: {
           oneOf: [
             action('navigate', { to: { type: 'string' } }, ['to']),
-            action('click', { target: target() }, ['target']),
-            action('fill', { target: target(), value: { type: 'string' } }, ['target', 'value']),
-            action('select', { target: target(), option: { type: 'string' } }, ['target', 'option']),
+            action('click', { target: targetSchema() }, ['target']),
+            action('fill', { target: targetSchema(), value: { type: 'string' } }, ['target', 'value']),
+            action('select', { target: targetSchema(), option: { type: 'string' } }, ['target', 'option']),
             action('press', { key: { type: 'string' } }, ['key']),
-            action('scrollTo', { target: target() }, ['target']),
-            action('hover', { target: target() }, ['target']),
+            action('scrollTo', { target: targetSchema() }, ['target']),
+            action('hover', { target: targetSchema() }, ['target']),
           ],
         },
       },
@@ -140,6 +140,29 @@ export function stepProposalSchema(): Record<string, unknown> {
       assertions: assertions(),
     },
     required: ['actions'],
+    additionalProperties: false,
+  };
+}
+
+/**
+ * Ce que le réparateur a le droit de rendre : une cible, et une explication.
+ *
+ * Le schéma n'expose ni assertion ni action : le réparateur ne peut
+ * structurellement pas toucher à ce qui est affirmé, ni ajouter ou supprimer un
+ * geste. La règle de sécurité est ici doublée par le contrat de sortie.
+ */
+export function healProposalSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      target: targetSchema(),
+      note: {
+        type: 'string',
+        description:
+          "une phrase, pour un humain qui relira le diff : ce qui a changé dans l'application",
+      },
+    },
+    required: ['target', 'note'],
     additionalProperties: false,
   };
 }

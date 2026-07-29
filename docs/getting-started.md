@@ -143,10 +143,36 @@ Le fournisseur est le vôtre : QAI n'embarque aucun SDK de modèle. Partez de
 
 Ensuite, `check` puis `run` comme aux points 2 et 3.
 
+## 7. Laisser QAI réparer un test périmé
+
+Troisième mode de la boutique : un libellé change, sans aucune régression.
+
+```bash
+npm run demo -- --bug rename-guest --port 8897
+```
+
+```bash
+npm run qai -- run examples/checkout-guest.qai.yaml \
+  --base-url http://127.0.0.1:8897/ \
+  --heal --provider ./mon-fournisseur.ts
+```
+
+```
+checkout-guest — RÉPARÉ   1.3 s
+  ~ s6   lancer la commande en tant qu'invité
+        réparé : Le libellé du bouton est passé de « Commander en tant
+        qu'invité » à « Continuer sans compte ».
+
+1 réparation(s) : relire le diff de résolution avant de fusionner.
+```
+
+Le fichier de résolution est réécrit, et le diff tient en quatre lignes avec la
+raison attachée. Comparez avec le point 4 : là, l'échec portait sur une
+assertion et le réparateur n'a même pas été convoqué. **C'est la différence
+entre un test périmé et une application cassée** — voir
+[reparation.md](reparation.md).
+
 ## Ce qui n'existe pas encore
 
-- **L'étage 2, la réparation.** L'interface `Healer` est définie et le moteur
-  l'appelle au bon endroit, mais aucune implémentation n'existe. Une cible
-  introuvable produit donc simplement un échec.
 - **L'intégration CI** et le commentaire de pull request.
 - **Les drivers mobiles.**
