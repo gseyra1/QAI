@@ -21,6 +21,49 @@ function orderStep(step: StepResolution): Record<string, unknown> {
   return ordered;
 }
 
+const WIDTH = 100;
+
+/**
+ * Impression JSON compacte tant qu'une valeur tient sur une ligne.
+ *
+ * `JSON.stringify(x, null, 2)` éclate chaque petit objet sur cinq lignes : un
+ * changement d'un mot produit alors des centaines de lignes de diff, et
+ * personne ne relit ça. Or la relecture du diff *est* l'argument de confiance du
+ * produit — le format d'impression n'est donc pas un détail cosmétique.
+ */
+function inline(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(inline).join(', ')}]`;
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => `${JSON.stringify(key)}: ${inline(item)}`);
+    return entries.length === 0 ? '{}' : `{ ${entries.join(', ')} }`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function print(value: unknown, depth: number): string {
+  const compact = inline(value);
+  if (compact.length + depth * 2 <= WIDTH) return compact;
+
+  const pad = '  '.repeat(depth + 1);
+  const close = '  '.repeat(depth);
+
+  if (Array.isArray(value)) {
+    const items = value.map((item) => `${pad}${print(item, depth + 1)}`);
+    return `[\n${items.join(',\n')}\n${close}]`;
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => `${pad}${JSON.stringify(key)}: ${print(item, depth + 1)}`);
+    return `{\n${entries.join(',\n')}\n${close}}`;
+  }
+
+  return compact;
+}
+
 export function serializeResolution(resolution: Resolution): string {
   const document: Record<string, unknown> = {
     $comment: HEADER,
@@ -34,7 +77,7 @@ export function serializeResolution(resolution: Resolution): string {
     Object.entries(resolution.steps).map(([id, step]) => [id, orderStep(step)]),
   );
 
-  return `${JSON.stringify(document, null, 2)}\n`;
+  return `${print(document, 0)}\n`;
 }
 
 export async function saveResolution(path: string, resolution: Resolution): Promise<void> {

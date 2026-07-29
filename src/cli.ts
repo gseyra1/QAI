@@ -6,9 +6,11 @@ import { PlaywrightWebDriver } from './driver/web/PlaywrightWebDriver.ts';
 import { checkConsistency } from './engine/consistency.ts';
 import { runScenario } from './engine/run.ts';
 import { generateResolution } from './generate/generate.ts';
+import { ModelHealer } from './heal/ModelHealer.ts';
 import { BudgetedProvider } from './model/budget.ts';
 import type { ModelProvider, Pricing } from './model/types.ts';
 import { formatIssues, formatReport } from './report/text.ts';
+import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
@@ -16,7 +18,7 @@ import type { Scenario } from './scenario/types.ts';
 
 const USAGE = `qai — agent QA
 
-  qai run     <scenario.qai.yaml> --base-url <url> [options]
+  qai run     <scenario.qai.yaml> --base-url <url> [--heal --provider <module>]
   qai check   <scenario.qai.yaml> [options]
   qai resolve <scenario.qai.yaml> --base-url <url> --provider <module> [options]
 
@@ -26,7 +28,8 @@ Options
   --platform <nom>      web (défaut). ios et android à venir.
   --provider <module>   module exportant par défaut un ModelProvider, et
                         éventuellement une constante « pricing »
-  --max-cost <n>        plafond de dépense pour la génération
+  --heal                réparer les cibles périmées et réécrire la résolution
+  --max-cost <n>        plafond de dépense pour la génération ou la réparation
   --attempts <n>        tentatives par étape (défaut 3)
   --json                sortie machine
   --strict              une réparation fait échouer la commande
@@ -72,6 +75,7 @@ export async function main(argv: string[]): Promise<number> {
       platform: { type: 'string', default: 'web' },
       provider: { type: 'string' },
       'max-cost': { type: 'string' },
+      heal: { type: 'boolean', default: false },
       attempts: { type: 'string' },
       json: { type: 'boolean', default: false },
       strict: { type: 'boolean', default: false },
@@ -181,14 +185,42 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
+  if (values.heal === true && values.provider === undefined) {
+    process.stderr.write('--heal exige --provider\n');
+    return 1;
+  }
+
   const driver = newDriver();
   try {
     await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
-    const report = await runScenario({ scenario, resolution, driver });
+
+    let healer;
+    if (values.heal === true && values.provider !== undefined) {
+      const { provider, pricing } = await loadProvider(values.provider);
+      const maxCost = values['max-cost'] === undefined ? undefined : Number(values['max-cost']);
+      const bounded =
+        maxCost !== undefined && pricing !== undefined
+          ? new BudgetedProvider(provider, pricing, { maxCost })
+          : provider;
+      healer = new ModelHealer({ driver, provider: bounded });
+    }
+
+    const report = await runScenario(
+      healer === undefined
+        ? { scenario, resolution, driver }
+        : { scenario, resolution, driver, healer },
+    );
 
     process.stdout.write(
       values.json === true ? `${JSON.stringify(report, null, 2)}\n` : `${formatReport(report)}\n`,
     );
+
+    if (report.heals.length > 0) {
+      // Écrire la résolution réparée est ce qui transforme la réparation en
+      // diff relu en revue plutôt qu'en ajustement invisible.
+      await saveResolution(resolutionPath, applyHeals(resolution, report.heals));
+      process.stdout.write(`\n${resolutionPath} mis à jour : relire le diff avant de fusionner.\n`);
+    }
 
     if (report.status === 'failed') return 1;
     if (report.status === 'healed' && values.strict === true) return 1;

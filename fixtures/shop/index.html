@@ -69,6 +69,14 @@ const CATALOGUE = [
 ];
 
 const bug = window.__QAI_BUG ?? new URLSearchParams(location.search).get('bug');
+
+// Évolutions d'interface sans régression : le libellé change, la fonction non.
+// C'est le cas que l'auto-réparation doit absorber. « rename-add » vise une
+// cible qui a un repli technique, « rename-guest » une cible qui n'en a pas.
+if (bug === 'rename-add') document.getElementById('add').textContent = 'Ajouter';
+if (bug === 'rename-guest') {
+  document.getElementById('guest-checkout').textContent = 'Continuer sans compte';
+}
 const state = { cart: [], current: null, orders: [] };
 
 const euros = (n) => n.toFixed(2).replace('.', ',') + ' €';

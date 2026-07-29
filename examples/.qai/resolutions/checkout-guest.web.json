@@ -5,10 +5,7 @@
   "recordedAt": "2026-07-28T20:11:04Z",
   "appVersion": "a1b2c3d",
   "steps": {
-    "s1": {
-      "actions": [{ "kind": "navigate", "to": "/" }],
-      "healedAt": null
-    },
+    "s1": { "actions": [{ "kind": "navigate", "to": "/" }], "healedAt": null },
     "s2": {
       "actions": [
         {
@@ -59,7 +56,11 @@
       "assertions": {
         "l'indicateur du panier affiche 1 article": {
           "check": "textEquals",
-          "target": { "role": "text", "name": "1", "within": { "role": "link", "name": { "contains": "Panier" } } },
+          "target": {
+            "role": "text",
+            "name": "1",
+            "within": { "role": "link", "name": { "contains": "Panier" } }
+          },
           "value": "1"
         }
       },
@@ -101,38 +102,63 @@
     },
     "s7": {
       "actions": [
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Nom" } }, "value": "Dupont" },
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Adresse" } }, "value": "12 rue de la Paix" },
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Code postal" } }, "value": "75002" },
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Ville" } }, "value": "Paris" }
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Nom" } },
+          "value": "Dupont"
+        },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Adresse" } },
+          "value": "12 rue de la Paix"
+        },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Code postal" } },
+          "value": "75002"
+        },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Ville" } },
+          "value": "Paris"
+        }
       ],
       "healedAt": null
     },
     "s8": {
       "actions": [
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Numéro de carte" } }, "value": "4242424242424242" },
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Expiration" } }, "value": "12/30" },
-        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Cryptogramme" } }, "value": "123" },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Numéro de carte" } },
+          "value": "4242424242424242"
+        },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Expiration" } },
+          "value": "12/30"
+        },
+        {
+          "kind": "fill",
+          "target": { "primary": { "role": "textbox", "name": "Cryptogramme" } },
+          "value": "123"
+        },
         { "kind": "click", "target": { "primary": { "role": "button", "name": "Payer" } } }
       ],
-      "assertions": {
-        "la commande est confirmée": {
-          "check": "visible",
-          "target": { "role": "heading", "name": { "contains": "Merci" } }
-        },
-        "un numéro de commande est affiché": {
-          "check": "visible",
-          "target": { "role": "text", "name": { "contains": "CMD-" } }
-        }
-      },
       "captures": {
         "commande": { "from": { "role": "text", "name": { "contains": "CMD-" } }, "extract": "text" }
+      },
+      "assertions": {
+        "la commande est confirmée": { "check": "visible", "target": { "role": "heading", "name": { "contains": "Merci" } } },
+        "un numéro de commande est affiché": { "check": "visible", "target": { "role": "text", "name": { "contains": "CMD-" } } }
       },
       "healedAt": null
     },
     "s9": {
       "actions": [
-        { "kind": "click", "target": { "primary": { "role": "link", "name": "Suivi de commande" } } }
+        {
+          "kind": "click",
+          "target": { "primary": { "role": "link", "name": "Suivi de commande" } }
+        }
       ],
       "assertions": {
         "le suivi affiche la commande \"{{commande}}\" au statut \"en préparation\"": {

@@ -20,6 +20,20 @@ export interface AssertionFailure {
 
 export type StepStatus = 'passed' | 'healed' | 'failed' | 'skipped';
 
+/**
+ * Une réparation appliquée, sous une forme réinjectable dans le fichier de
+ * résolution. Sans ça, la réparation ne serait qu'une ligne de rapport : le
+ * diff relu en revue — l'argument de confiance du produit — n'existerait pas.
+ */
+export interface AppliedHeal {
+  stepId: string;
+  actionIndex: number;
+  target: ResolvedTarget;
+  note: string;
+  /** Le ciblage sémantique a échoué ; seul le repli technique a fonctionné. */
+  degraded: boolean;
+}
+
 export interface StepReport {
   stepId: string;
   intent: string;
@@ -27,6 +41,8 @@ export interface StepReport {
   failures: AssertionFailure[];
   error?: string;
   healNotes?: string[];
+  /** N'empêche pas le succès, mais doit remonter au client. */
+  warnings?: string[];
   durationMs: number;
 }
 
@@ -40,6 +56,7 @@ export interface ScenarioReport {
   status: ScenarioStatus;
   steps: StepReport[];
   captures: Record<string, string>;
+  heals: AppliedHeal[];
   healCount: number;
   startedAt: string;
   durationMs: number;
@@ -55,7 +72,7 @@ export interface HealRequest {
 }
 
 export type HealResult =
-  | { healed: true; target: ResolvedTarget; note: string }
+  | { healed: true; target: ResolvedTarget; note: string; degraded?: boolean }
   | { healed: false; reason: string };
 
 /**
@@ -102,7 +119,9 @@ function describeOutcome(outcome: Extract<ResolveOutcome, { found: false }>): st
   return 'cible introuvable';
 }
 
-type ActionsOutcome = { ok: true; healNotes: string[] } | { ok: false; error: string };
+type ActionsOutcome =
+  | { ok: true; heals: AppliedHeal[]; warnings: string[] }
+  | { ok: false; error: string };
 
 interface ActionsContext {
   driver: Driver;
@@ -115,7 +134,8 @@ interface ActionsContext {
 
 async function performActions(actions: Action[], context: ActionsContext): Promise<ActionsOutcome> {
   const { driver, healer } = context;
-  const healNotes: string[] = [];
+  const heals: AppliedHeal[] = [];
+  const warnings: string[] = [];
 
   for (const [index, original] of actions.entries()) {
     if (!supports(driver, original)) {
@@ -161,13 +181,52 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         }
 
         action = withTarget(action, healed.target);
-        healNotes.push(healed.note);
+        heals.push({
+          stepId: context.stepId,
+          actionIndex: index,
+          target: healed.target,
+          note: healed.note,
+          degraded: healed.degraded === true,
+        });
         context.healCount += 1;
       } else if (NEEDS_ENABLED.has(action.kind) && outcome.node.state.disabled === true) {
         // Trouvé mais inerte : c'est l'application qui est en cause, pas le
         // cache. Aucune réparation n'a de sens, et le message doit le dire
         // plutôt que de laisser remonter un délai d'attente du driver.
         return { ok: false, error: `« ${describeTarget(target)} » est présent mais désactivé` };
+      } else if (outcome.usedFallback) {
+        // Le ciblage sémantique est mort, seul le repli technique tient. Le
+        // parcours fonctionne, donc échouer serait crier au loup — mais se
+        // taire laisserait chaque locator dégrader vers un identifiant de test,
+        // et la portabilité mobile mourir en silence. On répare tant qu'on peut.
+        const label = describeTarget(target);
+        const restored =
+          healer !== undefined && context.healCount < context.healBudget
+            ? await healer.heal({
+                stepId: context.stepId,
+                actionIndex: index,
+                intent: context.intent,
+                target,
+                outcome: { found: false, reason: 'no-match', matches: 0 },
+                snapshot: await driver.observe({ screenshot: true }),
+              })
+            : { healed: false as const, reason: 'aucun réparateur disponible' };
+
+        if (restored.healed) {
+          action = withTarget(action, restored.target);
+          heals.push({
+            stepId: context.stepId,
+            actionIndex: index,
+            target: restored.target,
+            note: restored.note,
+            degraded: restored.degraded === true,
+          });
+          context.healCount += 1;
+        } else {
+          warnings.push(
+            `« ${label} » n'a été atteint que par son repli technique : l'accessibilité de l'application s'est dégradée et ce ciblage ne survivra pas au portage mobile`,
+          );
+        }
       }
     }
 
@@ -178,7 +237,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
     }
   }
 
-  return { ok: true, healNotes };
+  return { ok: true, heals, warnings };
 }
 
 export async function runScenario(input: RunInput): Promise<ScenarioReport> {
@@ -190,6 +249,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
 
   const bag: Record<string, string> = {};
   const steps: StepReport[] = [];
+  const applied: AppliedHeal[] = [];
   const context: ActionsContext = {
     driver,
     healer,
@@ -290,12 +350,16 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     const report: StepReport = {
       stepId: step.id,
       intent,
-      status: broken ? 'failed' : outcome.healNotes.length > 0 ? 'healed' : 'passed',
+      status: broken ? 'failed' : outcome.heals.length > 0 ? 'healed' : 'passed',
       failures,
       durationMs: Date.now() - stepStarted,
     };
     if (captureErrors.length > 0) report.error = captureErrors.join(' ; ');
-    if (outcome.healNotes.length > 0) report.healNotes = outcome.healNotes;
+    if (outcome.heals.length > 0) {
+      report.healNotes = outcome.heals.map((heal) => heal.note);
+      applied.push(...outcome.heals);
+    }
+    if (outcome.warnings.length > 0) report.warnings = outcome.warnings;
     steps.push(report);
 
     if (broken) aborted = true;
@@ -311,6 +375,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     status: failed ? 'failed' : healed ? 'healed' : 'passed',
     steps,
     captures: bag,
+    heals: applied,
     healCount: context.healCount,
     startedAt,
     durationMs: Date.now() - started,
