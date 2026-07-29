@@ -1,23 +1,33 @@
 import { parseArgs } from 'node:util';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { PlaywrightWebDriver } from './driver/web/PlaywrightWebDriver.ts';
 import { checkConsistency } from './engine/consistency.ts';
 import { runScenario } from './engine/run.ts';
+import { generateResolution } from './generate/generate.ts';
+import { BudgetedProvider } from './model/budget.ts';
+import type { ModelProvider, Pricing } from './model/types.ts';
 import { formatIssues, formatReport } from './report/text.ts';
 import { loadResolution } from './resolution/load.ts';
+import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
 
 const USAGE = `qai — agent QA
 
-  qai run   <scenario.qai.yaml> --base-url <url> [options]
-  qai check <scenario.qai.yaml> [options]
+  qai run     <scenario.qai.yaml> --base-url <url> [options]
+  qai check   <scenario.qai.yaml> [options]
+  qai resolve <scenario.qai.yaml> --base-url <url> --provider <module> [options]
 
 Options
-  --base-url <url>      racine de l'application testée (obligatoire pour run)
+  --base-url <url>      racine de l'application testée
   --resolution <path>   défaut : <dossier>/.qai/resolutions/<id>.<platform>.json
   --platform <nom>      web (défaut). ios et android à venir.
+  --provider <module>   module exportant par défaut un ModelProvider, et
+                        éventuellement une constante « pricing »
+  --max-cost <n>        plafond de dépense pour la génération
+  --attempts <n>        tentatives par étape (défaut 3)
   --json                sortie machine
   --strict              une réparation fait échouer la commande
   --headed              afficher le navigateur
@@ -29,6 +39,29 @@ function defaultResolutionPath(scenarioPath: string, scenario: Scenario, platfor
   return join(dirname(scenarioPath), '.qai', 'resolutions', `${scenario.id}.${platform}.json`);
 }
 
+/**
+ * Charge le fournisseur de modèle de l'utilisateur.
+ *
+ * QAI n'embarque aucun SDK : le module est fourni au lancement et doit exporter
+ * par défaut un `ModelProvider` — ou une fabrique qui en rend un.
+ */
+async function loadProvider(
+  path: string,
+): Promise<{ provider: ModelProvider; pricing?: Pricing }> {
+  const module: Record<string, unknown> = await import(
+    pathToFileURL(resolvePath(path)).href
+  );
+  const exported = module['default'];
+  const provider = (typeof exported === 'function' ? await exported() : exported) as ModelProvider;
+
+  if (provider === undefined || typeof provider.complete !== 'function') {
+    throw new Error(`${path} doit exporter par défaut un ModelProvider`);
+  }
+
+  const pricing = module['pricing'] as Pricing | undefined;
+  return pricing === undefined ? { provider } : { provider, pricing };
+}
+
 export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -37,6 +70,9 @@ export async function main(argv: string[]): Promise<number> {
       'base-url': { type: 'string' },
       resolution: { type: 'string' },
       platform: { type: 'string', default: 'web' },
+      provider: { type: 'string' },
+      'max-cost': { type: 'string' },
+      attempts: { type: 'string' },
       json: { type: 'boolean', default: false },
       strict: { type: 'boolean', default: false },
       headed: { type: 'boolean', default: false },
@@ -59,8 +95,66 @@ export async function main(argv: string[]): Promise<number> {
   const scenario = await loadScenario(scenarioPath);
   const resolutionPath =
     values.resolution ?? defaultResolutionPath(scenarioPath, scenario, values.platform);
-  const resolution = await loadResolution(resolutionPath);
 
+  const newDriver = (): PlaywrightWebDriver =>
+    new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
+
+  if (command === 'resolve') {
+    const baseUrl = values['base-url'];
+    if (baseUrl === undefined || values.provider === undefined) {
+      process.stderr.write('--base-url et --provider sont obligatoires\n');
+      return 1;
+    }
+
+    const { provider, pricing } = await loadProvider(values.provider);
+    const maxCost = values['max-cost'] === undefined ? undefined : Number(values['max-cost']);
+
+    if (maxCost !== undefined && pricing === undefined) {
+      process.stderr.write('--max-cost exige que le module fournisseur exporte « pricing »\n');
+      return 1;
+    }
+
+    const budgeted =
+      maxCost !== undefined && pricing !== undefined
+        ? new BudgetedProvider(provider, pricing, { maxCost })
+        : provider;
+
+    const driver = newDriver();
+    try {
+      await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
+      const result = await generateResolution({
+        scenario,
+        driver,
+        provider: budgeted,
+        ...(values.attempts !== undefined ? { attemptsPerStep: Number(values.attempts) } : {}),
+      });
+
+      if (values.json === true) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else {
+        for (const step of result.steps) {
+          const mark = step.status === 'resolved' ? '✓' : step.status === 'skipped' ? '⊘' : '✖';
+          process.stdout.write(`  ${mark} ${step.stepId.padEnd(4)} ${step.intent}\n`);
+          for (const rejection of step.rejections) {
+            process.stdout.write(`        essai rejeté : ${rejection}\n`);
+          }
+        }
+      }
+
+      if (result.status !== 'complete') {
+        process.stderr.write('\nrésolution incomplète : rien n\'a été écrit\n');
+        return 1;
+      }
+
+      await saveResolution(resolutionPath, result.resolution);
+      process.stdout.write(`\nécrit dans ${resolutionPath}\n`);
+      return 0;
+    } finally {
+      await driver.dispose();
+    }
+  }
+
+  const resolution = await loadResolution(resolutionPath);
   const issues = checkConsistency(scenario, resolution, 'web');
 
   if (command === 'check') {
@@ -87,7 +181,7 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const driver = new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
+  const driver = newDriver();
   try {
     await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
     const report = await runScenario({ scenario, resolution, driver });

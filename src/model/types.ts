@@ -18,8 +18,15 @@ export interface ModelMessage {
 export interface ModelUsage {
   inputTokens: number;
   outputTokens: number;
-  /** Portion de l'entrée servie par un cache de prompt, facturée moins cher. */
-  cachedInputTokens?: number;
+  /**
+   * Portion de l'entrée servie par un cache de prompt, facturée moins cher.
+   *
+   * `| undefined` est explicite : cette interface est implémentée par des tiers,
+   * qui transmettront souvent une valeur éventuellement absente venue de leur
+   * SDK. Leur imposer une gymnastique de typage sur un champ facultatif serait
+   * une friction gratuite à l'intégration.
+   */
+  cachedInputTokens?: number | undefined;
 }
 
 export interface ModelRequest {

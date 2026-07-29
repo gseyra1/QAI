@@ -67,6 +67,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | [docs/driver.md](docs/driver.md) | Le contrat de plateforme et la correspondance des rôles web/iOS/Android |
 | [docs/getting-started.md](docs/getting-started.md) | **Prise en main en cinq minutes, sur une boutique de démonstration** |
 | [docs/engine.md](docs/engine.md) | Le moteur de rejeu, la frontière de sécurité, le rapport à trois états |
+| [docs/generation.md](docs/generation.md) | `qai resolve` : comment une résolution est produite et vérifiée |
 | [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
 | [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
@@ -86,7 +87,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | Assertions, captures, cohérence | fait |
 | CLI (`run`, `check`) et rapport | fait |
 | Contrat de modèle enfichable et plafond de dépense | fait |
-| Étage 3, génération de résolutions | à faire |
+| Étage 3, génération de résolutions (`qai resolve`) | fait |
 | Étage 2, réparation | interface définie, implémentation à écrire |
 | Intégration CI et commentaire de PR | à faire |
 | Drivers mobiles | à faire |
