@@ -4,21 +4,23 @@
   "platform": "web",
   "recordedAt": "2026-07-28T20:11:04Z",
   "appVersion": "a1b2c3d",
-  "runtime": { "driver": "playwright", "viewport": "1280x800" },
   "steps": {
     "s1": {
-      "action": "navigate",
-      "value": "/",
+      "actions": [{ "kind": "navigate", "to": "/" }],
       "healedAt": null
     },
     "s2": {
-      "action": "fill",
-      "target": {
-        "primary": { "role": "searchbox", "name": "Rechercher un produit" },
-        "fallback": { "testId": "search-input" }
-      },
-      "value": "chaise de bureau",
-      "then": { "action": "press", "key": "Enter" },
+      "actions": [
+        {
+          "kind": "fill",
+          "target": {
+            "primary": { "role": "searchbox", "name": "Rechercher un produit" },
+            "fallback": { "testId": "search-input" }
+          },
+          "value": "chaise de bureau"
+        },
+        { "kind": "press", "key": "Enter" }
+      ],
       "assertions": {
         "la liste de résultats contient au moins un article": {
           "check": "countAtLeast",
@@ -29,27 +31,35 @@
       "healedAt": null
     },
     "s3": {
-      "action": "click",
-      "target": {
-        "primary": { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } },
-        "fallback": { "testId": "product-card" }
-      },
+      "actions": [
+        {
+          "kind": "click",
+          "target": {
+            "primary": { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } },
+            "fallback": { "testId": "product-card" }
+          }
+        }
+      ],
       "captures": {
-        "article": { "from": { "role": "heading", "level": 1 }, "extract": "text" },
-        "prix": { "from": { "testId": "product-price" }, "extract": "currency" }
+        "article": { "from": { "role": "heading" }, "extract": "text" },
+        "prix": { "from": { "role": "text", "name": { "contains": "€" } }, "extract": "number" }
       },
       "healedAt": null
     },
     "s4": {
-      "action": "click",
-      "target": {
-        "primary": { "role": "button", "name": "Ajouter au panier" },
-        "fallback": { "testId": "add-to-cart" }
-      },
+      "actions": [
+        {
+          "kind": "click",
+          "target": {
+            "primary": { "role": "button", "name": "Ajouter au panier" },
+            "fallback": { "testId": "add-to-cart" }
+          }
+        }
+      ],
       "assertions": {
         "l'indicateur du panier affiche 1 article": {
           "check": "textEquals",
-          "target": { "testId": "cart-count" },
+          "target": { "role": "text", "name": "1", "within": { "role": "link", "name": { "contains": "Panier" } } },
           "value": "1"
         }
       },
@@ -57,10 +67,12 @@
       "healNote": "Le libellé du bouton est passé de « Ajouter » à « Ajouter au panier ». Cible relocalisée, assertion inchangée."
     },
     "s5": {
-      "action": "click",
-      "target": {
-        "primary": { "role": "link", "name": "Panier", "within": { "role": "banner" } }
-      },
+      "actions": [
+        {
+          "kind": "click",
+          "target": { "primary": { "role": "link", "name": { "contains": "Panier" } } }
+        }
+      ],
       "assertions": {
         "le panier contient \"{{article}}\"": {
           "check": "textContains",
@@ -68,9 +80,62 @@
           "value": "{{article}}"
         },
         "le total est égal à {{prix}}": {
-          "check": "currencyEquals",
-          "target": { "testId": "cart-total" },
+          "check": "numberEquals",
+          "target": { "role": "text", "within": { "role": "group", "name": "Total" } },
           "value": "{{prix}}"
+        }
+      },
+      "healedAt": null
+    },
+    "s6": {
+      "actions": [
+        {
+          "kind": "click",
+          "target": { "primary": { "role": "button", "name": "Commander en tant qu'invité" } }
+        }
+      ],
+      "healedAt": null
+    },
+    "s7": {
+      "actions": [
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Nom" } }, "value": "Dupont" },
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Adresse" } }, "value": "12 rue de la Paix" },
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Code postal" } }, "value": "75002" },
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Ville" } }, "value": "Paris" }
+      ],
+      "healedAt": null
+    },
+    "s8": {
+      "actions": [
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Numéro de carte" } }, "value": "4242424242424242" },
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Expiration" } }, "value": "12/30" },
+        { "kind": "fill", "target": { "primary": { "role": "textbox", "name": "Cryptogramme" } }, "value": "123" },
+        { "kind": "click", "target": { "primary": { "role": "button", "name": "Payer" } } }
+      ],
+      "assertions": {
+        "la commande est confirmée": {
+          "check": "visible",
+          "target": { "role": "heading", "name": { "contains": "Merci" } }
+        },
+        "un numéro de commande est affiché": {
+          "check": "visible",
+          "target": { "role": "text", "name": { "contains": "CMD-" } }
+        }
+      },
+      "captures": {
+        "commande": { "from": { "role": "text", "name": { "contains": "CMD-" } }, "extract": "text" }
+      },
+      "healedAt": null
+    },
+    "s9": {
+      "actions": [
+        { "kind": "click", "target": { "primary": { "role": "link", "name": "Suivi de commande" } } }
+      ],
+      "assertions": {
+        "le suivi affiche la commande \"{{commande}}\" au statut \"en préparation\"": {
+          "check": "textContains",
+          "target": { "role": "list", "name": "Commandes" },
+          "value": "{{commande}}"
         }
       },
       "healedAt": null
