@@ -11,8 +11,8 @@ npx playwright install chromium
 npm test
 ```
 
-Les 53 tests doivent passer. Ils incluent un parcours de commande complet joué
-dans un vrai navigateur.
+Toute la suite doit passer. Elle inclut un parcours de commande complet joué
+dans un vrai navigateur, et une génération de résolution de bout en bout.
 
 ## 1. Lancer la boutique de démonstration
 
@@ -124,18 +124,29 @@ steps:
 Le format complet est décrit dans [scenario-format.md](scenario-format.md), et
 [schema/scenario.schema.json](../schema/scenario.schema.json) le valide.
 
+## 6. Le faire jouer
+
+Un scénario seul ne suffit pas : il lui faut sa résolution. `qai resolve` la
+produit, en confrontant chaque proposition du modèle à votre application avant
+de l'accepter.
+
+```bash
+npm run qai -- resolve mon-parcours.qai.yaml \
+  --base-url http://localhost:3000 \
+  --provider ./mon-fournisseur.ts \
+  --max-cost 2
+```
+
+Le fournisseur est le vôtre : QAI n'embarque aucun SDK de modèle. Partez de
+[examples/provider-exemple.ts](../examples/provider-exemple.ts) — une méthode à
+écrire. Le détail de la boucle est dans [generation.md](generation.md).
+
+Ensuite, `check` puis `run` comme aux points 2 et 3.
+
 ## Ce qui n'existe pas encore
 
-Ce guide s'arrête ici parce que la suite n'est pas écrite :
-
-- **La génération de résolutions.** Aujourd'hui le fichier
-  `.qai/resolutions/*.json` s'écrit à la main. C'est l'étage 3 — l'agent explore
-  l'application et le produit — et il reste à faire. Sans lui, un scénario écrit
-  au point 5 ne peut pas encore être joué.
 - **L'étage 2, la réparation.** L'interface `Healer` est définie et le moteur
-  l'appelle au bon endroit, mais aucune implémentation n'existe.
+  l'appelle au bon endroit, mais aucune implémentation n'existe. Une cible
+  introuvable produit donc simplement un échec.
 - **L'intégration CI** et le commentaire de pull request.
 - **Les drivers mobiles.**
-
-Ce qui fonctionne : le format, le driver web, le rejeu déterministe, les
-assertions, les captures et le contrôle de cohérence.
