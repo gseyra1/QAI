@@ -63,7 +63,10 @@ export function buildLocator(page: Page, loc: Locator, applyNth = true): PWLocat
   } else if (nameOpts) {
     built = scope.getByText(nameOpts.name, { exact: nameOpts.exact });
   } else {
-    built = scope.locator('body');
+    // Un locator sans rôle ni nom ne désigne rien d'actionnable. Renvoyer un
+    // repli silencieux ferait cliquer sur `body` ; mieux vaut refuser la
+    // résolution et forcer la régénération du cache.
+    throw new Error('locator vide : ni rôle ni nom');
   }
 
   if (applyNth && loc.nth !== undefined) built = built.nth(loc.nth);

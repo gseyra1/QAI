@@ -28,6 +28,22 @@ export function collectTree(
 
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK', 'TITLE']);
 
+  /** Rôles dont accname autorise le nom déduit du contenu textuel. */
+  const NAME_FROM_CONTENT: ReadonlySet<Role> = new Set<Role>([
+    'button',
+    'link',
+    'heading',
+    'text',
+    'cell',
+    'listitem',
+    'menuitem',
+    'tab',
+    'checkbox',
+    'radio',
+    'switch',
+    'alert',
+  ]);
+
   let counter = 0;
 
   function inputRole(el: HTMLInputElement): Role {
@@ -141,6 +157,13 @@ export function collectTree(
     const title = el.getAttribute('title');
     if (title) return collapse(title);
 
+    // Le nom déduit du contenu ne vaut que pour les rôles qu'accname désigne.
+    // Un conteneur générique n'a pas de nom : lui attribuer le texte de ses
+    // descendants dupliquait ce texte à chaque niveau d'emballage — arbre
+    // gonflé, et un `div` capable de satisfaire par erreur une assertion
+    // portant sur son contenu.
+    if (!NAME_FROM_CONTENT.has(roleOf(el))) return '';
+
     const text = ownText(el);
     return text.length <= 120 ? text : '';
   }
@@ -237,6 +260,22 @@ export function collectTree(
 
     if (isRoot) return node;
     if (!visible && children.length === 0) return null;
+
+    // Aplatir les emballages anonymes. Un conteneur non interactif, sans nom
+    // accessible et n'ayant qu'un seul enfant survivant, ne dit rien au modèle
+    // et double le poids de l'arbre sur une application à composants — ce qui
+    // se paie directement en jetons à chaque réparation.
+    const only = children[0];
+    if (
+      options.interactiveOnly &&
+      only !== undefined &&
+      children.length === 1 &&
+      node.name === '' &&
+      !INTERACTIVE.has(node.role)
+    ) {
+      return only;
+    }
+
     return keep(node) ? node : null;
   }
 
