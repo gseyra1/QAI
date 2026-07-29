@@ -10,7 +10,7 @@ import type { Resolution } from '../resolution/types.ts';
 import { targetOf, withTarget } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
-import { evaluateCheck, extractValue, InterpolationError } from './assert.ts';
+import { evaluateCheck, extractValue, InterpolationError, interpolateLocator } from './assert.ts';
 import { matchOne } from './match.ts';
 
 export interface AssertionFailure {
@@ -84,6 +84,16 @@ function supports(driver: Driver, action: Action): boolean {
   return true;
 }
 
+/** Agir sur un élément désactivé n'a pas de sens ; le survol et le défilement, si. */
+const NEEDS_ENABLED = new Set(['click', 'fill', 'select']);
+
+function describeTarget(target: ResolvedTarget): string {
+  const { name, role } = target.primary;
+  if (typeof name === 'string') return name;
+  if (name !== undefined) return name.contains;
+  return role ?? 'la cible';
+}
+
 function describeOutcome(outcome: Extract<ResolveOutcome, { found: false }>): string {
   if (outcome.reason === 'ambiguous') {
     return `cible ambiguë : ${outcome.matches} éléments correspondent, le cache doit être régénéré`;
@@ -153,6 +163,11 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         action = withTarget(action, healed.target);
         healNotes.push(healed.note);
         context.healCount += 1;
+      } else if (NEEDS_ENABLED.has(action.kind) && outcome.node.state.disabled === true) {
+        // Trouvé mais inerte : c'est l'application qui est en cause, pas le
+        // cache. Aucune réparation n'a de sens, et le message doit le dire
+        // plutôt que de laisser remonter un délai d'attente du driver.
+        return { ok: false, error: `« ${describeTarget(target)} » est présent mais désactivé` };
       }
     }
 
@@ -227,24 +242,28 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     await driver.settle();
     const snapshot = await driver.observe();
 
-    let captureError: string | undefined;
+    // Une capture qui échoue n'interrompt pas l'étape : c'est le plus souvent le
+    // symptôme d'une assertion fausse, et masquer celle-ci priverait le rapport
+    // de son information la plus utile.
+    const captureErrors: string[] = [];
     for (const [name, spec] of Object.entries(cached.captures ?? {})) {
-      const node = matchOne(snapshot.root, spec.from);
-      if (node === null) {
-        captureError = `capture « ${name} » : cible introuvable ou ambiguë`;
-        break;
+      try {
+        const node = matchOne(snapshot.root, interpolateLocator(spec.from, bag));
+        if (node === null) {
+          captureErrors.push(`capture « ${name} » : cible introuvable ou ambiguë`);
+          continue;
+        }
+        const value = extractValue(node, spec.extract);
+        if (value === null) {
+          captureErrors.push(`capture « ${name} » : valeur illisible`);
+          continue;
+        }
+        bag[name] = value;
+      } catch (error) {
+        captureErrors.push(
+          `capture « ${name} » : ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-      const value = extractValue(node, spec.extract);
-      if (value === null) {
-        captureError = `capture « ${name} » : valeur illisible`;
-        break;
-      }
-      bag[name] = value;
-    }
-
-    if (captureError !== undefined) {
-      fail(captureError);
-      continue;
     }
 
     // À partir d'ici, plus aucune réparation n'est possible : une assertion qui
@@ -267,17 +286,19 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       }
     }
 
+    const broken = failures.length > 0 || captureErrors.length > 0;
     const report: StepReport = {
       stepId: step.id,
       intent,
-      status: failures.length > 0 ? 'failed' : outcome.healNotes.length > 0 ? 'healed' : 'passed',
+      status: broken ? 'failed' : outcome.healNotes.length > 0 ? 'healed' : 'passed',
       failures,
       durationMs: Date.now() - stepStarted,
     };
+    if (captureErrors.length > 0) report.error = captureErrors.join(' ; ');
     if (outcome.healNotes.length > 0) report.healNotes = outcome.healNotes;
     steps.push(report);
 
-    if (failures.length > 0) aborted = true;
+    if (broken) aborted = true;
   }
 
   const failed = steps.some((step) => step.status === 'failed');

@@ -45,6 +45,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 |---|---|
 | [docs/scenario-format.md](docs/scenario-format.md) | La spécification du format et ses justifications |
 | [docs/driver.md](docs/driver.md) | Le contrat de plateforme et la correspondance des rôles web/iOS/Android |
+| [docs/getting-started.md](docs/getting-started.md) | **Prise en main en cinq minutes, sur une boutique de démonstration** |
 | [docs/engine.md](docs/engine.md) | Le moteur de rejeu, la frontière de sécurité, le rapport à trois états |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
 | [src/driver/web/](src/driver/web/) | Implémentation Playwright et sa suite de conformité |
@@ -60,15 +61,19 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | Format de scénario et schéma | fait |
 | Driver web (Playwright) | fait |
 | Moteur de rejeu — étage 1 | fait |
-| Assertions et captures | fait |
-| Contrôle de cohérence | fait |
+| Assertions, captures, cohérence | fait |
+| CLI (`run`, `check`) et rapport | fait |
+| Étage 3, génération de résolutions | à faire |
 | Étage 2, réparation | interface définie, implémentation à écrire |
-| CLI et intégration CI | à faire |
+| Intégration CI et commentaire de PR | à faire |
 | Drivers mobiles | à faire |
 
 ```bash
 npm install && npx playwright install chromium && npm test
 ```
+
+Puis la démonstration complète, application saine puis cassée :
+[docs/getting-started.md](docs/getting-started.md).
 
 ## Périmètre
 

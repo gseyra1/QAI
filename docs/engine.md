@@ -75,4 +75,7 @@ L'interface `Healer` est définie et le moteur l'appelle correctement, mais
 **aucune implémentation n'existe** : l'étage 2 reste à écrire. Sans réparateur
 fourni, une cible introuvable produit simplement un échec.
 
-Manquent également le CLI, l'intégration CI et la génération de scénarios.
+Manque également la génération de résolutions (étage 3) : aujourd'hui le cache
+s'écrit à la main. Et l'intégration CI avec commentaire de pull request.
+
+Le CLI, lui, existe : voir [getting-started.md](getting-started.md).

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Boutique — application de test</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; max-width: 720px; }
+  header { display: flex; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid #ddd; }
+  section { padding-top: 24px; }
+  label { display: block; margin-bottom: 12px; }
+  input { display: block; padding: 6px; min-width: 260px; }
+  button { padding: 8px 14px; font-size: 1rem; }
+  button[disabled] { opacity: .5; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <a href="#home">Boutique</a>
+  <a href="#cart" id="cart-link">Panier <span data-testid="cart-count">0</span></a>
+  <a href="#tracking">Suivi de commande</a>
+</header>
+
+<section id="home">
+  <input type="search" aria-label="Rechercher un produit" id="query">
+</section>
+
+<section id="results" hidden>
+  <ul aria-label="Résultats" id="results-list"></ul>
+</section>
+
+<section id="product" hidden>
+  <h1 id="product-name"></h1>
+  <span data-testid="product-price" id="product-price"></span>
+  <p><button data-testid="add-to-cart" id="add">Ajouter au panier</button></p>
+</section>
+
+<section id="cart" hidden>
+  <ul aria-label="Articles du panier" id="cart-items"></ul>
+  <div role="group" aria-label="Total"><span id="cart-total"></span></div>
+  <p><button id="guest-checkout">Commander en tant qu'invité</button></p>
+</section>
+
+<section id="checkout" hidden>
+  <label>Nom <input id="f-nom"></label>
+  <label>Adresse <input id="f-adresse"></label>
+  <label>Code postal <input id="f-cp"></label>
+  <label>Ville <input id="f-ville"></label>
+  <label>Numéro de carte <input id="f-carte"></label>
+  <label>Expiration <input id="f-exp"></label>
+  <label>Cryptogramme <input id="f-cvc"></label>
+  <p><button id="pay">Payer</button></p>
+</section>
+
+<section id="confirmation" hidden>
+  <h1>Merci pour votre commande</h1>
+  <div><span>Numéro de commande</span> <strong id="order-id"></strong></div>
+</section>
+
+<section id="tracking" hidden>
+  <ul aria-label="Commandes" id="orders"></ul>
+</section>
+
+<script>
+const CATALOGUE = [
+  { nom: 'Chaise de bureau', prix: 129 },
+  { nom: 'Lampe de bureau', prix: 39 },
+];
+
+const bug = window.__QAI_BUG ?? new URLSearchParams(location.search).get('bug');
+const state = { cart: [], current: null, orders: [] };
+
+const euros = (n) => n.toFixed(2).replace('.', ',') + ' €';
+const $ = (id) => document.getElementById(id);
+
+function show(id) {
+  for (const section of document.querySelectorAll('section')) section.hidden = section.id !== id;
+}
+
+function renderCart() {
+  $('cart-link').querySelector('[data-testid=cart-count]').textContent = String(state.cart.length);
+  $('cart-items').replaceChildren(...state.cart.map((item) => {
+    const li = document.createElement('li');
+    li.textContent = item.nom + ' — ' + euros(item.prix);
+    return li;
+  }));
+  $('cart-total').textContent = euros(state.cart.reduce((sum, item) => sum + item.prix, 0));
+}
+
+$('query').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  const term = $('query').value.trim().toLowerCase();
+  const found = CATALOGUE.filter((item) => item.nom.toLowerCase().includes(term));
+  $('results-list').replaceChildren(...found.map((item) => {
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = '#product';
+    link.textContent = item.nom;
+    link.addEventListener('click', () => { state.current = item; openProduct(item); });
+    li.append(link);
+    return li;
+  }));
+  show('results');
+});
+
+function openProduct(item) {
+  $('product-name').textContent = item.nom;
+  $('product-price').textContent = euros(item.prix);
+  show('product');
+}
+
+$('add').addEventListener('click', () => {
+  if (state.current) state.cart.push(state.current);
+  renderCart();
+});
+
+$('cart-link').addEventListener('click', () => { renderCart(); show('cart'); });
+$('guest-checkout').addEventListener('click', () => show('checkout'));
+
+$('pay').addEventListener('click', () => {
+  // Régression simulée : la branche invité échoue en silence, exactement comme
+  // une clé d'idempotence construite à partir d'un utilisateur inexistant.
+  if (bug === 'guest-confirm') return;
+  const reference = 'CMD-' + (1042 + state.orders.length);
+  state.orders.push(reference);
+  $('order-id').textContent = reference;
+  show('confirmation');
+});
+
+document.querySelector('a[href="#tracking"]').addEventListener('click', () => {
+  $('orders').replaceChildren(...state.orders.map((reference) => {
+    const li = document.createElement('li');
+    li.textContent = reference + ' — en préparation';
+    return li;
+  }));
+  show('tracking');
+});
+
+document.querySelector('a[href="#home"]').addEventListener('click', () => show('home'));
+</script>
+</body>
+</html>

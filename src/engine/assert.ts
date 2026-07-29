@@ -1,4 +1,4 @@
-import type { UINode } from '../driver/types.ts';
+import type { Locator, UINode } from '../driver/types.ts';
 import type { Check, ExtractKind } from '../resolution/types.ts';
 import { matchNodes } from './match.ts';
 
@@ -23,6 +23,28 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
     return value;
   });
   if (missing.length > 0) throw new InterpolationError(missing);
+  return out;
+}
+
+/**
+ * Substitue les captures jusque dans les noms ciblés.
+ *
+ * Sans ça, « le panier contient {{article}} » ne serait pas exprimable : le nom
+ * accessible d'une liste étiquetée vaut son `aria-label`, pas le texte de ses
+ * items, donc la seule formulation correcte est de cibler l'item par son nom —
+ * lequel n'est connu qu'à l'exécution.
+ */
+export function interpolateLocator(locator: Locator, bag: Readonly<Record<string, string>>): Locator {
+  const out: Locator = {};
+  if (locator.role !== undefined) out.role = locator.role;
+  if (locator.nth !== undefined) out.nth = locator.nth;
+  if (locator.name !== undefined) {
+    out.name =
+      typeof locator.name === 'string'
+        ? interpolate(locator.name, bag)
+        : { contains: interpolate(locator.name.contains, bag) };
+  }
+  if (locator.within !== undefined) out.within = interpolateLocator(locator.within, bag);
   return out;
 }
 
@@ -79,7 +101,7 @@ export function evaluateCheck(
   root: UINode,
   bag: Readonly<Record<string, string>>,
 ): CheckResult {
-  const matched = matchNodes(root, check.target);
+  const matched = matchNodes(root, interpolateLocator(check.target, bag));
 
   if (check.check === 'absent') {
     const visible = matched.filter((node) => node.state.visible);

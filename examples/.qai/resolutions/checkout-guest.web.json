@@ -75,9 +75,12 @@
       ],
       "assertions": {
         "le panier contient \"{{article}}\"": {
-          "check": "textContains",
-          "target": { "role": "list", "name": "Articles du panier" },
-          "value": "{{article}}"
+          "check": "visible",
+          "target": {
+            "role": "listitem",
+            "name": { "contains": "{{article}}" },
+            "within": { "role": "list", "name": "Articles du panier" }
+          }
         },
         "le total est égal à {{prix}}": {
           "check": "numberEquals",
@@ -134,8 +137,12 @@
       "assertions": {
         "le suivi affiche la commande \"{{commande}}\" au statut \"en préparation\"": {
           "check": "textContains",
-          "target": { "role": "list", "name": "Commandes" },
-          "value": "{{commande}}"
+          "target": {
+            "role": "listitem",
+            "name": { "contains": "{{commande}}" },
+            "within": { "role": "list", "name": "Commandes" }
+          },
+          "value": "en préparation"
         }
       },
       "healedAt": null

@@ -6,7 +6,9 @@
   "description": "Agent QA — scénarios en intentions, rejouables sur le web et le mobile",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'src/**/*.test.ts'"
+    "test": "node --test 'src/**/*.test.ts'",
+    "qai": "node src/cli.ts",
+    "demo": "node fixtures/serve.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
