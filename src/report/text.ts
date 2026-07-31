@@ -1,3 +1,4 @@
+import type { SuiteReport } from '../engine/suite.ts';
 import type { ScenarioReport, StepReport, StepStatus } from '../engine/run.ts';
 import type { ConsistencyIssue } from '../engine/consistency.ts';
 import { formatIssue } from '../engine/consistency.ts';
@@ -61,4 +62,49 @@ export function formatIssues(issues: ConsistencyIssue[]): string {
   return [`${issues.length} incohérence(s) :`, ...issues.map((issue) => `  • ${formatIssue(issue)}`)].join(
     '\n',
   );
+}
+
+const SCENARIO_MARK = { passed: '✓', healed: '~', failed: '✖' } as const;
+
+/**
+ * Rapport de suite : une ligne par parcours, et le détail seulement là où il y
+ * a quelque chose à faire. Un rapport qui déroule cinquante parcours verts ne
+ * se lit pas — donc ne se lit pas du tout.
+ */
+export function formatSuite(report: SuiteReport): string {
+  const lines: string[] = [
+    `${report.entries.length} parcours — ${HEADLINE[report.status]}   ${seconds(report.durationMs)}`,
+    '',
+  ];
+
+  for (const entry of report.entries) {
+    if (entry.report === null) {
+      lines.push(`  ✖ ${entry.scenarioId.padEnd(22)} ERREUR`);
+      lines.push(`        ${entry.error ?? 'échec inconnu'}`);
+      continue;
+    }
+
+    const { status, steps, durationMs } = entry.report;
+    lines.push(
+      `  ${SCENARIO_MARK[status]} ${entry.scenarioId.padEnd(22)} ${HEADLINE[status].padEnd(7)} ${seconds(durationMs)}`,
+    );
+
+    for (const step of steps) {
+      if (step.status === 'passed' || step.status === 'skipped') continue;
+      // Décalées d'un cran : une étape ne doit pas se lire comme un parcours.
+      lines.push(...formatStep(step).map((line) => `  ${line}`));
+    }
+  }
+
+  const failures = report.entries.filter(
+    (entry) => entry.error !== undefined || entry.report?.status === 'failed',
+  ).length;
+  const heals = report.entries.reduce((total, entry) => total + (entry.report?.healCount ?? 0), 0);
+
+  lines.push('');
+  if (failures > 0) lines.push(`${failures} parcours en échec.`);
+  if (heals > 0) lines.push(`${heals} réparation(s) : relire les diffs de résolution avant de fusionner.`);
+  if (failures === 0 && heals === 0) lines.push('Tout est vert.');
+
+  return lines.join('\n');
 }

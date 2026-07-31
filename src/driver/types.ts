@@ -155,6 +155,29 @@ export interface ObserveOptions {
   interactiveOnly?: boolean;
 }
 
+export interface Cookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+}
+
+/**
+ * État à installer avant qu'un scénario ne commence : session déjà ouverte,
+ * bannière de consentement déjà acceptée, préférence déjà posée.
+ *
+ * Sur le web, cookies et stockage local. Sur mobile, l'équivalent sera le
+ * stockage de la webview ou les préférences de l'application ; `entry` s'y
+ * traduit en lien profond. C'est pour cette raison que le contrat ne parle pas
+ * de « cookies » à son plus haut niveau mais d'état préparé.
+ */
+export interface PreparedState {
+  cookies?: Cookie[];
+  storage?: Record<string, string>;
+  /** Point d'entrée imposé par cet état, sinon la racine de l'application. */
+  entry?: string;
+}
+
 export interface LaunchTarget {
   /** URL de base sur le web, chemin de bundle ou identifiant d'app sur mobile. */
   entry: string;
@@ -174,6 +197,15 @@ export interface Driver {
   readonly capabilities: Capabilities;
 
   launch(target: LaunchTarget): Promise<void>;
+
+  /**
+   * Installe l'état de départ. Appelé après `launch`, avant la première étape.
+   *
+   * Sans lui, aucun parcours nécessitant une session ouverte n'est exprimable —
+   * c'est-à-dire la quasi-totalité des parcours critiques réels.
+   */
+  applyState(state: PreparedState): Promise<void>;
+
   observe(options?: ObserveOptions): Promise<UISnapshot>;
   resolve(target: ResolvedTarget): Promise<ResolveOutcome>;
   act(action: Action): Promise<void>;

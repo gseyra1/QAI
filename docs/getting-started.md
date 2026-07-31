@@ -172,6 +172,32 @@ assertion et le réparateur n'a même pas été convoqué. **C'est la différenc
 entre un test périmé et une application cassée** — voir
 [reparation.md](reparation.md).
 
+## 8. Jouer toute la suite
+
+`run` et `check` acceptent des fichiers, des dossiers ou un motif du shell, et
+exécutent les parcours en parallèle :
+
+```bash
+npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-exemple.ts --workers 4
+```
+
+```
+2 parcours — RÉUSSI   1.8 s
+
+  ✓ checkout-guest         RÉUSSI  1.2 s
+  ✓ compte-connecte        RÉUSSI  536 ms
+
+Tout est vert.
+```
+
+Chaque parcours obtient un navigateur neuf : partager le navigateur ferait fuiter
+cookies et stockage d'un parcours à l'autre, et le coût de démarrage est le prix
+de l'isolement.
+
+`--states` fournit l'état déclaré par le bloc `given` d'un scénario — voir
+[etats.md](etats.md). Sans lui, `compte-connecte` échoue : il exige une session
+ouverte.
+
 ## Ce qui n'existe pas encore
 
 - **L'intégration CI** et le commentaire de pull request.

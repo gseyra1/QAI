@@ -1,0 +1,19 @@
+{
+  "$comment": "Fichier généré par QAI. Ne pas éditer à la main — il est régénérable. Il est versionné pour que la CI rejoue de façon déterministe et pour qu'une auto-réparation apparaisse en diff de revue.",
+  "scenario": "compte-connecte",
+  "platform": "web",
+  "recordedAt": "2026-07-29T18:00:00Z",
+  "steps": {
+    "s1": {
+      "actions": [{ "kind": "navigate", "to": "/" }],
+      "assertions": {
+        "l'en-tête salue le client par son nom": {
+          "check": "textContains",
+          "target": { "role": "text", "name": { "contains": "Bonjour" } },
+          "value": "Alice"
+        }
+      },
+      "healedAt": null
+    }
+  }
+}
