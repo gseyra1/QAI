@@ -132,6 +132,11 @@ export async function main(argv: string[]): Promise<number> {
     return new BudgetedProvider(value, pricing, { maxCost });
   }
 
+  const states =
+    values.states === undefined
+      ? undefined
+      : (await loadModule<StateProvider>(values.states, 'StateProvider')).value;
+
   if (command === 'resolve') {
     const baseUrl = values['base-url'];
     if (baseUrl === undefined || values.provider === undefined) {
@@ -146,6 +151,22 @@ export async function main(argv: string[]): Promise<number> {
       const driver = createDriver();
       try {
         await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
+
+        // Générer sans installer l'état déclaré produirait une résolution
+        // pour un écran que le scénario ne verra jamais.
+        if (scenario.given !== undefined) {
+          if (states === undefined) {
+            process.stderr.write(
+              `${scenario.id} : le scénario déclare « given », --states est requis\n`,
+            );
+            failed = true;
+            continue;
+          }
+          await driver.applyState(
+            await states.prepare({ scenarioId: scenario.id, baseUrl, given: scenario.given }),
+          );
+        }
+
         const result = await generateResolution({
           scenario,
           driver,
@@ -219,11 +240,6 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write('--heal exige --provider\n');
     return 1;
   }
-
-  const states =
-    values.states === undefined
-      ? undefined
-      : (await loadModule<StateProvider>(values.states, 'StateProvider')).value;
 
   const provider =
     values.heal === true && values.provider !== undefined
