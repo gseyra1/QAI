@@ -20,6 +20,7 @@
   <a href="#home">Boutique</a>
   <a href="#cart" id="cart-link">Panier <span data-testid="cart-count">0</span></a>
   <a href="#tracking">Suivi de commande</a>
+  <span id="greeting"></span>
 </header>
 
 <section id="home">
@@ -81,6 +82,10 @@ const state = { cart: [], current: null, orders: [] };
 
 const euros = (n) => n.toFixed(2).replace('.', ',') + ' €';
 const $ = (id) => document.getElementById(id);
+
+// Session déjà ouverte, installée avant le scénario par le StateProvider.
+const compte = localStorage.getItem('qai_user');
+if (compte) $('greeting').textContent = 'Bonjour ' + compte;
 
 function show(id) {
   for (const section of document.querySelectorAll('section')) section.hidden = section.id !== id;

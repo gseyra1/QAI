@@ -1,0 +1,15 @@
+# Parcours exigeant une session ouverte : l'état de départ est déclaré, pas
+# construit à coups de clics. Se connecter par le formulaire à chaque parcours
+# serait lent, fragile, et testerait la connexion au lieu du parcours visé.
+
+id: compte-connecte
+title: Un client connecté est reconnu par la boutique
+tags: [critical-path]
+
+given:
+  state: client-connecte
+
+steps:
+  - id: s1
+    do: ouvrir la boutique
+    expect: l'en-tête salue le client par son nom

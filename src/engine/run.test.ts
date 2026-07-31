@@ -50,6 +50,8 @@ class FakeDriver implements Driver {
 
   async launch(): Promise<void> {}
 
+  async applyState(): Promise<void> {}
+
   async observe(): Promise<UISnapshot> {
     return {
       platform: 'web',

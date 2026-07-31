@@ -6,6 +6,7 @@ import type {
   LaunchTarget,
   ObserveOptions,
   Platform,
+  PreparedState,
   ResolvedTarget,
   ResolveOutcome,
   UINode,
@@ -76,6 +77,36 @@ export class PlaywrightWebDriver implements Driver {
     this.#baseUrl = target.entry;
     await this.#page.addInitScript({ content: COLLECTOR_SOURCE });
     await this.#page.goto(target.entry);
+  }
+
+  async applyState(state: PreparedState): Promise<void> {
+    const page = this.#activePage;
+    const context = page.context();
+
+    if (state.cookies !== undefined && state.cookies.length > 0) {
+      const origin = new URL(this.#baseUrl);
+      await context.addCookies(
+        state.cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain ?? origin.hostname,
+          path: cookie.path ?? '/',
+        })),
+      );
+    }
+
+    if (state.storage !== undefined && Object.keys(state.storage).length > 0) {
+      const entries = JSON.stringify(Object.entries(state.storage));
+      // Le script d'initialisation couvre les navigations à venir ; l'écriture
+      // directe couvre la page déjà ouverte. Les deux sont nécessaires.
+      const script = `for (const [k, v] of ${entries}) localStorage.setItem(k, v);`;
+      await context.addInitScript({ content: script });
+      await page.evaluate(script);
+    }
+
+    if (state.entry !== undefined) {
+      await page.goto(new URL(state.entry, this.#baseUrl).toString());
+    }
   }
 
   async #ensureCollector(): Promise<void> {

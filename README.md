@@ -70,6 +70,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | [docs/generation.md](docs/generation.md) | `qai resolve` : comment une résolution est produite et vérifiée |
 | [docs/reparation.md](docs/reparation.md) | `qai run --heal` : la réparation, ses deux barrières, et son diff |
 | [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
+| [docs/etats.md](docs/etats.md) | Déclarer l'état de départ d'un parcours (`given`) |
 | [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
 | [src/driver/web/](src/driver/web/) | Implémentation Playwright et sa suite de conformité |
@@ -90,6 +91,8 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | Contrat de modèle enfichable et plafond de dépense | fait |
 | Étage 3, génération de résolutions (`qai resolve`) | fait |
 | Étage 2, réparation (`qai run --heal`) | fait |
+| Suite de parcours en parallèle | fait |
+| État de départ (`given`) | fait |
 | Intégration CI et commentaire de PR | à faire |
 | Drivers mobiles | à faire |
 
