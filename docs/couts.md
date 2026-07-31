@@ -23,8 +23,14 @@ détermine donc le prix, et elle dépend de la page bien plus que du modèle.
 | Page | Nœuds | Arbre complet | Interactif seul, sans géométrie |
 |---|---:|---:|---:|
 | Formulaire simple | 8 | 1 139 car. | 639 car. |
+| **Page d'accueil réelle** (Next.js 16) | 520 | 77 431 car. | **21 627 car.** |
 | Tableau de 150 lignes | 1 530 | 237 057 car. | 116 515 car. |
 | Liste de 150 cartes (composants) | 1 818 | 251 431 car. | **77 860 car.** |
+
+La ligne « page d'accueil réelle » est mesurée sur une application de
+production — pas une page synthétique. Elle donne **~6 200 jetons**, soit le
+quart de l'écran de référence retenu plus bas. Les chiffres qui suivent sont
+donc **prudents** : une page ordinaire coûte nettement moins.
 
 Deux corrections apportées pendant cette mesure valent d'être notées, parce
 qu'elles rapportent 72 % sur une application moderne : le nom accessible n'est

@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
 import type { UINode } from '../src/driver/types.ts';
 import { PlaywrightWebDriver } from '../src/driver/web/PlaywrightWebDriver.ts';
+import { renderTree } from '../src/generate/render.ts';
 
 /**
  * Mesure le poids de l'arbre d'interface d'une page.
@@ -16,6 +17,7 @@ const { values } = parseArgs({
   options: {
     url: { type: 'string' },
     viewport: { type: 'string', default: '1280x800' },
+    print: { type: 'boolean', default: false },
   },
 });
 
@@ -42,6 +44,10 @@ const driver = new PlaywrightWebDriver(() => chromium.launch());
 try {
   await driver.launch({ entry: values.url, viewport: { width, height } });
   await driver.settle();
+
+  if (values.print === true) {
+    process.stdout.write(`${renderTree((await driver.observe({ interactiveOnly: true })).root)}\n\n`);
+  }
 
   const complete = sizes((await driver.observe()).root);
   const interactive = sizes((await driver.observe({ interactiveOnly: true })).root);
