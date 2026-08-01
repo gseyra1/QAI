@@ -1,24 +1,38 @@
 {
   "name": "qai",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
-  "description": "Agent QA — scénarios en intentions, rejouables sur le web et le mobile",
+  "description": "Agent QA — scénarios écrits en intentions, rejouables sur le web puis sur le mobile",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",
     "qai": "node src/cli.ts",
     "demo": "node fixtures/serve.mjs",
-    "measure": "node scripts/measure-tree.ts"
+    "measure": "node scripts/measure-tree.ts",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --external:playwright --external:yaml --banner:js='#!/usr/bin/env node'",
+    "prepublishOnly": "npm run typecheck && npm run build"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "esbuild": "^0.28.1",
     "typescript": "^5.7.2"
   },
   "dependencies": {
     "playwright": "^1.62.0",
     "yaml": "^2.9.0"
+  },
+  "bin": {
+    "qai": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22"
   }
 }

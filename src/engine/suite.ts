@@ -24,6 +24,8 @@ export interface SuiteInput {
   states?: StateProvider;
   workers?: number;
   healBudget?: number;
+  /** Range une capture d'échec et rend son identifiant. Voir RunInput. */
+  captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
 }
 
 export interface SuiteEntry {
@@ -69,6 +71,7 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       driver,
       ...(healer !== undefined ? { healer } : {}),
       ...(input.healBudget !== undefined ? { healBudget: input.healBudget } : {}),
+      ...(input.captureArtifact !== undefined ? { captureArtifact: input.captureArtifact } : {}),
     });
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);
