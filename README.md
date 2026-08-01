@@ -71,6 +71,8 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | [docs/reparation.md](docs/reparation.md) | `qai run --heal` : la réparation, ses deux barrières, et son diff |
 | [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
 | [docs/etats.md](docs/etats.md) | Déclarer l'état de départ d'un parcours (`given`) |
+| [docs/ci.md](docs/ci.md) | **L'action GitHub et le commentaire de pull request** |
+| [docs/configuration.md](docs/configuration.md) | `qai.config.json` |
 | [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
 | [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
 | [src/driver/web/](src/driver/web/) | Implémentation Playwright et sa suite de conformité |
@@ -93,14 +95,33 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 | Étage 2, réparation (`qai run --heal`) | fait |
 | Suite de parcours en parallèle | fait |
 | État de départ (`given`) | fait |
-| Intégration CI et commentaire de PR | à faire |
+| Captures d'échec et rapport markdown | fait |
+| Action GitHub et commentaire de PR | fait |
+| Fichier de configuration | fait |
+| Paquet npm | prêt, `npm publish` à lancer |
 | Drivers mobiles | à faire |
+
+Dans un projet, une fois QAI publié :
+
+```bash
+npm i -D qai && npx playwright install chromium
+```
+
+Puis, dans la CI :
+
+```yaml
+- uses: gseyra1/QAI@main
+  with:
+    base-url: ${{ steps.deploy.outputs.preview-url }}
+```
+
+Pour développer QAI lui-même :
 
 ```bash
 npm install && npx playwright install chromium && npm test
 ```
 
-Puis la démonstration complète, application saine puis cassée :
+La démonstration complète, application saine puis cassée :
 [docs/getting-started.md](docs/getting-started.md).
 
 ## Périmètre

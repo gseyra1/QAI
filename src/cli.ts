@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -12,6 +12,9 @@ import { runSuite } from './engine/suite.ts';
 import { ModelHealer } from './heal/ModelHealer.ts';
 import { BudgetedProvider } from './model/budget.ts';
 import type { ModelProvider, Pricing } from './model/types.ts';
+import { loadConfig } from './config.ts';
+import { artifactWriter } from './report/artifacts.ts';
+import { formatMarkdown } from './report/markdown.ts';
 import { formatSuite } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
@@ -39,7 +42,12 @@ Options
   --max-cost <n>        plafond de dépense du modèle
   --attempts <n>        tentatives par étape à la génération (défaut 3)
   --resolution <path>   forcer le chemin de résolution (un seul scénario)
-  --json                sortie machine
+  --config <path>       défaut : qai.config.json, cherché en remontant
+  --artifacts <dir>     où ranger les captures d'échec (défaut .qai/artifacts)
+  --format <f>          text (défaut), json ou markdown
+  --out <path>          écrire le rapport dans un fichier
+  --run-url <url>       lien vers l'exécution CI, inséré dans le markdown
+  --json                alias de --format json
   --strict              une réparation fait échouer la commande
   --headed              afficher le navigateur
 
@@ -91,6 +99,11 @@ export async function main(argv: string[]): Promise<number> {
       'max-cost': { type: 'string' },
       attempts: { type: 'string' },
       heal: { type: 'boolean', default: false },
+      config: { type: 'string' },
+      artifacts: { type: 'string' },
+      format: { type: 'string' },
+      out: { type: 'string' },
+      'run-url': { type: 'string' },
       json: { type: 'boolean', default: false },
       strict: { type: 'boolean', default: false },
       headed: { type: 'boolean', default: false },
@@ -99,13 +112,28 @@ export async function main(argv: string[]): Promise<number> {
   });
 
   const [command, ...scenarioArgs] = positionals;
+  const { config } = await loadConfig(values.config);
 
-  if (values.help === true || command === undefined || scenarioArgs.length === 0) {
+  // Les options de la ligne de commande priment toujours sur le fichier.
+  const settings = {
+    baseUrl: values['base-url'] ?? config.baseUrl,
+    states: values.states ?? config.states,
+    provider: values.provider ?? config.provider,
+    workers: values.workers !== undefined ? Number(values.workers) : config.workers,
+    maxCost: values['max-cost'] !== undefined ? Number(values['max-cost']) : config.maxCost,
+    attempts: values.attempts !== undefined ? Number(values.attempts) : config.attempts,
+    artifacts: values.artifacts ?? config.artifacts ?? '.qai/artifacts',
+    strict: values.strict === true || config.strict === true,
+  };
+
+  const requested = scenarioArgs.length > 0 ? scenarioArgs : (config.scenarios ?? []);
+
+  if (values.help === true || command === undefined || requested.length === 0) {
     process.stdout.write(USAGE);
     return command === undefined ? 1 : 0;
   }
 
-  const paths = await expand(scenarioArgs);
+  const paths = await expand(requested);
   if (paths.length === 0) {
     process.stderr.write('aucun scénario trouvé\n');
     return 1;
@@ -118,7 +146,7 @@ export async function main(argv: string[]): Promise<number> {
   const createDriver = (): Driver =>
     new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
 
-  const maxCost = values['max-cost'] === undefined ? undefined : Number(values['max-cost']);
+  const maxCost = settings.maxCost;
 
   async function modelProvider(path: string): Promise<ModelProvider> {
     const { value, pricing } = await loadModule<ModelProvider>(path, 'ModelProvider');
@@ -133,17 +161,17 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const states =
-    values.states === undefined
+    settings.states === undefined
       ? undefined
-      : (await loadModule<StateProvider>(values.states, 'StateProvider')).value;
+      : (await loadModule<StateProvider>(settings.states, 'StateProvider')).value;
 
   if (command === 'resolve') {
-    const baseUrl = values['base-url'];
-    if (baseUrl === undefined || values.provider === undefined) {
+    const baseUrl = settings.baseUrl;
+    if (baseUrl === undefined || settings.provider === undefined) {
       process.stderr.write('--base-url et --provider sont obligatoires\n');
       return 1;
     }
-    const provider = await modelProvider(values.provider);
+    const provider = await modelProvider(settings.provider);
     let failed = false;
 
     for (const path of paths) {
@@ -171,7 +199,7 @@ export async function main(argv: string[]): Promise<number> {
           scenario,
           driver,
           provider,
-          ...(values.attempts !== undefined ? { attemptsPerStep: Number(values.attempts) } : {}),
+          ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });
 
         process.stdout.write(`${scenario.id}\n`);
@@ -231,19 +259,19 @@ export async function main(argv: string[]): Promise<number> {
   // Rejouer sur une paire incohérente produit des verts qui ne prouvent rien.
   if (inconsistent) return 1;
 
-  const baseUrl = values['base-url'];
+  const baseUrl = settings.baseUrl;
   if (baseUrl === undefined) {
     process.stderr.write('--base-url est obligatoire\n');
     return 1;
   }
-  if (values.heal === true && values.provider === undefined) {
+  if (values.heal === true && settings.provider === undefined) {
     process.stderr.write('--heal exige --provider\n');
     return 1;
   }
 
   const provider =
-    values.heal === true && values.provider !== undefined
-      ? await modelProvider(values.provider)
+    values.heal === true && settings.provider !== undefined
+      ? await modelProvider(settings.provider)
       : undefined;
 
   const report = await runSuite({
@@ -255,12 +283,26 @@ export async function main(argv: string[]): Promise<number> {
     ...(provider !== undefined
       ? { createHealer: (driver: Driver) => new ModelHealer({ driver, provider }) }
       : {}),
-    ...(values.workers !== undefined ? { workers: Number(values.workers) } : {}),
+    ...(settings.workers !== undefined ? { workers: settings.workers } : {}),
+    captureArtifact: artifactWriter(settings.artifacts),
   });
 
-  process.stdout.write(
-    values.json === true ? `${JSON.stringify(report, null, 2)}\n` : `${formatSuite(report)}\n`,
-  );
+  const format = values.json === true ? 'json' : (values.format ?? 'text');
+  const rendered =
+    format === 'json'
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : format === 'markdown'
+        ? formatMarkdown(report, {
+            ...(values['run-url'] !== undefined ? { runUrl: values['run-url'] } : {}),
+            artifactName: 'qai-captures',
+          })
+        : `${formatSuite(report)}\n`;
+
+  if (values.out === undefined) process.stdout.write(rendered);
+  else {
+    await writeFile(values.out, rendered, 'utf8');
+    process.stdout.write(`${formatSuite(report)}\n\nrapport ${format} écrit dans ${values.out}\n`);
+  }
 
   for (const entry of report.entries) {
     const heals = entry.report?.heals ?? [];
@@ -273,11 +315,14 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (report.status === 'failed') return 1;
-  if (report.status === 'healed' && values.strict === true) return 1;
+  if (report.status === 'healed' && settings.strict) return 1;
   return 0;
 }
 
-const invokedDirectly = process.argv[1]?.endsWith('cli.ts') === true;
+// Robuste au passage TypeScript → bundle : on compare l'URL du module à celle
+// du script lancé, plutôt que de deviner un nom de fichier.
+const entry = process.argv[1];
+const invokedDirectly = entry !== undefined && import.meta.url === pathToFileURL(entry).href;
 if (invokedDirectly) {
   main(process.argv.slice(2)).then(
     (code) => {

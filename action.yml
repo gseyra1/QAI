@@ -1,0 +1,99 @@
+name: QAI
+description: Rejoue les parcours critiques et commente la pull request
+
+inputs:
+  base-url:
+    description: Racine de l'application à tester (déploiement de prévisualisation)
+    required: true
+  scenarios:
+    description: Fichiers, dossiers ou motif. Par défaut, lus depuis qai.config.json
+    required: false
+    default: ''
+  config:
+    description: Chemin du fichier de configuration
+    required: false
+    default: ''
+  heal:
+    description: Réparer les cibles périmées et réécrire les résolutions
+    required: false
+    default: 'false'
+  strict:
+    description: Une réparation fait échouer la vérification
+    required: false
+    default: 'false'
+  comment:
+    description: Poster le rapport en commentaire de la pull request
+    required: false
+    default: 'true'
+  github-token:
+    description: Jeton pour poster le commentaire
+    required: false
+    default: ${{ github.token }}
+  version:
+    description: Version de QAI à utiliser
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Navigateur
+      shell: bash
+      run: npx --yes playwright install --with-deps chromium
+
+    - name: Rejeu des parcours
+      id: qai
+      shell: bash
+      env:
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set +e
+        npx --yes qai@${{ inputs.version }} run ${{ inputs.scenarios }} \
+          --base-url "${{ inputs.base-url }}" \
+          ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
+          ${{ inputs.heal == 'true' && '--heal' || '' }} \
+          ${{ inputs.strict == 'true' && '--strict' || '' }} \
+          --format markdown --out "$RUNNER_TEMP/qai-report.md" \
+          --run-url "$RUN_URL"
+        echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+        set -e
+
+    # Publiées avant le commentaire : le rapport y renvoie, donc elles doivent
+    # exister quand un relecteur clique.
+    - name: Captures d'échec
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: qai-captures
+        path: .qai/artifacts
+        if-no-files-found: ignore
+        retention-days: 14
+
+    - name: Commentaire de pull request
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        REPORT="$RUNNER_TEMP/qai-report.md"
+        [ -f "$REPORT" ] || exit 0
+        # Un marqueur invisible permet de mettre à jour le commentaire existant
+        # plutôt que d'en empiler un à chaque exécution.
+        EXISTING=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" \
+          --jq 'map(select(.body | startswith("<!-- qai-report -->"))) | .[0].id // empty')
+        if [ -n "$EXISTING" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+            -F body=@"$REPORT" > /dev/null
+        else
+          gh pr comment "$PR" --body-file "$REPORT"
+        fi
+
+    - name: Verdict
+      shell: bash
+      run: exit ${{ steps.qai.outputs.exit-code }}

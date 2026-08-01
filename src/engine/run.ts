@@ -43,6 +43,8 @@ export interface StepReport {
   healNotes?: string[];
   /** N'empêche pas le succès, mais doit remonter au client. */
   warnings?: string[];
+  /** Identifiant rendu par `captureArtifact`, pour l'échec de cette étape. */
+  screenshot?: string;
   durationMs: number;
 }
 
@@ -92,6 +94,14 @@ export interface RunInput {
   healer?: Healer;
   /** Au-delà, on s'arrête : une dérive massive n'est pas un test périmé. */
   healBudget?: number;
+  /**
+   * Range une capture d'écran et rend son identifiant.
+   *
+   * Le moteur n'écrit pas sur disque : il rend les octets, l'appelant décide
+   * où ils vont. Une capture n'est prise qu'à l'échec — 300 Kio par étape
+   * rendraient une suite de cinquante parcours ingérable.
+   */
+  captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
 }
 
 function supports(driver: Driver, action: Action): boolean {
@@ -268,13 +278,31 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     const intent = intentFor(step, platform);
     const stepStarted = Date.now();
 
-    const fail = (error: string): void => {
+    /**
+     * Une capture n'est prise qu'à l'échec, et son absence ne doit jamais
+     * transformer un échec de test en erreur d'outil : le diagnostic est un
+     * bonus, le verdict est l'essentiel.
+     */
+    const shoot = async (): Promise<string | undefined> => {
+      if (input.captureArtifact === undefined) return undefined;
+      try {
+        const snapshot = await driver.observe({ screenshot: true });
+        if (snapshot.screenshot === undefined) return undefined;
+        return await input.captureArtifact(`${scenario.id}-${step.id}.png`, snapshot.screenshot);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const fail = async (error: string): Promise<void> => {
+      const screenshot = await shoot();
       steps.push({
         stepId: step.id,
         intent,
         status: 'failed',
         failures: [],
         error,
+        ...(screenshot !== undefined ? { screenshot } : {}),
         durationMs: Date.now() - stepStarted,
       });
       aborted = true;
@@ -287,7 +315,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
 
     const cached = resolution.steps[step.id];
     if (cached === undefined) {
-      fail('aucune résolution en cache pour cette étape');
+      await fail('aucune résolution en cache pour cette étape');
       continue;
     }
 
@@ -295,7 +323,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     context.intent = intent;
     const outcome = await performActions(cached.actions, context);
     if (!outcome.ok) {
-      fail(outcome.error);
+      await fail(outcome.error);
       continue;
     }
 
@@ -360,6 +388,10 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       applied.push(...outcome.heals);
     }
     if (outcome.warnings.length > 0) report.warnings = outcome.warnings;
+    if (broken) {
+      const screenshot = await shoot();
+      if (screenshot !== undefined) report.screenshot = screenshot;
+    }
     steps.push(report);
 
     if (broken) aborted = true;
