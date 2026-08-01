@@ -128,9 +128,15 @@ export async function main(argv: string[]): Promise<number> {
 
   const requested = scenarioArgs.length > 0 ? scenarioArgs : (config.scenarios ?? []);
 
-  if (values.help === true || command === undefined || requested.length === 0) {
+  if (values.help === true) {
     process.stdout.write(USAGE);
-    return command === undefined ? 1 : 0;
+    return 0;
+  }
+  if (command === undefined || requested.length === 0) {
+    // Une invocation incomplète doit échouer : passer en silence ferait
+    // qu'un job de CI mal configuré serait vert sans avoir rien testé.
+    process.stdout.write(USAGE);
+    return 1;
   }
 
   const paths = await expand(requested);
