@@ -104,7 +104,7 @@ auto-réparants pour le web ». Deux choix nous en distinguent :
 Dans un projet, une fois QAI publié :
 
 ```bash
-npm i -D qai && npx playwright install chromium
+npm i -D tilmiqai && npx playwright install chromium
 ```
 
 Puis, dans la CI :

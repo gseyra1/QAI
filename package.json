@@ -1,5 +1,5 @@
 {
-  "name": "qai",
+  "name": "tilmiqai",
   "version": "0.0.1",
   "type": "module",
   "description": "Agent QA — scénarios écrits en intentions, rejouables sur le web puis sur le mobile",
