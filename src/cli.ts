@@ -1,4 +1,4 @@
-import { readdir, stat, writeFile } from 'node:fs/promises';
+import { readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -319,10 +319,26 @@ export async function main(argv: string[]): Promise<number> {
   return 0;
 }
 
-// Robuste au passage TypeScript → bundle : on compare l'URL du module à celle
-// du script lancé, plutôt que de deviner un nom de fichier.
-const entry = process.argv[1];
-const invokedDirectly = entry !== undefined && import.meta.url === pathToFileURL(entry).href;
+/**
+ * Détecte si ce module est le script lancé, et non importé.
+ *
+ * `realpath` est indispensable : npm installe le binaire en **lien
+ * symbolique** vers `dist/cli.js`, donc `argv[1]` est le lien tandis que
+ * `import.meta.url` est la cible. Comparer les deux sans résoudre le lien fait
+ * que le CLI ne démarre jamais une fois installé — ce qui ne se voit pas depuis
+ * le dépôt, seulement depuis une installation propre.
+ */
+async function isEntryPoint(): Promise<boolean> {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(await realpath(entry)).href;
+  } catch {
+    return import.meta.url === pathToFileURL(entry).href;
+  }
+}
+
+const invokedDirectly = await isEntryPoint();
 if (invokedDirectly) {
   main(process.argv.slice(2)).then(
     (code) => {
