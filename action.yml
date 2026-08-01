@@ -53,7 +53,7 @@ runs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set +e
-        npx --yes qai@${{ inputs.version }} run ${{ inputs.scenarios }} \
+        npx --yes tilmiqai@${{ inputs.version }} run ${{ inputs.scenarios }} \
           --base-url "${{ inputs.base-url }}" \
           ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
           ${{ inputs.heal == 'true' && '--heal' || '' }} \
