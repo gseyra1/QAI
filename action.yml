@@ -13,6 +13,10 @@ inputs:
     description: Chemin du fichier de configuration
     required: false
     default: ''
+  states:
+    description: Module exportant un StateProvider, pour l'état déclaré par « given »
+    required: false
+    default: ''
   heal:
     description: Réparer les cibles périmées et réécrire les résolutions
     required: false
@@ -42,9 +46,16 @@ runs:
       with:
         node-version: '22'
 
+    # Installé avant le navigateur : « playwright install » doit résoudre la
+    # version de Playwright dont dépend QAI. Une version obtenue à part
+    # téléchargerait un binaire que QAI ne saurait pas lancer.
+    - name: Installation
+      shell: bash
+      run: npm i --no-save --no-audit --no-fund tilmiqai@${{ inputs.version }}
+
     - name: Navigateur
       shell: bash
-      run: npx --yes playwright install --with-deps chromium
+      run: npx playwright install --with-deps chromium
 
     - name: Rejeu des parcours
       id: qai
@@ -53,9 +64,10 @@ runs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set +e
-        npx --yes tilmiqai@${{ inputs.version }} run ${{ inputs.scenarios }} \
+        npx qai run ${{ inputs.scenarios }} \
           --base-url "${{ inputs.base-url }}" \
           ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
+          ${{ inputs.states && format('--states {0}', inputs.states) || '' }} \
           ${{ inputs.heal == 'true' && '--heal' || '' }} \
           ${{ inputs.strict == 'true' && '--strict' || '' }} \
           --format markdown --out "$RUNNER_TEMP/qai-report.md" \
