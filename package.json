@@ -1,6 +1,6 @@
 {
   "name": "tilmiqai",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "description": "Agent QA — scénarios écrits en intentions, rejouables sur le web puis sur le mobile",
   "scripts": {
