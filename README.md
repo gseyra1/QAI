@@ -1,113 +1,126 @@
-# QAI
+# tilmiqai 🎯
 
-Un agent QA qui s'insère dans la boucle de pull request pour dire aux équipes ce
-que leur code — de plus en plus écrit par IA — vient de casser dans l'interface,
-à partir de scénarios décrits en intentions plutôt qu'en sélecteurs, et donc
-rejouables tels quels sur le web puis sur le mobile.
+> Catch UI regressions in the pull request — from scenarios written as **intent**, never as selectors.
 
-## Comment on s'en sert
+[![npm version](https://img.shields.io/npm/v/tilmiqai.svg)](https://www.npmjs.com/package/tilmiqai)
+[![npm downloads](https://img.shields.io/npm/dm/tilmiqai.svg)](https://www.npmjs.com/package/tilmiqai)
+[![CI](https://github.com/gseyra1/QAI/actions/workflows/ci.yml/badge.svg)](https://github.com/gseyra1/QAI/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/tilmiqai.svg)](LICENSE)
 
-```mermaid
-flowchart TD
-    SC["Scénario .qai.yaml<br/>l'intention, écrite une fois, sans sélecteur"] --> RUN
-    RE["Résolution .json<br/>le cache, une par plateforme"] --> RUN
-    PR(["Le dev ouvre une pull request"]) --> RUN
-    RUN["QAI rejoue les parcours critiques<br/>aucun appel de modèle"] --> Q{"Résultat"}
-    Q -->|vert| A["Rien à faire"]
-    Q -->|orange| B["Le test avait vieilli<br/>relire le diff de résolution"]
-    Q -->|rouge| C["L'application a régressé<br/>corriger le code"]
-    A --> M(["Fusionner"])
-    B --> M
-    M --> P["Tests de fumée après déploiement,<br/>puis surveillance continue"]
-    SC -.->|"phase 2, sans réécriture"| MO["Les mêmes parcours sur iOS et Android"]
+```
+checkout-guest — FAILED   1.2 s
+
+  ✓ s1…s7
+  ✖ s8   pay with the test card
+        order is confirmed → no element matches the target
+  ⊘ s9   check the order appears in tracking
+
+No repair was applied: a false assertion is a regression, not a stale test.
 ```
 
-Le développeur n'écrit jamais de sélecteur, ne maintient pas un test cassé par un
-renommage, et ne tient pas une seconde suite pour le mobile.
+## Features
 
-## Pourquoi ce positionnement
+- ⚡ **Free to replay** — the normal path makes **zero model calls**. You only pay when your UI actually changes.
+- 🩹 **Self-healing, auditable** — a renamed button is repaired and lands as a **4-line diff** in your PR, with the reason attached.
+- 🛡️ **Never touches assertions** — repairs can change *how* an element is reached, never *what* is asserted. Two independent barriers enforce it.
+- 📱 **Write once, run on mobile later** — scenarios contain no selectors, so the same file will replay on iOS and Android.
+- 🔌 **Bring your own model** — no vendor SDK bundled. Implement one method, set a spend cap.
+- 💬 **Talks to the developer** — posts the report as a pull-request comment and updates it in place.
 
-Le marché du test agentique est encombré (~1,5 Md$ investis, 40+ acteurs) et un
-concurrent financé occupe déjà le discours générique « langage naturel + tests
-auto-réparants pour le web ». Deux choix nous en distinguent :
-
-- **Le déclencheur.** On ne vend pas une plateforme de QA à une équipe QA qui
-  souvent n'existe plus. On se branche sur la revue de pull request des équipes
-  qui livrent avec des agents de code, là où la douleur est quotidienne et
-  l'acheteur est le lead dev.
-- **La portabilité.** Une équipe qui a une app web et une app mobile maintient
-  aujourd'hui deux suites de tests séparées qui divergent. Personne ne vend
-  « un scénario écrit une fois, rejoué sur les deux ». C'est faisable seulement
-  si le format de test ne contient aucun sélecteur — d'où la contrainte
-  d'architecture ci-dessous, qui n'est pas négociable.
-
-## Les engagements d'architecture
-
-1. **Un scénario ne contient jamais de sélecteur, de XPath ni de coordonnée.**
-   Autoriser une échappatoire « pour les cas difficiles » suffirait à tuer la
-   portabilité mobile en six mois.
-2. **L'intention et sa résolution vivent dans des fichiers séparés.** Porter sur
-   mobile = générer un fichier de résolution, pas réécrire les tests.
-3. **L'exécution a trois étages** — rejeu déterministe (coût modèle nul, ~95 %
-   des runs), réparation à l'échec, exploration agentique à la création. Les
-   coûts d'inférence sont un enjeu de survie, pas une optimisation tardive.
-4. **L'auto-réparation ne touche jamais aux assertions.** Elle peut changer
-   *comment* on atteint un élément, jamais *ce qui est affirmé* sur lui. Sans
-   cette règle, le produit apprend à faire passer les bugs.
-5. **Un seul driver, plusieurs implémentations** — `observe()`, `resolve()`,
-   `act()`, `settle()`. Playwright derrière le web, Appium/XCUITest/Espresso plus
-   vision derrière le mobile. L'évaluation des assertions reste dans le moteur :
-   déléguée aux drivers, elle divergerait entre web et mobile.
-
-## Où regarder
-
-| Chemin | Contenu |
-|---|---|
-| [docs/scenario-format.md](docs/scenario-format.md) | La spécification du format et ses justifications |
-| [docs/driver.md](docs/driver.md) | Le contrat de plateforme et la correspondance des rôles web/iOS/Android |
-| [docs/getting-started.md](docs/getting-started.md) | **Prise en main en cinq minutes, sur une boutique de démonstration** |
-| [docs/engine.md](docs/engine.md) | Le moteur de rejeu, la frontière de sécurité, le rapport à trois états |
-| [docs/generation.md](docs/generation.md) | `qai resolve` : comment une résolution est produite et vérifiée |
-| [docs/reparation.md](docs/reparation.md) | `qai run --heal` : la réparation, ses deux barrières, et son diff |
-| [docs/modele.md](docs/modele.md) | Brancher son propre modèle et poser un plafond de dépense |
-| [docs/etats.md](docs/etats.md) | Déclarer l'état de départ d'un parcours (`given`) |
-| [docs/ci.md](docs/ci.md) | **L'action GitHub et le commentaire de pull request** |
-| [docs/configuration.md](docs/configuration.md) | `qai.config.json` |
-| [docs/couts.md](docs/couts.md) | Ce que ça coûte à faire tourner, sur des mesures réelles |
-| [src/driver/types.ts](src/driver/types.ts) | Le contrat, seule source de vérité |
-| [src/driver/web/](src/driver/web/) | Implémentation Playwright et sa suite de conformité |
-| [src/engine/](src/engine/) | Rejeu, appariement, assertions, contrôle de cohérence |
-| [examples/checkout-guest.qai.yaml](examples/checkout-guest.qai.yaml) | Un parcours critique portable web/mobile |
-| [examples/.qai/resolutions/](examples/.qai/resolutions/) | Sa résolution web, vérifiée par les tests |
-| [schema/scenario.schema.json](schema/scenario.schema.json) | Validation des scénarios |
-
-## État d'avancement
-
-| Pièce | Statut |
-|---|---|
-| Format de scénario et schéma | fait |
-| Driver web (Playwright) | fait |
-| Moteur de rejeu — étage 1 | fait |
-| Assertions, captures, cohérence | fait |
-| CLI (`run`, `check`) et rapport | fait |
-| Contrat de modèle enfichable et plafond de dépense | fait |
-| Étage 3, génération de résolutions (`qai resolve`) | fait |
-| Étage 2, réparation (`qai run --heal`) | fait |
-| Suite de parcours en parallèle | fait |
-| État de départ (`given`) | fait |
-| Captures d'échec et rapport markdown | fait |
-| Action GitHub et commentaire de PR | fait |
-| Fichier de configuration | fait |
-| Paquet npm | prêt, `npm publish` à lancer |
-| Drivers mobiles | à faire |
-
-Dans un projet, une fois QAI publié :
+## Installation
 
 ```bash
-npm i -D tilmiqai && npx playwright install chromium
+npm install --save-dev tilmiqai && npx playwright install chromium
 ```
 
-Puis, dans la CI :
+```bash
+yarn add -D tilmiqai && yarn playwright install chromium
+```
+
+```bash
+pnpm add -D tilmiqai && pnpm exec playwright install chromium
+```
+
+Requires **Node.js ≥ 22**.
+
+## Quick start
+
+**1.** Describe a critical path in `qa/checkout.qai.yaml`. Intent only — no CSS, no XPath:
+
+```yaml
+id: checkout
+title: A visitor can order without an account
+tags: [critical-path]
+
+steps:
+  - id: s1
+    do: open the shop home page
+  - id: s2
+    do: add the first item to the cart
+    expect: the cart badge shows 1 item
+```
+
+**2.** Let QAI resolve it against your running app. It proposes, then **verifies every target against the real page** before accepting it:
+
+```bash
+npx qai resolve qa/checkout.qai.yaml --base-url http://localhost:3000 --provider ./qa/provider.ts
+```
+
+**3.** Replay it — no model involved, so this costs nothing and runs on every commit:
+
+```bash
+npx qai run qa/ --base-url http://localhost:3000
+```
+
+Commit both files. The scenario is reviewed like code; the resolution is the cache that makes repairs auditable.
+
+## How it works
+
+Two files per journey, and the split is the whole design:
+
+| File | Written by | Contains |
+|---|---|---|
+| `checkout.qai.yaml` | you | the **intent**, never a selector |
+| `.qai/resolutions/checkout.web.json` | `qai resolve` | the **cache**, one per platform |
+
+Porting to mobile means generating a new resolution — not rewriting your tests.
+
+Three execution tiers:
+
+| Tier | Trigger | Model calls |
+|---|---|---|
+| **1 — replay** | every pull request | **none** |
+| **2 — repair** | a target went missing | 1 per broken step |
+| **3 — resolve** | creating a scenario | ~1.5 per step |
+
+## CLI
+
+```
+qai run     <scenarios…> --base-url <url> [--heal --provider <module>]
+qai check   <scenarios…>
+qai resolve <scenarios…> --base-url <url> --provider <module>
+```
+
+`<scenarios…>` accepts files, directories or a shell glob. Everything can also live in `qai.config.json`.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--base-url <url>` | — | Root of the application under test. |
+| `--provider <module>` | — | Module default-exporting a `ModelProvider`. Required for `resolve` and `--heal`. |
+| `--states <module>` | — | Module default-exporting a `StateProvider`, for the `given` block. |
+| `--config <path>` | `qai.config.json` | Looked up by walking parent directories. |
+| `--workers <n>` | `4` | Journeys replayed in parallel. Each gets a fresh browser. |
+| `--heal` | `false` | Repair stale targets and rewrite the resolutions. |
+| `--max-cost <n>` | — | Spend cap, in your model's pricing units. |
+| `--artifacts <dir>` | `.qai/artifacts` | Where failure screenshots are written. |
+| `--format <f>` | `text` | `text`, `json` or `markdown`. |
+| `--out <path>` | stdout | Write the report to a file. |
+| `--strict` | `false` | A repair fails the command instead of passing. |
+| `--headed` | `false` | Show the browser. |
+
+**Exit codes:** `0` passed or repaired, `1` failed or inconsistent.
+
+## GitHub Action
 
 ```yaml
 - uses: gseyra1/QAI@main
@@ -115,24 +128,96 @@ Puis, dans la CI :
     base-url: ${{ steps.deploy.outputs.preview-url }}
 ```
 
-Pour développer QAI lui-même :
+Replays the suite, uploads failure screenshots as an artifact, posts the report as a PR comment — updating the existing one instead of stacking a new comment per run — and propagates the exit code.
 
-```bash
-npm install && npx playwright install chromium && npm test
+Add `heal: 'true'` to repair stale targets, `strict: 'true'` to block the merge on a repair. Full reference: [docs/ci.md](docs/ci.md).
+
+## Bring your own model
+
+QAI bundles no vendor SDK. You implement one method and your API key never leaves your environment:
+
+```typescript
+import type { ModelProvider, ModelRequest, ModelResponse, Pricing } from 'tilmiqai';
+
+export default {
+  name: 'my-model',
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    const answer = await callYourModel({
+      system: request.system,
+      messages: request.messages,
+      schema: request.responseSchema,   // structured output is required
+    });
+    return {
+      output: answer.object,
+      usage: { inputTokens: answer.in, outputTokens: answer.out },
+    };
+  },
+} satisfies ModelProvider;
+
+export const pricing: Pricing = { inputPerMTok: 3, outputPerMTok: 15 };
 ```
 
-La démonstration complète, application saine puis cassée :
-[docs/getting-started.md](docs/getting-started.md).
+Two constraints, both load-bearing. The response must be a **structured object**, never prose — that is what makes any model swappable without touching QAI. And `usage` is **mandatory**: without token accounting no spend cap is possible, and cost control is existential for this product.
 
-## Périmètre
+See [docs/modele.md](docs/modele.md) and [examples/provider-exemple.ts](examples/provider-exemple.ts).
 
-Dans le périmètre : la régression fonctionnelle en pull request, les tests de
-fumée après déploiement et la surveillance synthétique sur environnement livré.
+## Configuration
 
-Hors périmètre, délibérément : la recette utilisateur au sens propre. Un test de
-régression a un oracle fiable — l'état connu comme bon la fois précédente. La
-recette a pour oracle l'intention métier, qui n'existe de façon complète que
-dans la tête d'un humain, et elle se termine par une signature engageant une
-responsabilité. L'outil prépare la recette, la sécurise et **capture les
-parcours validés pour les transformer en régression permanente** ; il ne
-prononce pas l'acceptation.
+```json
+{
+  "scenarios": ["qa/"],
+  "baseUrl": "http://localhost:3000",
+  "provider": "./qa/provider.ts",
+  "states": "./qa/states.ts",
+  "workers": 4,
+  "maxCost": 2
+}
+```
+
+Paths resolve **relative to the config file**, not the working directory. CLI flags always win. See [docs/configuration.md](docs/configuration.md).
+
+## TypeScript
+
+Types ship with the package — no `@types/…` needed.
+
+```typescript
+import type { ModelProvider, StateProvider, Scenario, ScenarioReport } from 'tilmiqai';
+```
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | Five-minute walkthrough on a demo shop, healthy then broken |
+| [Scenario format](docs/scenario-format.md) | The format and why it has no selectors |
+| [Engine](docs/engine.md) | Replay, the safety boundary, the three-state report |
+| [Resolving](docs/generation.md) | How a resolution is produced and verified |
+| [Repairing](docs/reparation.md) | The two barriers, and the diff you review |
+| [Starting state](docs/etats.md) | `given`, sessions and fixtures |
+| [Model & cost](docs/modele.md) · [costs](docs/couts.md) | Plugging a model, and what it costs to run |
+| [CI](docs/ci.md) · [Config](docs/configuration.md) | Pull-request integration and `qai.config.json` |
+
+## Status
+
+Web is implemented and covered by 100 tests, including full journeys driven through a real browser. **Mobile drivers are not built yet** — the scenario format and driver contract are designed for them, nothing more.
+
+`resolve` and `--heal` are verified end to end against a real application using scripted models: the loop, the verification, the produced file and the resulting diff. The *quality* of a real model's proposals depends on the model you plug in and is not measured here.
+
+## Contributing
+
+```bash
+git clone https://github.com/gseyra1/QAI.git && cd QAI
+npm install && npx playwright install chromium
+npm test
+```
+
+```bash
+npm run demo          # demo shop on :8899
+npm run qai -- run examples/ --base-url http://127.0.0.1:8899/
+```
+
+Issues and pull requests welcome at [github.com/gseyra1/QAI](https://github.com/gseyra1/QAI/issues).
+
+## License
+
+MIT © [Mouaad GSEYRA](https://github.com/gseyra1) — Tilmicode. See [LICENSE](LICENSE).
