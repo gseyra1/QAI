@@ -20,7 +20,7 @@ jobs:
 
       - name: Boutique de démonstration
         run: |
-          node fixtures/serve.mjs --port 8899 &
+          node fixtures/serve.mjs --port 8899 --bug guest-confirm &
           for _ in $(seq 1 20); do
             curl -sf http://127.0.0.1:8899/ >/dev/null && break
             sleep 0.5
