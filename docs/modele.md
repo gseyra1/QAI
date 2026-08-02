@@ -23,7 +23,7 @@ de validation nette, pas un comportement erratique en aval.
 
 **Le décompte de jetons est obligatoire.** `ModelResponse.usage` n'est pas
 optionnel : la maîtrise des coûts est une contrainte de survie du produit (voir
-[couts.md](couts.md)), donc un fournisseur incapable de compter ses jetons ne
+la mesure locale), donc un fournisseur incapable de compter ses jetons ne
 peut pas être branché. C'est ce qui permet d'imposer un plafond.
 
 **Les images sont un type de contenu parmi d'autres.** Un fournisseur purement
@@ -84,8 +84,6 @@ scénario le reprend.
 
 ## Choisir un modèle
 
-Aucune recommandation imposée, mais l'ordre de grandeur est mesuré dans
-[couts.md](couts.md) : sur un écran chargé, un appel de réparation coûte environ
-0,13 $ sur un modèle haut de gamme, 0,08 $ sur un modèle intermédiaire, 0,03 $
-sur un petit modèle. L'écart entre modèles est réel, mais **il pèse moins que la
-taille de l'arbre transmis** — c'est là que se joue la facture.
+Aucune recommandation imposée. L'écart de tarif entre modèles est réel, mais
+**il pèse moins que la taille de l'arbre transmis** — c'est là que se joue la
+facture. Mesurez la vôtre avec `npm run measure -- --url <votre-app>`.

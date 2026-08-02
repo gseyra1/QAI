@@ -4,3 +4,6 @@ node_modules/
 dist/
 .qai/artifacts/
 *.tgz
+
+# Documents financiers et business : local uniquement
+docs/couts.md

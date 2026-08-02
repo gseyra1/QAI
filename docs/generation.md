@@ -71,8 +71,7 @@ group
 
 Accolades, guillemets et noms de champs répétés représentent l'essentiel des
 octets d'un JSON sans porter d'information. Or l'arbre est ce qu'on paie à
-chaque appel : sa densité est un choix d'architecture, pas de confort. Voir
-[couts.md](couts.md).
+chaque appel : sa densité est un choix d'architecture, pas de confort.
 
 ## Le fichier produit
 

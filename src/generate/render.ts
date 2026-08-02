@@ -5,8 +5,8 @@ import type { UINode } from '../driver/types.ts';
  *
  * Le JSON est le mauvais format ici : accolades, guillemets et noms de champs
  * répétés à chaque nœud représentent l'essentiel des octets sans porter
- * d'information. Or l'arbre est ce qu'on paie à chaque appel — voir
- * docs/couts.md — donc sa densité est un choix d'architecture, pas de confort.
+ * d'information. Or l'arbre est ce qu'on paie à chaque appel : sa densité est
+ * un choix d'architecture, pas de confort.
  *
  * Le format restitue exactement ce dont un locator a besoin : rôle, nom
  * accessible, imbrication. Rien d'autre.

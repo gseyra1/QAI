@@ -194,7 +194,7 @@ import type { ModelProvider, StateProvider, Scenario, ScenarioReport } from 'til
 | [Resolving](docs/generation.md) | How a resolution is produced and verified |
 | [Repairing](docs/reparation.md) | The two barriers, and the diff you review |
 | [Starting state](docs/etats.md) | `given`, sessions and fixtures |
-| [Model & cost](docs/modele.md) · [costs](docs/couts.md) | Plugging a model, and what it costs to run |
+| [Model](docs/modele.md) | Plugging your own model and capping spend |
 | [CI](docs/ci.md) · [Config](docs/configuration.md) | Pull-request integration and `qai.config.json` |
 
 ## Status

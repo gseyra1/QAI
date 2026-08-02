@@ -8,8 +8,7 @@ import { renderTree } from '../src/generate/render.ts';
  * Mesure le poids de l'arbre d'interface d'une page.
  *
  * C'est l'entrée du calcul de coût : l'arbre est ce qu'on envoie au modèle à
- * chaque réparation, donc sa taille détermine le prix d'un run dégradé. Voir
- * docs/couts.md.
+ * chaque réparation, donc sa taille détermine le prix d'un run dégradé.
  *
  *   npm run measure -- --url https://mon-app.example/
  */
