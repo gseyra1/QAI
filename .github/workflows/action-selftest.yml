@@ -1,0 +1,32 @@
+name: Action
+
+# L'action elle-même doit être exercée, pas seulement écrite : c'est le seul
+# moyen de vérifier le commentaire de pull request, l'artefact de captures et
+# la propagation du code de sortie.
+on: [push, pull_request]
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Boutique de démonstration
+        run: |
+          node fixtures/serve.mjs --port 8899 &
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8899/ >/dev/null && break
+            sleep 0.5
+          done
+
+      - uses: ./
+        with:
+          base-url: http://127.0.0.1:8899/
+          scenarios: examples/checkout-guest.qai.yaml
