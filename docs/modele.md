@@ -33,7 +33,21 @@ La vision ne devient nécessaire que pour le repli mobile.
 Pas de diffusion en flux : QAI a besoin d'un objet complet, pas de jetons au fil
 de l'eau.
 
-## Exemple
+## Un exemple qui marche tout de suite
+
+[examples/provider-claude.ts](../examples/provider-claude.ts) est prêt à
+l'emploi :
+
+```bash
+export ANTHROPIC_API_KEY=…
+npm run qai -- resolve qa/parcours.qai.yaml --base-url $URL \
+  --provider ./examples/provider-claude.ts --max-cost 2
+```
+
+`QAI_MODEL` choisit le modèle (`claude-sonnet-5` par défaut) et le tarif suit.
+C'est un exemple, pas une dépendance : le paquet publié n'embarque aucun SDK.
+
+## Écrire le vôtre
 
 ```ts
 import type { ModelProvider, ModelRequest, ModelResponse } from 'qai/model';
