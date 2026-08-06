@@ -5,16 +5,21 @@ on:
     branches: [main]
   pull_request:
 
+# Aucun droit d'écriture : ce workflow ne fait que compiler et tester.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm test
