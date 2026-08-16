@@ -1,0 +1,27 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Une analyse hebdomadaire attrape les règles nouvellement publiées sur du
+    # code qui, lui, n'a pas bougé.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@d6317709a54fd87078d323eeb0e48ec331c8e621 # v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@d6317709a54fd87078d323eeb0e48ec331c8e621 # v3

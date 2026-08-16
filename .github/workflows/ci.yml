@@ -21,5 +21,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm audit --audit-level=high
+      # Vérifie que chaque paquet installé porte bien la signature du registre.
+      - run: npm audit signatures
       - run: npm run typecheck
       - run: npm test

@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Les dépendances applicatives.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev:
+        dependency-type: development
+
+  # Les actions sont épinglées à une empreinte : sans cette entrée, elles ne
+  # seraient jamais mises à jour, y compris pour un correctif de sécurité.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

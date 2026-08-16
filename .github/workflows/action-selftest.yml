@@ -28,5 +28,6 @@ jobs:
 
       - uses: ./
         with:
+          comment: ${{ github.event.pull_request.head.repo.fork && 'false' || 'true' }}
           base-url: http://127.0.0.1:8899/
           scenarios: examples/checkout-guest.qai.yaml
