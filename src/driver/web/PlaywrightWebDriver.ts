@@ -91,6 +91,10 @@ export class PlaywrightWebDriver implements Driver {
           value: cookie.value,
           domain: cookie.domain ?? origin.hostname,
           path: cookie.path ?? '/',
+          // Omis plutot que rendus explicites : laisser le navigateur appliquer
+          // ses propres defauts quand l'appelant ne se prononce pas.
+          ...(cookie.secure !== undefined ? { secure: cookie.secure } : {}),
+          ...(cookie.sameSite !== undefined ? { sameSite: cookie.sameSite } : {}),
         })),
       );
     }

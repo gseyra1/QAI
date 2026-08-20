@@ -160,6 +160,23 @@ export interface Cookie {
   value: string;
   domain?: string;
   path?: string;
+  /**
+   * Sans ces deux attributs, aucune session inter-site n'est installable.
+   *
+   * Un cookie posé sans `sameSite` retombe cote navigateur sur « Lax », qui
+   * refuse de l'envoyer sur les requetes vers une autre origine que la page.
+   * Un front servi sur localhost dont l'API vit sur un domaine distinct — le
+   * cas de tout developpement contre un backend deploye — verrait donc sa
+   * session ignoree, et chaque parcours demarrerait anonyme sans que rien ne
+   * le signale : le symptome est un echec d'assertion six etapes plus loin.
+   *
+   * `secure` suit la meme logique : un cookie « SameSite=None » n'est accepte
+   * par le navigateur que s'il est aussi « Secure ».
+   *
+   * Sur mobile, l'equivalent est porte par le stockage de la webview.
+   */
+  secure?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
 }
 
 /**
