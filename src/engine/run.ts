@@ -4,6 +4,7 @@ import type {
   Platform,
   ResolvedTarget,
   ResolveOutcome,
+  UINode,
   UISnapshot,
 } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
@@ -94,6 +95,14 @@ export interface RunInput {
   healer?: Healer;
   /** Au-delà, on s'arrête : une dérive massive n'est pas un test périmé. */
   healBudget?: number;
+  /**
+   * Fenêtre pendant laquelle une assertion encore fausse est réévaluée.
+   *
+   * Le repos réseau ne signe pas la fin du rendu : une scène 3D, une animation
+   * d'entrée ou un module chargé à la demande arrivent après. Sans cette
+   * fenêtre, une application de ce type ne peut affirmer aucun écran.
+   */
+  assertTimeoutMs?: number;
   /**
    * Range une capture d'écran et rend son identifiant.
    *
@@ -328,50 +337,78 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     }
 
     await driver.settle();
-    const snapshot = await driver.observe();
 
-    // Une capture qui échoue n'interrompt pas l'étape : c'est le plus souvent le
-    // symptôme d'une assertion fausse, et masquer celle-ci priverait le rapport
-    // de son information la plus utile.
-    const captureErrors: string[] = [];
-    for (const [name, spec] of Object.entries(cached.captures ?? {})) {
-      try {
-        const node = matchOne(snapshot.root, interpolateLocator(spec.from, bag));
-        if (node === null) {
-          captureErrors.push(`capture « ${name} » : cible introuvable ou ambiguë`);
+    /**
+     * Captures puis assertions, sur un écran donné.
+     *
+     * Les deux vivent dans la même passe parce qu'une assertion peut référencer
+     * une capture : les relire ensemble garantit qu'elles parlent du même
+     * instant, ce qui serait faux si on rejouait les unes sans les autres.
+     */
+    const evaluate = (root: UINode): { captureErrors: string[]; failures: AssertionFailure[] } => {
+      // Une capture qui échoue n'interrompt pas l'étape : c'est le plus souvent
+      // le symptôme d'une assertion fausse, et masquer celle-ci priverait le
+      // rapport de son information la plus utile.
+      const captureErrors: string[] = [];
+      for (const [name, spec] of Object.entries(cached.captures ?? {})) {
+        try {
+          const node = matchOne(root, interpolateLocator(spec.from, bag));
+          if (node === null) {
+            captureErrors.push(`capture « ${name} » : cible introuvable ou ambiguë`);
+            continue;
+          }
+          const value = extractValue(node, spec.extract);
+          if (value === null) {
+            captureErrors.push(`capture « ${name} » : valeur illisible`);
+            continue;
+          }
+          bag[name] = value;
+        } catch (error) {
+          captureErrors.push(
+            `capture « ${name} » : ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+
+      // À partir d'ici, plus aucune réparation n'est possible : une assertion
+      // qui échoue est une régression de l'application, pas un test périmé.
+      const failures: AssertionFailure[] = [];
+      for (const assertion of expectationsOf(step)) {
+        const check = cached.assertions?.[assertion];
+        if (check === undefined) {
+          failures.push({ assertion, reason: 'aucune forme machine en cache' });
           continue;
         }
-        const value = extractValue(node, spec.extract);
-        if (value === null) {
-          captureErrors.push(`capture « ${name} » : valeur illisible`);
-          continue;
+        try {
+          const result = evaluateCheck(check, root, bag);
+          if (!result.ok) failures.push({ assertion, reason: result.reason });
+        } catch (error) {
+          failures.push({
+            assertion,
+            reason: error instanceof InterpolationError ? error.message : String(error),
+          });
         }
-        bag[name] = value;
-      } catch (error) {
-        captureErrors.push(
-          `capture « ${name} » : ${error instanceof Error ? error.message : String(error)}`,
-        );
       }
-    }
 
-    // À partir d'ici, plus aucune réparation n'est possible : une assertion qui
-    // échoue est une régression de l'application, pas un test périmé.
-    const failures: AssertionFailure[] = [];
-    for (const assertion of expectationsOf(step)) {
-      const check = cached.assertions?.[assertion];
-      if (check === undefined) {
-        failures.push({ assertion, reason: 'aucune forme machine en cache' });
-        continue;
-      }
-      try {
-        const result = evaluateCheck(check, snapshot.root, bag);
-        if (!result.ok) failures.push({ assertion, reason: result.reason });
-      } catch (error) {
-        failures.push({
-          assertion,
-          reason: error instanceof InterpolationError ? error.message : String(error),
-        });
-      }
+      return { captureErrors, failures };
+    };
+
+    /**
+     * Réévaluer tant que quelque chose est faux, dans une fenêtre bornée.
+     *
+     * Ce n'est pas une tolérance sur ce qui est affirmé : l'assertion n'est ni
+     * réécrite ni assouplie, on lui laisse seulement le temps d'être vraie.
+     * Sans ça, tout écran dont le rendu se termine après le repos réseau — une
+     * scène 3D, un module chargé à la demande — serait indémontrable.
+     */
+    let snapshot = await driver.observe();
+    let { captureErrors, failures } = evaluate(snapshot.root);
+    const deadline = Date.now() + (input.assertTimeoutMs ?? 5000);
+
+    while ((captureErrors.length > 0 || failures.length > 0) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      snapshot = await driver.observe();
+      ({ captureErrors, failures } = evaluate(snapshot.root));
     }
 
     const broken = failures.length > 0 || captureErrors.length > 0;

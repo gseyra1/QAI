@@ -14,8 +14,15 @@ C'est ce qui rend le coût d'un run négligeable et un tarif self-serve viable.
 
 Une étape se résout en une **liste** d'actions, pas une seule : « renseigner
 l'adresse de livraison » ou « se connecter » correspondent à plusieurs gestes
-primitifs. Les assertions et les captures sont évaluées une seule fois, après le
-dernier geste de l'étape.
+primitifs. Les assertions et les captures sont évaluées après le dernier geste
+de l'étape, et **réévaluées tant qu'elles sont fausses** dans une fenêtre bornée
+(`--assert-timeout`, 5 s par défaut).
+
+Cette fenêtre n'assouplit rien : l'assertion n'est ni réécrite ni élargie, on lui
+laisse le temps d'être vraie. Elle existe parce que le repos réseau ne signe pas
+la fin du rendu — une scène 3D, une animation d'entrée ou un module chargé à la
+demande arrivent après. Sans elle, ces applications ne peuvent affirmer aucun
+écran.
 
 ## Les assertions vivent ici, pas dans les drivers
 

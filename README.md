@@ -110,6 +110,7 @@ qai resolve <scenarios…> --base-url <url> --provider <module>
 | `--states <module>` | — | Module default-exporting a `StateProvider`, for the `given` block. |
 | `--config <path>` | `qai.config.json` | Looked up by walking parent directories. |
 | `--workers <n>` | `4` | Journeys replayed in parallel. Each gets a fresh browser. |
+| `--assert-timeout <ms>` | `5000` | Window in which a still-false assertion is re-evaluated. Never loosens what is asserted — it only allows for rendering that finishes after network idle. |
 | `--heal` | `false` | Repair stale targets and rewrite the resolutions. |
 | `--max-cost <n>` | — | Spend cap, in your model's pricing units. |
 | `--artifacts <dir>` | `.qai/artifacts` | Where failure screenshots are written. |
