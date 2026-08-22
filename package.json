@@ -9,7 +9,7 @@
     "qai": "node src/cli.ts",
     "demo": "node fixtures/serve.mjs",
     "measure": "node scripts/measure-tree.ts",
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --external:playwright --external:yaml --banner:js='#!/usr/bin/env node' && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:playwright --external:yaml && tsc -p tsconfig.build.json",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --external:playwright --external:yaml --banner:js=\"#!/usr/bin/env node\" && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:playwright --external:yaml && tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "devDependencies": {

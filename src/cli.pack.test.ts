@@ -1,12 +1,22 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { after, before, describe, it } from 'node:test';
 
 const run = promisify(execFile);
+
+/**
+ * La construction passe par le shell : sur Windows, npm est un script `.cmd`
+ * que Node refuse de lancer directement depuis la 20.12. Sans ça, ce fichier
+ * échoue dès son `before` sur toute machine de développement Windows — et le
+ * seul test qui a déjà attrapé une version publiée inerte n'y tourne jamais.
+ * La commande est une constante, pas une entrée : rien à échapper.
+ */
+const build = promisify(exec);
 
 /**
  * npm installe le binaire d'un paquet en **lien symbolique** vers son fichier.
@@ -19,21 +29,32 @@ const run = promisify(execFile);
  */
 describe('le binaire empaqueté', () => {
   let dir: string;
-  let link: string;
+  let link: string | null = null;
 
   before(async () => {
-    await run('npm', ['run', 'build'], { cwd: resolve('.') });
+    await build('npm run build', { cwd: resolve('.') });
     dir = await mkdtemp(join(tmpdir(), 'qai-bin-'));
-    link = join(dir, 'qai');
-    await symlink(resolve('dist/cli.js'), link);
+    const candidate = join(dir, 'qai');
+    try {
+      await symlink(resolve('dist/cli.js'), candidate);
+      link = candidate;
+    } catch (error) {
+      // Windows refuse les liens symboliques hors mode développeur. Sauter les
+      // deux tests qui en dépendent vaut mieux que faire échouer tout le
+      // fichier : les autres gardent leur valeur, et la CI (Linux) exerce de
+      // toute façon le chemin du lien.
+      if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+    }
   });
 
   after(async () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('démarre lorsqu\'il est lancé par un lien symbolique', async () => {
-    const { stdout } = await run('node', [link, '--help']);
+  it('démarre lorsqu\'il est lancé par un lien symbolique', async (t) => {
+    const bin = link;
+    if (bin === null) return t.skip('liens symboliques indisponibles sur cette machine');
+    const { stdout } = await run('node', [bin, '--help']);
     assert.match(stdout, /qai — agent QA/);
     assert.match(stdout, /qai run/);
   });
@@ -43,10 +64,38 @@ describe('le binaire empaqueté', () => {
     assert.match(stdout, /qai — agent QA/);
   });
 
-  it('rend le code 1 sans argument, pour ne pas passer un job de CI en silence', async () => {
+  it('rend le code 1 sans argument, pour ne pas passer un job de CI en silence', async (t) => {
+    const bin = link;
+    if (bin === null) return t.skip('liens symboliques indisponibles sur cette machine');
     await assert.rejects(
-      () => run('node', [link]),
+      () => run('node', [bin]),
       (error: unknown) => (error as { code?: number }).code === 1,
     );
+  });
+
+  /**
+   * Le paquet construit doit rendre le moteur importable, pas seulement
+   * lançable : une équipe qui a déjà vitest ou jest ne changera pas de lanceur
+   * pour ajouter QAI. Le test porte sur `dist/index.js` et non sur les sources
+   * parce que c'est le bundle qui peut perdre un export — un `export type`
+   * écrit à la place d'un `export` disparaît sans que rien ne le signale.
+   */
+  it('expose le moteur à un harnais de test existant', async () => {
+    const api: Record<string, unknown> = await import(
+      pathToFileURL(resolve('dist/index.js')).href
+    );
+
+    const attendus = [
+      'runScenario', 'runSuite', 'generateResolution', 'checkConsistency', 'formatIssue',
+      'ModelHealer', 'PlaywrightWebDriver', 'parseScenario', 'loadScenario', 'loadResolution',
+      'saveResolution', 'serializeResolution', 'applyHeals', 'artifactWriter', 'formatSuite',
+      'formatReport', 'formatMarkdown', 'loadConfig', 'BudgetedProvider', 'costOf',
+    ];
+
+    for (const nom of attendus) {
+      assert.equal(typeof api[nom], 'function', `${nom} n'est pas exporté comme valeur`);
+    }
+    assert.equal(api['RESOLUTION_VERSION'], 1);
+    assert.equal(typeof api['COMMENT_MARKER'], 'string');
   });
 });
