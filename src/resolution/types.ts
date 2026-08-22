@@ -36,7 +36,20 @@ export interface StepResolution {
   healNote?: string;
 }
 
+/**
+ * Version du **format** de résolution, pas de l'application testée.
+ *
+ * Un fichier sans champ `version` vaut 1 : c'est ce que produisaient les
+ * versions antérieures, et refuser de les lire casserait toutes les suites
+ * existantes. Le numéro ne monte que lorsque l'observation change — un arbre
+ * enrichi peut rendre un locator enregistré ambigu, et il vaut mieux le dire
+ * qu'échouer six étapes plus loin.
+ */
+export const RESOLUTION_VERSION = 1;
+
 export interface Resolution {
+  /** Absent dans les fichiers d'avant l'introduction du champ : vaut 1. */
+  version?: number;
   scenario: string;
   platform: Platform;
   recordedAt: string;

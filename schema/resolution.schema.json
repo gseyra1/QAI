@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qai.dev/schema/resolution.schema.json",
+  "title": "Résolution QAI",
+  "description": "Cache machine d'un parcours, propre à une plateforme et régénérable. Écrit par QAI, versionné dans git pour que la CI rejoue sans appel de modèle et pour qu'une auto-réparation apparaisse en diff de revue. Ne pas éditer à la main.",
+  "type": "object",
+  "required": ["scenario", "platform", "recordedAt", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version du format de résolution, pas de l'application. Absent = 1. Ne monte que lorsque l'observation change."
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Identifiant du scénario dont ce fichier est la résolution."
+    },
+    "platform": { "enum": ["web", "ios", "android"] },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant de la génération. Sert à dater une résolution devenue suspecte."
+    },
+    "appVersion": {
+      "type": "string",
+      "description": "Version de l'application testée au moment de l'enregistrement, si elle est connue."
+    },
+    "steps": {
+      "type": "object",
+      "description": "Une entrée par étape, indexée sur l'id de l'étape du scénario. C'est cette ancre qui permet de reformuler une intention sans invalider son cache.",
+      "additionalProperties": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "button", "link", "text", "heading", "image", "textbox", "searchbox", "combobox",
+        "checkbox", "radio", "switch", "slider", "list", "listitem", "table", "row",
+        "cell", "tab", "tablist", "dialog", "menu", "menuitem", "progressbar", "alert",
+        "group", "unknown"
+      ],
+      "description": "Sous-ensemble de rôles qui existe sur les trois plateformes. Correspondances dans docs/driver.md."
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Ciblage sémantique : ce que l'utilisateur voit, jamais un sélecteur.",
+      "properties": {
+        "role": { "$ref": "#/$defs/role" },
+        "name": {
+          "description": "Nom accessible, exact ou partiel. Peut référencer une capture via {{nom}}.",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "required": ["contains"],
+              "additionalProperties": false,
+              "properties": { "contains": { "type": "string" } }
+            }
+          ]
+        },
+        "nth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index parmi les correspondances. Sans lui, plusieurs correspondances = refus d'agir."
+        },
+        "within": { "$ref": "#/$defs/locator" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["primary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "$ref": "#/$defs/locator" },
+        "fallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Repli technique propre à la plateforme, essayé seulement si primary échoue. Un repli qui sert est un signal : l'accessibilité de l'application s'est dégradée.",
+          "properties": {
+            "testId": { "type": "string" },
+            "selector": { "type": "string" },
+            "accessibilityId": { "type": "string" }
+          }
+        }
+      }
+    },
+    "action": {
+      "description": "Un geste primitif. Une intention se traduit souvent en plusieurs.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "to"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "navigate" }, "to": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "click" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "fill" },
+            "target": { "$ref": "#/$defs/target" },
+            "value": {
+              "type": "string",
+              "description": "Peut référencer une capture via {{nom}}. Un secret ne doit jamais être écrit en clair ici."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "option"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "select" },
+            "target": { "$ref": "#/$defs/target" },
+            "option": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "key"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "press" }, "key": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "scrollTo" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "hover" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "direction"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "swipe" },
+            "direction": { "enum": ["up", "down", "left", "right"] }
+          }
+        }
+      ]
+    },
+    "check": {
+      "type": "object",
+      "required": ["check"],
+      "additionalProperties": false,
+      "description": "Forme machine d'une assertion. La clé sous laquelle elle est rangée est le texte exact de l'assertion du scénario.",
+      "properties": {
+        "check": {
+          "enum": [
+            "visible", "absent", "textEquals", "textContains", "countAtLeast",
+            "numberEquals", "stateIs"
+          ]
+        },
+        "target": { "$ref": "#/$defs/locator" },
+        "value": { "type": ["string", "number"] }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["actions"],
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/action" },
+          "description": "Les gestes qui réalisent l'intention, dans l'ordre. Assertions et captures sont évaluées une fois, après le dernier."
+        },
+        "captures": {
+          "type": "object",
+          "description": "Valeurs extraites de l'écran, réutilisables plus loin via {{nom}}.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["from", "extract"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "$ref": "#/$defs/locator" },
+              "extract": { "enum": ["text", "value", "number"] }
+            }
+          }
+        },
+        "assertions": {
+          "type": "object",
+          "description": "Clé = texte exact de l'assertion du scénario. Le réparateur n'a jamais le droit d'y toucher.",
+          "additionalProperties": { "$ref": "#/$defs/check" }
+        },
+        "healedAt": {
+          "type": ["string", "null"],
+          "description": "Horodatage de la dernière réparation, null si la résolution est d'origine."
+        },
+        "healNote": {
+          "type": "string",
+          "description": "Ce que le réparateur a compris du changement, pour l'humain qui relit le diff."
+        }
+      }
+    }
+  }
+}
