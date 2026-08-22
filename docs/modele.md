@@ -33,7 +33,7 @@ La vision ne devient nécessaire que pour le repli mobile.
 Pas de diffusion en flux : QAI a besoin d'un objet complet, pas de jetons au fil
 de l'eau.
 
-## Un exemple qui marche tout de suite
+## Deux exemples qui marchent tout de suite
 
 [examples/provider-claude.ts](../examples/provider-claude.ts) est prêt à
 l'emploi :
@@ -44,8 +44,15 @@ npm run qai -- resolve qa/parcours.qai.yaml --base-url $URL \
   --provider ./examples/provider-claude.ts --max-cost 2
 ```
 
-`QAI_MODEL` choisit le modèle (`claude-sonnet-5` par défaut) et le tarif suit.
-C'est un exemple, pas une dépendance : le paquet publié n'embarque aucun SDK.
+[examples/provider-gemini.ts](../examples/provider-gemini.ts) fait la même
+chose avec l'API Gemini (`GEMINI_API_KEY`) — et sans SDK du tout : l'API REST
+suffit, ce qui en fait le modèle à copier pour un fournisseur maison. C'est
+avec lui qu'a été validée la première résolution réelle de bout en bout :
+9 étapes résolues, rejeu vert sans appel modèle, réparation d'un bouton
+renommé en un appel, et refus de « réparer » une vraie régression.
+
+Dans les deux cas `QAI_MODEL` choisit le modèle et le tarif suit. Ce sont des
+exemples, pas des dépendances : le paquet publié n'embarque aucun SDK.
 
 ## Écrire le vôtre
 
