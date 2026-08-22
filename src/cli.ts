@@ -307,7 +307,30 @@ export async function main(argv: string[]): Promise<number> {
 
   for (const { path, scenario } of selected) {
     const resolutionPath = values.resolution ?? resolutionPathFor(path, scenario);
-    const resolution = await loadResolution(resolutionPath);
+
+    /**
+     * Un scénario sans résolution est un cas NORMAL d'une suite en cours
+     * d'écriture, pas une panne d'outil.
+     *
+     * Laisser l'erreur de lecture remonter arrêtait la commande entière sur le
+     * premier fichier manquant, en affichant un ENOENT brut : une suite où dix
+     * parcours sur cinquante restent à résoudre devenait invérifiable dans son
+     * ensemble, alors que c'est précisément là qu'on a besoin de savoir où on
+     * en est. On le compte comme une incohérence de plus — la commande échoue
+     * toujours, mais après avoir tout dit.
+     */
+    let resolution;
+    try {
+      resolution = await loadResolution(resolutionPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      inconsistent = true;
+      process.stderr.write(
+        `${scenario.id} : aucune résolution — lancer « qai resolve » sur ce parcours (${resolutionPath})\n`,
+      );
+      continue;
+    }
+
     const issues = checkConsistency(scenario, resolution, 'web');
 
     if (issues.length > 0) {
