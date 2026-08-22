@@ -28,11 +28,21 @@ const FIXTURE = `<!doctype html>
       <option value="std">Livraison standard</option>
       <option value="exp">Livraison express</option>
     </select>
+    <button id="supprimer">Supprimer le compte</button>
+    <button id="renommer">Renommer</button>
+    <p data-testid="etat">intact</p>
   </main>
   <script>
     document.getElementById('add').addEventListener('click', () => {
       const c = document.querySelector('[data-testid=cart-count]');
       c.textContent = String(Number(c.textContent) + 1);
+    });
+    const etat = document.querySelector('[data-testid=etat]');
+    document.getElementById('supprimer').addEventListener('click', () => {
+      etat.textContent = confirm('Confirmer la suppression ?') ? 'supprimé' : 'intact';
+    });
+    document.getElementById('renommer').addEventListener('click', () => {
+      etat.textContent = prompt('Nouveau nom ?') ?? 'annulé';
     });
   </script>
 </body></html>`;
@@ -198,6 +208,59 @@ describe('PlaywrightWebDriver', () => {
 
     await driver.act({ kind: 'select', target: cible, option: 'std' });
     assert.equal(await valeur(), 'std', 'une résolution écrite par valeur doit continuer à jouer');
+  });
+
+  /**
+   * Playwright refuse automatiquement tout dialogue natif tant que personne
+   * n'écoute. Un parcours « supprimer puis confirmer » se déroulait donc sans
+   * erreur mais sans rien supprimer — le pire des cas : un vert qui ne prouve
+   * rien.
+   */
+  describe('dialogues natifs', () => {
+    const etat = async (): Promise<string> => {
+      const outcome = await driver.resolve({
+        primary: { role: 'text', name: 'Libellé absent' },
+        fallback: { testId: 'etat' },
+      });
+      return outcome.found ? outcome.node.name : '';
+    };
+
+    const supprimer = { primary: { role: 'button' as const, name: 'Supprimer le compte' } };
+
+    it('accepte la confirmation quand elle est armée', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept' });
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+
+      assert.equal(await etat(), 'supprimé');
+      assert.equal(driver.takePendingDialogs(), 0, 'la politique doit avoir été consommée');
+    });
+
+    it('refuse la confirmation, et par défaut aussi', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'dismiss' });
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+      assert.equal(await etat(), 'intact');
+
+      // Aucune politique armée : le comportement d'avant est conservé.
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+      assert.equal(await etat(), 'intact');
+    });
+
+    it('répond à un prompt avec le texte demandé', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept', promptText: 'Nouveau libellé' });
+      await driver.act({ kind: 'click', target: { primary: { role: 'button', name: 'Renommer' } } });
+      await driver.settle();
+
+      assert.equal(await etat(), 'Nouveau libellé');
+    });
+
+    it('rend et efface une politique jamais consommée', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept' });
+      assert.equal(driver.takePendingDialogs(), 1);
+      assert.equal(driver.takePendingDialogs(), 0, 'la lecture doit aussi désarmer');
+    });
   });
 
   it('refuse une action que la plateforme ne sait pas faire', async () => {

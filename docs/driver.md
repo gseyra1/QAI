@@ -45,6 +45,31 @@ suite pour l'étage de réparation :
 vaut moins que pas de test du tout. Le driver refuse de choisir et remonte le
 nombre de correspondances.
 
+## Les dialogues natifs se déclarent avant le geste
+
+Playwright **refuse automatiquement** `confirm()`, `alert()` et `prompt()` tant
+que personne n'écoute. Un parcours « supprimer puis confirmer » se déroulait
+donc sans erreur et sans rien supprimer : le pire des cas, un vert qui ne
+prouve rien.
+
+`expectDialog` arme la réponse au **prochain** dialogue, pour une seule fois :
+
+```json
+[
+  { "kind": "expectDialog", "response": "accept" },
+  { "kind": "click", "target": { "primary": { "role": "button", "name": "Supprimer" } } }
+]
+```
+
+L'ordre n'est pas négociable. Le dialogue bloque la page dès le clic : il n'y a
+aucun instant *après* le geste où l'on pourrait encore répondre.
+
+Sans politique armée, le driver refuse — le comportement d'avant, pour que les
+résolutions existantes ne changent pas de sens. Une politique armée que
+personne n'a consommée devient un **avertissement** d'étape : le clic a réussi
+mais le dialogue attendu n'est pas apparu, ce qui signale presque toujours que
+la confirmation a disparu de l'application.
+
 ## `select` vise le libellé, pas la valeur
 
 `selectOption("std")` de Playwright apparie la **value** de l'option — un

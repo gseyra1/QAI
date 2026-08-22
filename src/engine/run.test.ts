@@ -34,6 +34,7 @@ class FakeDriver implements Driver {
     swipe: false,
     navigateByUrl: true,
     deepLink: true,
+    dialogs: true,
   };
 
   readonly acted: Action[] = [];

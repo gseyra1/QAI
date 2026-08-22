@@ -130,7 +130,19 @@ export type Action =
   | { kind: 'press'; key: string }
   | { kind: 'scrollTo'; target: ResolvedTarget }
   | { kind: 'hover'; target: ResolvedTarget }
-  | { kind: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' };
+  | { kind: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' }
+  /**
+   * Arme la réponse au **prochain** dialogue natif, pour une seule fois.
+   *
+   * Se place juste avant le geste qui le déclenche, jamais après : le dialogue
+   * bloque la page dès le clic, il n'y a donc aucun moment ultérieur où
+   * répondre. Sans cette action, tout parcours « supprimer puis confirmer »
+   * casse en silence — un pilote sans politique déclarée refuse le dialogue,
+   * et la suppression n'a jamais lieu.
+   *
+   * `promptText` ne vaut que pour un prompt() ; il est ignoré ailleurs.
+   */
+  | { kind: 'expectDialog'; response: 'accept' | 'dismiss'; promptText?: string };
 
 /**
  * Ce que la plateforme sait faire. Le moteur consulte ces drapeaux avant de
@@ -142,6 +154,8 @@ export interface Capabilities {
   swipe: boolean;
   navigateByUrl: boolean;
   deepLink: boolean;
+  /** Dialogues natifs : alert, confirm, prompt — et leurs équivalents mobiles. */
+  dialogs: boolean;
 }
 
 export type ResolveOutcome =
@@ -235,6 +249,16 @@ export interface Driver {
    * et polluerait l'historique de réparations.
    */
   settle(timeoutMs?: number): Promise<void>;
+
+  /**
+   * Rend et efface les politiques de dialogue armées mais jamais consommées.
+   *
+   * Une politique qui survit à son étape répondrait à un dialogue qu'aucun
+   * scénario n'a prévu, trois étapes plus loin. La rendre au moteur permet
+   * d'avertir : « expectDialog armé, aucun dialogue n'est apparu » signale le
+   * plus souvent que le bouton de confirmation a disparu de l'application.
+   */
+  takePendingDialogs?(): number;
 
   dispose(): Promise<void>;
 }

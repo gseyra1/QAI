@@ -37,6 +37,13 @@ Règle pour les valeurs saisies :
 - {{capture}} fonctionne aussi dans une valeur saisie, pour reprendre ce qui a
   été lu à une étape précédente.
 
+Règle pour les confirmations natives :
+- Un geste qui déclenche une boîte de dialogue du navigateur (confirm, alert,
+  prompt) doit être PRÉCÉDÉ de { "kind": "expectDialog", "response": "accept" }.
+  Le dialogue bloque la page dès le clic : il n'y a aucun moment après pour
+  répondre. Sans cette action, le dialogue est refusé et la suppression, la
+  confirmation ou la sortie n'a jamais lieu.
+
 Une intention se traduit souvent en plusieurs gestes : « renseigner l'adresse »
 ou « se connecter » sont plusieurs actions, dans l'ordre.`;
 
