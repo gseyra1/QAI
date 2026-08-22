@@ -75,3 +75,21 @@ The CLI produces the markdown; the rest is yours:
 ```bash
 qai run --base-url $URL --format markdown --out report.md
 ```
+
+Ou du JUnit, que GitLab, Jenkins et Azure ingèrent nativement — c'est ce qui
+fait apparaître les parcours dans l'onglet « Tests » plutôt que noyés dans un
+journal :
+
+```bash
+qai run --base-url $URL --format junit --out rapport.xml
+```
+
+**Une suite JUnit vaut un parcours, un cas vaut une étape.** C'est la
+projection qui conserve l'information utile — quelle étape a lâché, sur quelle
+assertion — là où un cas par parcours réduirait tout à un booléen. Le nom du
+cas porte l'intention, pas seulement l'identifiant : `s4` n'apprend rien à qui
+lit l'onglet « Tests ».
+
+Une étape sautée devient `<skipped/>`. Une étape **réparée** reste verte, avec
+la note de réparation en `<system-out>` — sauf sous `--strict`, où elle devient
+un `<failure>` : le rapport doit dire la même chose que le code de sortie.

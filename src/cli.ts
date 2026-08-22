@@ -14,6 +14,7 @@ import { BudgetedProvider } from './model/budget.ts';
 import type { ModelProvider, Pricing } from './model/types.ts';
 import { loadConfig } from './config.ts';
 import { artifactWriter } from './report/artifacts.ts';
+import { formatJUnit } from './report/junit.ts';
 import { formatMarkdown } from './report/markdown.ts';
 import { formatSuite } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
@@ -49,7 +50,7 @@ Options
   --resolution <path>   force the resolution path (single scenario only)
   --config <path>       default: qai.config.json, searched upward
   --artifacts <dir>     where to store failure captures (default .qai/artifacts)
-  --format <f>          text (default), json or markdown
+  --format <f>          text (default), json, markdown or junit
   --out <path>          write the report to a file
   --run-url <url>       link to the CI run, inserted into the markdown
   --json                alias for --format json
@@ -369,7 +370,9 @@ export async function main(argv: string[]): Promise<number> {
             ...(values['run-url'] !== undefined ? { runUrl: values['run-url'] } : {}),
             artifactName: 'qai-captures',
           })
-        : `${formatSuite(report)}\n`;
+        : format === 'junit'
+          ? formatJUnit(report, { strict: settings.strict })
+          : `${formatSuite(report)}\n`;
 
   if (values.out === undefined) process.stdout.write(rendered);
   else {

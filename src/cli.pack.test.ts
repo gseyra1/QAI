@@ -89,7 +89,7 @@ describe('the packaged binary', () => {
       'runScenario', 'runSuite', 'generateResolution', 'checkConsistency', 'formatIssue',
       'ModelHealer', 'PlaywrightWebDriver', 'parseScenario', 'loadScenario', 'loadResolution',
       'saveResolution', 'serializeResolution', 'applyHeals', 'artifactWriter', 'formatSuite',
-      'formatReport', 'formatMarkdown', 'loadConfig', 'BudgetedProvider', 'costOf',
+      'formatReport', 'formatMarkdown', 'formatJUnit', 'loadConfig', 'BudgetedProvider', 'costOf',
     ];
 
     for (const name of expected) {
