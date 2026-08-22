@@ -389,6 +389,34 @@ describe('runScenario', () => {
   });
 
   /**
+   * Sans réparateur, « cible introuvable » laissait le lecteur ouvrir un
+   * navigateur pour chercher lui-même ce qui avait bougé. La suggestion est
+   * calculée sans appel de modèle : elle vaut donc aussi sans --provider.
+   */
+  it('propose les libellés proches quand la cible a disparu', async () => {
+    const page = node('group', 'page', [node('button', 'Ajouter au panier ⚡')]);
+    const report = await runScenario({
+      driver: new FakeDriver(page, () => MISSING),
+      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /cible introuvable — plus proches : button "Ajouter au panier ⚡"/);
+  });
+
+  it('ne suggère rien sur une cible ambiguë : le nom correspond déjà', async () => {
+    const report = await runScenario({
+      driver: new FakeDriver(TREE, () => AMBIGUOUS),
+      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.doesNotMatch(report.steps[0]?.error ?? '', /plus proches/);
+  });
+
+  /**
    * Sans interpolation au rejeu, la résolution devrait contenir le mot de
    * passe en clair pour qu'un parcours de connexion fonctionne — c'est-à-dire
    * qu'aucune application authentifiée ne serait testable sans verser un
