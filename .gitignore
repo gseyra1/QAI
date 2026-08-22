@@ -5,5 +5,12 @@ dist/
 .qai/artifacts/
 *.tgz
 
+# Secrets : le depot est public. Aucune cle ne doit pouvoir y entrer par
+# inadvertance — QAI ne lit AUCUN .env, il lit l environnement, mais un fichier
+# cree a la main ne doit pas etre commitable pour autant.
+.env
+.env.*
+!.env.example
+
 # Documents financiers et business : local uniquement
 docs/couts.md
