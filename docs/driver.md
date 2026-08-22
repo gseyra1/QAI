@@ -41,6 +41,20 @@ a second "Valider" button, a test that "passes" by silently clicking the wrong
 one is worse than no test at all. The driver refuses to choose and reports the
 match count.
 
+## `select` targets the label, not the value
+
+Playwright's `selectOption("std")` matches the option's **value** — a technical
+detail the user never sees. An intent-based tool must target what is displayed:
+the driver therefore tries the label first ("Standard delivery"), and falls back
+to the value if no label matches.
+
+The options are read in one go before choosing, rather than trying and catching
+the error: a failed `selectOption` burns a full timeout — thirty seconds per
+`select` on resolutions written by value.
+
+A mobile driver will apply the same rule to its own native picker: what is
+targeted is the label read on screen.
+
 ## Role mapping
 
 This table decides whether portability is real. QAI's vocabulary is the

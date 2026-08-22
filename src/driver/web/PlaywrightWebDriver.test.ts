@@ -25,6 +25,10 @@ const FIXTURE = `<!doctype html>
     <button>Valider</button>
     <button aria-hidden="true">Fantôme</button>
     <div style="display:none"><button>Bouton masqué</button></div>
+    <select aria-label="Transporteur">
+      <option value="std">Livraison standard</option>
+      <option value="exp">Livraison express</option>
+    </select>
   </main>
   <p id="salut"></p>
   <script>
@@ -196,6 +200,26 @@ describe('PlaywrightWebDriver', () => {
     });
     assert.equal(outcome.found, true);
     assert.equal(outcome.found && outcome.node.name, '1');
+  });
+
+  /**
+   * `selectOption(string)` apparie la *value*, un détail technique invisible
+   * de l'utilisateur. Un outil d'intention doit viser le libellé affiché —
+   * mais les résolutions déjà écrites par valeur doivent continuer à jouer,
+   * d'où les deux sens vérifiés ici.
+   */
+  it('choisit une option par son libellé, et encore par sa valeur', async () => {
+    const cible = { primary: { role: 'combobox' as const, name: 'Transporteur' } };
+    const valeur = async (): Promise<string> => {
+      const outcome = await driver.resolve(cible);
+      return outcome.found ? (outcome.node.value ?? '') : '';
+    };
+
+    await driver.act({ kind: 'select', target: cible, option: 'Livraison express' });
+    assert.equal(await valeur(), 'exp', 'le libellé affiché doit suffire');
+
+    await driver.act({ kind: 'select', target: cible, option: 'std' });
+    assert.equal(await valeur(), 'std', 'une résolution écrite par valeur doit continuer à jouer');
   });
 
   it('refuse une action que la plateforme ne sait pas faire', async () => {
