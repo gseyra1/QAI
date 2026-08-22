@@ -63,10 +63,15 @@ qu'en artefact de CI sans toucher au moteur.
     heal: 'true'
 ```
 
+`--heal` exige un fournisseur de modèle : l'action ne le passe pas en entrée,
+il vient de la clé `provider` de votre `qai.config.json` (et sa clé d'API, de
+l'environnement du job).
+
 Les résolutions réparées sont réécrites dans le dépôt de travail du runner. À
 vous d'en faire ce que vous voulez : les commiter sur la branche de la PR, ou
-simplement lire le diff dans le commentaire. Ajoutez `strict: 'true'` si une
-réparation doit bloquer la fusion plutôt que passer.
+les publier en artefact. Le commentaire signale la réparation ; le diff, lui,
+est dans le fichier réécrit. Ajoutez `strict: 'true'` si une réparation doit
+bloquer la fusion plutôt que passer.
 
 ## Options
 
@@ -75,9 +80,11 @@ réparation doit bloquer la fusion plutôt que passer.
 | `base-url` | — | obligatoire |
 | `scenarios` | `qai.config.json` | fichiers, dossiers ou motif |
 | `config` | découvert | chemin du fichier de configuration |
+| `states` | — | module `StateProvider`, pour l'état déclaré par `given` |
 | `heal` | `false` | réparer les cibles périmées |
 | `strict` | `false` | une réparation fait échouer le job |
 | `comment` | `true` | poster le rapport |
+| `github-token` | `github.token` | jeton pour poster le commentaire |
 | `version` | `latest` | version de QAI |
 
 ## Sans GitHub

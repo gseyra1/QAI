@@ -259,6 +259,10 @@ export async function main(argv: string[]): Promise<number> {
         await driver.dispose();
       }
     }
+    if (provider instanceof BudgetedProvider) {
+      const spend = provider.spend;
+      process.stdout.write(`dépense modèle : ${spend.cost.toFixed(4)} (${spend.calls} appels)\n`);
+    }
     return failed ? 1 : 0;
   }
 
@@ -338,6 +342,10 @@ export async function main(argv: string[]): Promise<number> {
   else {
     await writeFile(values.out, rendered, 'utf8');
     process.stdout.write(`${formatSuite(report)}\n\nrapport ${format} écrit dans ${values.out}\n`);
+  }
+  if (provider instanceof BudgetedProvider) {
+    const spend = provider.spend;
+    process.stdout.write(`dépense modèle : ${spend.cost.toFixed(4)} (${spend.calls} appels)\n`);
   }
 
   for (const entry of report.entries) {

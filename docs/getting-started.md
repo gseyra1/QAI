@@ -200,5 +200,5 @@ ouverte.
 
 ## Ce qui n'existe pas encore
 
-- **L'intégration CI** et le commentaire de pull request.
-- **Les drivers mobiles.**
+- **Les drivers mobiles.** L'intégration CI, elle, existe : voir
+  [ci.md](ci.md).

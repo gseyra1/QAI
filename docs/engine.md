@@ -76,13 +76,10 @@ sur l'ancien texte, une résolution orpheline après suppression d'une étape.
 Aucun de ces cas ne casse à l'exécution — ils produisent des faux verts, ce qui
 est pire. Le contrôle doit tourner en CI avant le rejeu.
 
-## Ce qui n'existe pas encore
+## Les autres étages
 
-L'interface `Healer` est définie et le moteur l'appelle correctement, mais
-**aucune implémentation n'existe** : l'étage 2 reste à écrire. Sans réparateur
-fourni, une cible introuvable produit simplement un échec.
+Le réparateur existe ([reparation.md](reparation.md)), la génération existe
+([generation.md](generation.md)), l'intégration CI existe ([ci.md](ci.md)).
+Sans réparateur fourni, une cible introuvable produit simplement un échec.
 
-Manque également la génération de résolutions (étage 3) : aujourd'hui le cache
-s'écrit à la main. Et l'intégration CI avec commentaire de pull request.
-
-Le CLI, lui, existe : voir [getting-started.md](getting-started.md).
+Seuls les drivers mobiles restent à écrire.
