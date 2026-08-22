@@ -171,6 +171,9 @@ export function collectTree(
   function valueOf(el: Element): string | undefined {
     if (el instanceof HTMLInputElement) {
       if (el.type === 'checkbox' || el.type === 'radio') return undefined;
+      // Jamais la valeur d'un mot de passe : le snapshot part vers le modèle
+      // branché par le client, un secret saisi ne doit pas quitter la page.
+      if (el.type === 'password') return undefined;
       return el.value;
     }
     if (el instanceof HTMLTextAreaElement) return el.value;
