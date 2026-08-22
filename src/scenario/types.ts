@@ -57,3 +57,23 @@ export function expectationsOf(step: Step): string[] {
   if (step.expect === undefined) return [];
   return Array.isArray(step.expect) ? step.expect : [step.expect];
 }
+
+/**
+ * Un scénario est retenu s'il porte **au moins un** des tags demandés.
+ *
+ * L'union, pas l'intersection : « --tags critical-path,paiement » veut dire
+ * « le lot bloquant plus le paiement », lecture qui correspond à l'usage réel —
+ * un lot de fumée en pull request, la suite entière la nuit. Une liste de tags
+ * vide ne filtre rien.
+ */
+export function matchesTags(scenario: Scenario, tags: readonly string[]): boolean {
+  if (tags.length === 0) return true;
+  return scenario.tags?.some((tag) => tags.includes(tag)) === true;
+}
+
+/** « a, b ,, c » → ['a', 'b', 'c'] — la virgule est le séparateur du shell. */
+export function parseTags(value: string | readonly string[] | undefined): string[] {
+  if (value === undefined) return [];
+  const raw = typeof value === 'string' ? value.split(',') : value.flatMap((item) => item.split(','));
+  return raw.map((tag) => tag.trim()).filter((tag) => tag !== '');
+}

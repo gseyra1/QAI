@@ -7,6 +7,7 @@ anywhere in the repo.
 ```json
 {
   "scenarios": ["qa/"],
+  "tags": [],
   "baseUrl": "http://localhost:3000",
   "states": "./qa/states.ts",
   "provider": "./qa/provider.ts",
@@ -26,6 +27,23 @@ qai run
 
 **Command-line options always override the file** — override `--base-url` per
 environment without duplicating the configuration.
+
+## Selecting by tag
+
+`tags` — or `--tags critical-path,billing` — keeps only the journeys carrying
+**at least one** of the requested tags. It is a union, not an intersection: the
+useful reading is "the blocking set plus billing".
+
+```bash
+qai run --tags critical-path       # on a pull request
+qai run                            # the whole suite, at night
+```
+
+The filter applies to `check` and `resolve` too, so that the consistency check
+and the generation bear on exactly the same set as the replay.
+
+**A filter that keeps nothing fails the command.** Exiting 0 would mean a
+misspelled tag turns a CI job green without having run anything.
 
 ## Rules
 

@@ -21,6 +21,7 @@ import { loadResolution } from './resolution/load.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
+import { matchesTags, parseTags } from './scenario/types.ts';
 import type { StateProvider } from './state/types.ts';
 
 const USAGE = `qai — QA agent
@@ -37,6 +38,7 @@ Options
                         install the state declared by "given"
   --provider <module>   module default-exporting a ModelProvider, and
                         optionally a "pricing" constant
+  --tags <a,b>          run only the journeys carrying one of these tags
   --workers <n>         journeys in parallel (default: 4)
   --heal                repair stale targets and rewrite the resolutions
   --max-cost <n>        model spend cap
@@ -98,6 +100,7 @@ export async function main(argv: string[]): Promise<number> {
       resolution: { type: 'string' },
       states: { type: 'string' },
       provider: { type: 'string' },
+      tags: { type: 'string' },
       workers: { type: 'string' },
       'max-cost': { type: 'string' },
       attempts: { type: 'string' },
@@ -130,6 +133,7 @@ export async function main(argv: string[]): Promise<number> {
       values['assert-timeout'] !== undefined
         ? Number(values['assert-timeout'])
         : config.assertTimeout,
+    tags: parseTags(values.tags ?? config.tags),
     artifacts: values.artifacts ?? config.artifacts ?? '.qai/artifacts',
     strict: values.strict === true || config.strict === true,
   };
@@ -185,8 +189,27 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write('no scenarios found\n');
     return 1;
   }
-  if (values.resolution !== undefined && paths.length > 1) {
-    process.stderr.write('--resolution only applies to a single scenario\n');
+
+  /**
+   * Les scénarios sont chargés une fois, puis filtrés, pour les trois
+   * commandes. Filtrer après chargement est ce qui permet de sélectionner par
+   * tag : le tag vit dans le fichier, pas dans son nom.
+   */
+  const loaded: { path: string; scenario: Scenario }[] = [];
+  for (const path of paths) loaded.push({ path, scenario: await loadScenario(path) });
+
+  const selected = loaded.filter((item) => matchesTags(item.scenario, settings.tags));
+  if (selected.length === 0) {
+    // Sortir en 0 ferait qu'un tag mal orthographié rende un job de CI vert
+    // sans avoir rien joué — exactement le mode de panne que l'outil existe
+    // pour éviter.
+    process.stderr.write(`no scenario carries the requested tags (${settings.tags.join(', ')})
+`);
+    return 1;
+  }
+  if (values.resolution !== undefined && selected.length > 1) {
+    process.stderr.write('--resolution only applies to a single scenario
+');
     return 1;
   }
 
@@ -221,8 +244,7 @@ export async function main(argv: string[]): Promise<number> {
     const provider = await modelProvider(settings.provider);
     let failed = false;
 
-    for (const path of paths) {
-      const scenario = await loadScenario(path);
+    for (const { path, scenario } of selected) {
       const driver = createDriver();
       try {
         await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
@@ -282,8 +304,7 @@ export async function main(argv: string[]): Promise<number> {
   const items: SuiteItem[] = [];
   let inconsistent = false;
 
-  for (const path of paths) {
-    const scenario = await loadScenario(path);
+  for (const { path, scenario } of selected) {
     const resolutionPath = values.resolution ?? resolutionPathFor(path, scenario);
     const resolution = await loadResolution(resolutionPath);
     const issues = checkConsistency(scenario, resolution, 'web');
