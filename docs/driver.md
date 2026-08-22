@@ -45,6 +45,22 @@ suite pour l'étage de réparation :
 vaut moins que pas de test du tout. Le driver refuse de choisir et remonte le
 nombre de correspondances.
 
+## `select` vise le libellé, pas la valeur
+
+`selectOption("std")` de Playwright apparie la **value** de l'option — un
+détail technique que l'utilisateur ne voit jamais. Un outil d'intention doit
+viser ce qui est affiché : le driver essaie donc d'abord le libellé
+(« Livraison standard »), et retombe sur la valeur si aucun libellé ne
+correspond.
+
+Les options sont lues d'un coup avant de choisir, plutôt que d'essayer puis de
+rattraper l'erreur : un échec de `selectOption` consomme un délai d'attente
+complet, soit trente secondes par `select` sur les résolutions écrites par
+valeur.
+
+Un driver mobile appliquera la même règle sur son propre sélecteur natif : ce
+qui est ciblé est le libellé lu à l'écran.
+
 ## La correspondance des rôles
 
 C'est le tableau qui décide si la portabilité est réelle. Le vocabulaire de QAI

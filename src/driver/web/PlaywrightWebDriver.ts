@@ -199,6 +199,30 @@ export class PlaywrightWebDriver implements Driver {
     }, { interactiveOnly: false, maxDepth: 0 });
   }
 
+  /**
+   * Choisir par **libellé** d'abord, par valeur ensuite.
+   *
+   * `selectOption(string)` de Playwright apparie la *value* de l'option, qui
+   * est un détail technique invisible de l'utilisateur — un outil d'intention
+   * doit viser ce qui est affiché. L'ordre est donc libellé puis valeur : les
+   * résolutions produites par le modèle décrivent ce qu'il a lu à l'écran, et
+   * les anciennes, écrites par valeur, passent par le repli.
+   *
+   * Les options sont lues d'un coup avant de choisir. Tenter le libellé puis
+   * rattraper l'erreur consommerait un délai d'attente complet — trente
+   * secondes par `select` sur les résolutions existantes.
+   */
+  async #select(locator: PWLocator, option: string): Promise<void> {
+    const labels = await locator.evaluate((element) =>
+      element instanceof HTMLSelectElement
+        ? Array.from(element.options).map((one) => (one.label || one.textContent) ?? '')
+        : [],
+    );
+
+    const known = labels.some((label) => label.trim() === option);
+    await locator.selectOption(known ? { label: option } : option);
+  }
+
   async #locatorFor(target: ResolvedTarget): Promise<PWLocator> {
     const { locator, matches } = await this.#pick(target);
     if (locator !== null) return locator;
@@ -227,7 +251,7 @@ export class PlaywrightWebDriver implements Driver {
         await (await this.#locatorFor(action.target)).fill(action.value);
         return;
       case 'select':
-        await (await this.#locatorFor(action.target)).selectOption(action.option);
+        await this.#select(await this.#locatorFor(action.target), action.option);
         return;
       case 'hover':
         await (await this.#locatorFor(action.target)).hover();
