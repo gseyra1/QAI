@@ -261,6 +261,9 @@ export function collectTree(
     const value = valueOf(el);
     if (value !== undefined) node.value = value;
 
+    const testId = el.getAttribute('data-testid');
+    if (testId !== null && testId !== '') node.testId = testId;
+
     if (isRoot) return node;
     if (!visible && children.length === 0) return null;
 
@@ -276,6 +279,9 @@ export function collectTree(
       node.name === '' &&
       !INTERACTIVE.has(node.role)
     ) {
+      // L'identifiant de test d'un emballage aplati descend sur son unique
+      // enfant : c'est le même élément aux yeux de l'auteur de la page.
+      if (node.testId !== undefined && only.testId === undefined) only.testId = node.testId;
       return only;
     }
 

@@ -228,7 +228,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
               tree: renderTree(before.root),
               location: before.location,
               expectations: expectationsOf(step),
-              captureNames: Object.keys(step.capture ?? {}),
+              captures: step.capture ?? {},
               availableCaptures: bag,
             }),
           },
@@ -298,7 +298,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
               text: checksMessage({
                 tree: renderTree(after.root),
                 expectations: expectationsOf(step),
-                captureNames: Object.keys(step.capture ?? {}),
+                captures: step.capture ?? {},
                 availableCaptures: bag,
               }),
             },

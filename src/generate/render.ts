@@ -34,6 +34,7 @@ function walk(node: UINode, depth: number, lines: string[]): void {
 
   const marks = STATE_MARKS.filter(([key]) => node.state[key] === true).map(([, label]) => label);
   if (marks.length > 0) parts.push(`[${marks.join(' ')}]`);
+  if (node.testId !== undefined) parts.push(`#${node.testId}`);
 
   lines.push(`${'  '.repeat(depth)}${parts.join(' ')}`);
   for (const child of node.children) walk(child, depth + 1, lines);
