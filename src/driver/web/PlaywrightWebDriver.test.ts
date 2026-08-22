@@ -26,11 +26,17 @@ const FIXTURE = `<!doctype html>
     <button aria-hidden="true">Fantôme</button>
     <div style="display:none"><button>Bouton masqué</button></div>
   </main>
+  <p id="salut"></p>
   <script>
     document.getElementById('add').addEventListener('click', () => {
       const c = document.querySelector('[data-testid=cart-count]');
       c.textContent = String(Number(c.textContent) + 1);
     });
+    // Amorçage : l'état de session n'est lu qu'au chargement, comme dans une
+    // vraie application. C'est ce qui rend le rechargement d'applyState
+    // observable.
+    const u = localStorage.getItem('qai_user');
+    if (u) document.getElementById('salut').textContent = 'Bonjour ' + u;
   </script>
 </body></html>`;
 
@@ -233,6 +239,23 @@ describe('PlaywrightWebDriver', () => {
       assert.equal(session.value, 'jeton-de-test');
       assert.equal(session.sameSite, 'None');
       assert.equal(session.secure, true);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('recharge la page quand un état est posé sans point d\'entrée', async () => {
+    // launch() charge la page AVANT applyState : l'amorçage de l'application a
+    // déjà lu un storage vide. Sans rechargement, l'app resterait rendue
+    // « déconnectée » pour toute la durée du parcours.
+    const local = new PlaywrightWebDriver(() => chromium.launch());
+
+    try {
+      await local.launch({ entry: baseUrl, viewport: { width: 800, height: 600 } });
+      await local.applyState({ storage: { qai_user: 'Alice' } });
+
+      const snapshot = await local.observe();
+      assert.equal(findAll(snapshot.root, (n) => n.name === 'Bonjour Alice').length, 1);
     } finally {
       await local.dispose();
     }

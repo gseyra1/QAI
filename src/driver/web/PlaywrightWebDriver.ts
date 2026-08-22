@@ -110,7 +110,18 @@ export class PlaywrightWebDriver implements Driver {
 
     if (state.entry !== undefined) {
       await page.goto(new URL(state.entry, this.#baseUrl).toString());
+      return;
     }
+
+    // La page a été chargée par launch(), AVANT la pose de l'état : le code
+    // d'amorçage de l'application a déjà lu des cookies et un storage absents.
+    // Sans point d'entrée demandé, on recharge pour que l'application démarre
+    // avec l'état réellement installé — sinon elle resterait rendue
+    // « déconnectée » pour toute la durée du parcours.
+    const applied =
+      (state.cookies !== undefined && state.cookies.length > 0) ||
+      (state.storage !== undefined && Object.keys(state.storage).length > 0);
+    if (applied) await page.reload();
   }
 
   async #ensureCollector(): Promise<void> {

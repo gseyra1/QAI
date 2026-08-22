@@ -71,8 +71,9 @@ révocable.
 
 - **Un réessai après repos** précède toute réparation : l'instabilité de rendu
   ne doit pas coûter un appel de modèle.
-- **Une cible ambiguë n'est jamais réessayée** et jamais réparée à l'aveugle :
-  deux éléments correspondants ne se réduiront pas à un avec le temps.
+- **Une cible ambiguë n'est jamais réessayée** — deux correspondants ne se
+  réduiront pas à un avec le temps. Elle part en réparation comme les autres :
+  le réparateur reçoit l'ambiguïté et doit la lever avec `within` ou `nth`.
 - **Le budget est borné** — trois réparations par parcours par défaut, plus le
   plafond de dépense du fournisseur. Une dérive massive n'est pas un test
   périmé, c'est une application qui a changé de nature.

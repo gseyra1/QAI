@@ -57,7 +57,7 @@ exemples, pas des dépendances : le paquet publié n'embarque aucun SDK.
 ## Écrire le vôtre
 
 ```ts
-import type { ModelProvider, ModelRequest, ModelResponse } from 'qai/model';
+import type { ModelProvider, ModelRequest, ModelResponse } from 'tilmiqai';
 
 export class MonFournisseur implements ModelProvider {
   readonly name = 'mon-modele';
@@ -88,7 +88,7 @@ export class MonFournisseur implements ModelProvider {
 trois plafonds atteint :
 
 ```ts
-import { BudgetedProvider } from 'qai/model';
+import { BudgetedProvider } from 'tilmiqai';
 
 const provider = new BudgetedProvider(
   new MonFournisseur(),
@@ -100,8 +100,9 @@ const provider = new BudgetedProvider(
 Le contrôle a lieu **avant** chaque appel, sur la dépense déjà constatée. Le
 coût d'un appel n'étant connu qu'après coup, le plafond peut être dépassé d'un
 appel au plus — refuser d'agir tant qu'on ne sait pas prédire le coût bloquerait
-le produit. `provider.spend` expose le cumul à tout moment, et le rapport de
-scénario le reprend.
+le produit. `provider.spend` expose le cumul à tout moment, et le CLI
+l'affiche en fin de commande (« dépense modèle : … ») dès qu'un plafond est
+posé.
 
 ## Choisir un modèle
 
