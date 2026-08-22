@@ -7,6 +7,7 @@ depuis n'importe où dans le dépôt.
 ```json
 {
   "scenarios": ["qa/"],
+  "tags": [],
   "baseUrl": "http://localhost:3000",
   "states": "./qa/states.ts",
   "provider": "./qa/provider.ts",
@@ -27,6 +28,23 @@ qai run
 **Les options de la ligne de commande priment toujours** sur le fichier, ce qui
 permet de surcharger `--base-url` par environnement sans dupliquer la
 configuration.
+
+## Sélectionner par tag
+
+`tags` — ou `--tags critical-path,paiement` — ne retient que les parcours qui
+portent **au moins un** des tags demandés. C'est l'union, pas l'intersection :
+la lecture utile est « le lot bloquant plus le paiement ».
+
+```bash
+qai run --tags critical-path       # en pull request
+qai run                            # la suite entière, la nuit
+```
+
+Le filtre s'applique aussi à `check` et `resolve`, pour que le contrôle de
+cohérence et la génération portent sur exactement le même lot que le rejeu.
+
+**Un filtre qui ne retient rien fait échouer la commande.** Sortir en 0 ferait
+qu'un tag mal orthographié rendrait un job de CI vert sans avoir rien joué.
 
 ## Deux règles
 

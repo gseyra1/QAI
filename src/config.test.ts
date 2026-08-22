@@ -37,6 +37,17 @@ describe('fichier de configuration', () => {
     assert.equal(config.scenarios?.length, 1);
   });
 
+  /** Un tag n'est pas un chemin : il ne doit pas passer par l'absolutisation. */
+  it('lit les tags, en liste ou en chaîne unique', async () => {
+    const liste = join(dir, 'tags.json');
+    await writeFile(liste, JSON.stringify({ tags: ['critical-path', 'paiement'] }));
+    assert.deepEqual((await loadConfig(liste)).config.tags, ['critical-path', 'paiement']);
+
+    const unique = join(dir, 'tag.json');
+    await writeFile(unique, JSON.stringify({ tags: 'critical-path' }));
+    assert.deepEqual((await loadConfig(unique)).config.tags, ['critical-path']);
+  });
+
   it('ignore les champs de type inattendu plutôt que de les propager', async () => {
     const path = join(dir, 'types.json');
     await writeFile(path, JSON.stringify({ workers: 'quatre', baseUrl: 42, strict: true }));

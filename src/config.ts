@@ -3,6 +3,8 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 
 export interface QaiConfig {
   scenarios?: string[];
+  /** Ne jouer que les parcours portant au moins un de ces tags. */
+  tags?: string[];
   baseUrl?: string;
   states?: string;
   provider?: string;
@@ -51,6 +53,11 @@ function parse(raw: string, path: string): QaiConfig {
   const scenarios = document['scenarios'];
   if (typeof scenarios === 'string') config.scenarios = [scenarios];
   else if (Array.isArray(scenarios)) config.scenarios = scenarios as string[];
+
+  // Les tags ne sont pas des chemins : ils ne passent pas par absolutize().
+  const tags = document['tags'];
+  if (typeof tags === 'string') config.tags = [tags];
+  else if (Array.isArray(tags)) config.tags = tags as string[];
 
   for (const key of ['baseUrl', 'states', 'provider', 'artifacts'] as const) {
     const value = document[key];
