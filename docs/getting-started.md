@@ -40,23 +40,24 @@ ils produisent des faux verts, ce qui est pire.
 ## 3. Rejouer le parcours
 
 ```bash
-npm run qai -- run examples/checkout-guest.qai.yaml --base-url http://127.0.0.1:8899/
+npm run qai -- run examples/checkout-guest.qai.yaml \
+  --base-url http://127.0.0.1:8899/ \
+  --states ./examples/states-exemple.ts
 ```
 
-```
-checkout-guest — RÉUSSI   1.2 s
-Un visiteur non connecté peut commander un article
+`--states` fournit l'état déclaré par le bloc `given` du scénario — sans lui,
+QAI refuse de jouer un parcours qui exige un état (voir [etats.md](etats.md)).
 
-  ✓ s1   ouvrir la page d'accueil de la boutique
-  ✓ s2   rechercher "chaise de bureau"
-  ✓ s3   ouvrir le premier article de la liste
-  ✓ s4   ajouter l'article au panier
-  ✓ s5   cliquer sur l'icône panier dans l'en-tête
-  ✓ s6   lancer la commande en tant qu'invité
-  ✓ s7   renseigner l'adresse de livraison avec le jeu de données "client-fr"
-  ✓ s8   payer avec la carte de test
-  ✓ s9   vérifier que la commande apparaît dans le suivi
 ```
+1 parcours — RÉUSSI   1.6 s
+
+  ✓ checkout-guest         RÉUSSI  1.2 s
+
+Tout est vert.
+```
+
+Un parcours vert ne détaille pas ses étapes : le détail n'apparaît qu'à
+l'échec, là où il sert.
 
 Ce rejeu n'a coûté aucun appel de modèle. Tout ce dont il avait besoin était
 déjà dans `examples/.qai/resolutions/checkout-guest.web.json`.
@@ -71,33 +72,37 @@ npm run demo -- --bug guest-confirm --port 8898
 ```
 
 ```bash
-npm run qai -- run examples/checkout-guest.qai.yaml --base-url http://127.0.0.1:8898/
+npm run qai -- run examples/checkout-guest.qai.yaml \
+  --base-url http://127.0.0.1:8898/ \
+  --states ./examples/states-exemple.ts
 ```
 
 ```
-checkout-guest — ÉCHEC   1.2 s
+1 parcours — ÉCHEC   6.8 s
 
-  ✓ s1…s7
-  ✖ s8   payer avec la carte de test
-        capture « commande » : cible introuvable ou ambiguë
-        la commande est confirmée → aucun élément ne correspond à la cible
-        un numéro de commande est affiché → aucun élément ne correspond à la cible
-  ⊘ s9   vérifier que la commande apparaît dans le suivi
+  ✖ checkout-guest         ÉCHEC   6.4 s
+    ✖ s8   payer avec la carte de test
+          capture « commande » : cible introuvable ou ambiguë
+          la commande est confirmée → aucun élément ne correspond à la cible
+          un numéro de commande est affiché → aucun élément ne correspond à la cible
 
-Aucune réparation appliquée : une assertion fausse est une régression.
+1 parcours en échec.
 ```
 
 Code de sortie 1, donc la CI casse la pull request.
 
-Deux choses méritent d'être remarquées. La dernière ligne n'est pas décorative :
-l'échec porte sur une assertion, donc le réparateur n'a même pas été convoqué.
-Si le bouton avait simplement changé de libellé, QAI aurait réparé, affiché un
-`~` et proposé le diff de résolution en revue. **Il distingue un test périmé
-d'une application cassée**, et c'est toute la différence entre un outil de test
-et un outil auquel on fait confiance.
+Deux choses méritent d'être remarquées. L'échec porte sur une **assertion**,
+donc le réparateur n'a même pas été convoqué — même avec `--heal`, il n'a pas
+le droit de toucher à ce qui est vérifié. Si le bouton avait simplement changé
+de libellé, QAI aurait réparé, affiché un `~` et proposé le diff de résolution
+en revue. **Il distingue un test périmé d'une application cassée**, et c'est
+toute la différence entre un outil de test et un outil auquel on fait
+confiance.
 
-Ensuite, l'étape `s9` est marquée ignorée plutôt qu'exécutée : après un échec,
-l'état de l'application a divergé et poursuivre ne produirait que du bruit.
+Ensuite, les étapes après `s8` n'ont pas été exécutées : après un échec, l'état
+de l'application a divergé et poursuivre ne produirait que du bruit. Les 6
+secondes, elles, sont la fenêtre d'assertion : l'échec n'est prononcé qu'après
+avoir laissé au rendu le temps d'arriver (`--assert-timeout`, 5 s par défaut).
 
 ## 5. Écrire votre propre scénario
 
@@ -154,23 +159,27 @@ npm run demo -- --bug rename-guest --port 8897
 ```bash
 npm run qai -- run examples/checkout-guest.qai.yaml \
   --base-url http://127.0.0.1:8897/ \
-  --heal --provider ./mon-fournisseur.ts
+  --states ./examples/states-exemple.ts \
+  --heal --provider ./mon-fournisseur.ts --max-cost 1
 ```
 
 ```
-checkout-guest — RÉPARÉ   1.3 s
-  ~ s6   lancer la commande en tant qu'invité
-        réparé : Le libellé du bouton est passé de « Commander en tant
-        qu'invité » à « Continuer sans compte ».
+1 parcours — RÉPARÉ   5.1 s
 
-1 réparation(s) : relire le diff de résolution avant de fusionner.
+  ~ checkout-guest         RÉPARÉ  4.7 s
+    ~ s6   lancer la commande en tant qu'invité
+          réparé : Le libellé du bouton de commande invité est passé de
+          « Commander en tant qu'invité » à « Continuer sans compte ».
+
+1 réparation(s) : relire les diffs de résolution avant de fusionner.
+dépense modèle : 0.0023 (1 appels)
 ```
 
-Le fichier de résolution est réécrit, et le diff tient en quatre lignes avec la
-raison attachée. Comparez avec le point 4 : là, l'échec portait sur une
-assertion et le réparateur n'a même pas été convoqué. **C'est la différence
-entre un test périmé et une application cassée** — voir
-[reparation.md](reparation.md).
+Sortie authentique — un appel de modèle, un quart de centime. Le fichier de
+résolution est réécrit et le diff tient en quelques lignes avec la raison
+attachée. Comparez avec le point 4 : là, l'échec portait sur une assertion et
+le réparateur n'a même pas été convoqué. **C'est la différence entre un test
+périmé et une application cassée** — voir [reparation.md](reparation.md).
 
 ## 8. Jouer toute la suite
 

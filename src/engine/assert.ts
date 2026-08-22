@@ -14,7 +14,11 @@ export class InterpolationError extends Error {
 
 export function interpolate(template: string, bag: Readonly<Record<string, string>>): string {
   const missing: string[] = [];
-  const out = template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
+  // Une résolution vient d'un fichier ou d'un modèle : le schéma de sortie
+  // autorise une valeur numérique (countAtLeast l'exige), donc ce qui arrive
+  // ici n'est pas toujours une chaîne malgré le type. Planter sur .replace
+  // transformerait une valeur légitime en TypeError cryptique.
+  const out = String(template).replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
     const value = bag[name];
     if (value === undefined) {
       missing.push(name);

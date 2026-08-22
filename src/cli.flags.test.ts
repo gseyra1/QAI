@@ -35,6 +35,10 @@ describe('validation des réglages numériques', () => {
     ['--attempts zéro', ['resolve', 'x.qai.yaml', '--attempts', '0']],
     ['--assert-timeout non numérique', ['run', 'x.qai.yaml', '--assert-timeout', 'abc']],
     ['--assert-timeout négatif', ['run', 'x.qai.yaml', '--assert-timeout=-5']],
+    // Number('') vaut 0 : une variable de CI non définie désactiverait la
+    // fenêtre en silence.
+    ['--assert-timeout vide', ['run', 'x.qai.yaml', '--assert-timeout', '']],
+    ['--workers blanc', ['run', 'x.qai.yaml', '--workers', '  ']],
   ];
 
   for (const [nom, argv] of refuses) {

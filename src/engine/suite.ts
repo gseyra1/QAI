@@ -44,6 +44,18 @@ export interface SuiteReport {
 }
 
 async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
+  // Rejouer sans l'état déclaré ferait démarrer le parcours anonyme et le
+  // verdict ne prouverait rien — vert compris. Le refus doit être explicite,
+  // comme il l'est déjà à la génération.
+  if (item.scenario.given !== undefined && input.states === undefined) {
+    return {
+      scenarioId: item.scenario.id,
+      resolutionPath: item.resolutionPath,
+      report: null,
+      error: 'le scénario déclare « given » : un StateProvider est requis (--states)',
+    };
+  }
+
   const driver = input.createDriver();
   const entry: SuiteEntry = {
     scenarioId: item.scenario.id,
