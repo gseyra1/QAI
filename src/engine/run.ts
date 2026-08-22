@@ -345,7 +345,10 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
      * une capture : les relire ensemble garantit qu'elles parlent du même
      * instant, ce qui serait faux si on rejouait les unes sans les autres.
      */
-    const evaluate = (root: UINode): { captureErrors: string[]; failures: AssertionFailure[] } => {
+    const evaluate = (
+      root: UINode,
+      location: string,
+    ): { captureErrors: string[]; failures: AssertionFailure[] } => {
       // Une capture qui échoue n'interrompt pas l'étape : c'est le plus souvent
       // le symptôme d'une assertion fausse, et masquer celle-ci priverait le
       // rapport de son information la plus utile.
@@ -380,7 +383,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
           continue;
         }
         try {
-          const result = evaluateCheck(check, root, bag);
+          const result = evaluateCheck(check, { root, location, bag });
           if (!result.ok) failures.push({ assertion, reason: result.reason });
         } catch (error) {
           failures.push({
@@ -402,13 +405,15 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
      * scène 3D, un module chargé à la demande — serait indémontrable.
      */
     let snapshot = await driver.observe();
-    let { captureErrors, failures } = evaluate(snapshot.root);
+    let { captureErrors, failures } = evaluate(snapshot.root, snapshot.location);
     const deadline = Date.now() + (input.assertTimeoutMs ?? 5000);
 
     while ((captureErrors.length > 0 || failures.length > 0) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
+      // Ré-observer rend aussi l'URL courante : une redirection qui arrive
+      // après le repos réseau est ainsi vue par les vérifications d'URL.
       snapshot = await driver.observe();
-      ({ captureErrors, failures } = evaluate(snapshot.root));
+      ({ captureErrors, failures } = evaluate(snapshot.root, snapshot.location));
     }
 
     const broken = failures.length > 0 || captureErrors.length > 0;

@@ -34,6 +34,34 @@ and `1 234,56 €` compare without the scenario caring. A dot followed by three
 digits is treated as a thousands separator — the right bet for displayed
 amounts.
 
+`evaluateCheck()` receives a context — the tree, the current address, the
+captures already known — not just the tree. That is what lets a check bear on
+something other than a node.
+
+### Checking the address
+
+`urlContains` and `urlEquals` are the only two checks **without a target**: a
+URL is not a node of the interface. They make the whole family of access-rights
+journeys expressible — "an anonymous user is redirected to the login page" —
+which has nothing to assert about the screen it lands on except where it landed.
+
+```json
+{ "check": "urlContains", "value": "/login" }
+{ "check": "urlEquals", "value": "https://app.example.com/login?next=/admin" }
+```
+
+The comparison is **raw**: neither trailing slash, nor query string, nor
+fragment is normalised. Erasing them would make a redirect to
+`/login?next=/admin` look like a redirect to `/login`, when that difference is
+precisely what an access-rights journey sets out to prove. `urlContains` covers
+the common case where only the path matters.
+
+The value accepts `{{capture}}`, which allows asserting an address built at the
+previous step — `/students/{{id}}` after creating a record.
+
+Like any assertion, a URL check is re-evaluated within the `assertTimeout`
+window: a redirect that arrives after network rest is seen.
+
 ## The safety boundary, made structural
 
 The engine calls the healer **only** on a target resolution failure. A false

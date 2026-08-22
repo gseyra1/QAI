@@ -100,6 +100,21 @@ the cost of a change proportional to the change.
 seen on the product page") instead of constants that break on the first
 catalog change.
 
+### `expect` — including on the address
+
+An expectation is phrased in natural language, and the model picks the machine
+form. It can bear on the address just as well as on the screen:
+
+```yaml
+  - id: s2
+    do: ouvrir /admin sans être connecté
+    expect: l'utilisateur est redirigé vers la page de connexion
+```
+
+resolves to `{ "check": "urlContains", "value": "/login" }`. The scenario still
+mentions no URL: it states an intent, and the exact path stays a resolution
+detail — it will change without the scenario moving.
+
 ### `given` — the starting state
 
 A scenario does not build its own context by clicking through the app: it

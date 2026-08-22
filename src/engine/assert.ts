@@ -100,11 +100,47 @@ export type CheckResult = { ok: true } | { ok: false; reason: string };
 
 const STATE_LABEL = { checked: 'checked', disabled: 'disabled', selected: 'selected' } as const;
 
-export function evaluateCheck(
-  check: Check,
-  root: UINode,
-  bag: Readonly<Record<string, string>>,
-): CheckResult {
+/**
+ * Tout ce sur quoi une assertion peut porter, à un instant donné.
+ *
+ * Un objet plutôt que des paramètres : ce contexte s'élargira — le réseau et
+ * la console observés pendant l'étape doivent pouvoir devenir assertables sans
+ * changer la signature à chaque fois, ni obliger chaque appelant à réordonner
+ * ses arguments.
+ */
+export interface CheckContext {
+  root: UINode;
+  /** URL sur le web, identifiant d'écran ou d'activité sur mobile. */
+  location: string;
+  bag: Readonly<Record<string, string>>;
+}
+
+export function evaluateCheck(check: Check, context: CheckContext): CheckResult {
+  const { root, bag } = context;
+
+  /**
+   * Les vérifications d'URL passent avant toute recherche dans l'arbre : une
+   * URL n'est pas un nœud, elle n'a donc pas de cible à résoudre.
+   *
+   * La comparaison est brute, sans normalisation. Une barre finale, un
+   * paramètre de requête ou un fragment font partie de ce qui est affirmé —
+   * les effacer ferait passer une redirection vers « /connexion?next=/admin »
+   * pour une redirection vers « /connexion », alors que la différence est
+   * précisément ce qu'un parcours de droits d'accès cherche à prouver.
+   */
+  if (check.check === 'urlContains' || check.check === 'urlEquals') {
+    const expected = interpolate(check.value, bag);
+    const observed = context.location;
+    if (check.check === 'urlContains') {
+      return observed.includes(expected)
+        ? { ok: true }
+        : { ok: false, reason: `« ${expected} » absent de l'URL « ${observed} »` };
+    }
+    return observed === expected
+      ? { ok: true }
+      : { ok: false, reason: `attendu l'URL « ${expected} », observé « ${observed} »` };
+  }
+
   const matched = matchNodes(root, interpolateLocator(check.target, bag));
 
   if (check.check === 'absent') {

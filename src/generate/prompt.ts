@@ -40,6 +40,10 @@ Rules for assertions:
   good state: a false assertion here would be a false test.
 - A value can reference a capture with {{name}}, including in the name of a
   target.
+- When the assertion speaks of the address — a redirect, a denied access, a
+  navigation — use "urlContains" (a stable fragment, e.g. "/login") or
+  "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
+  bear on no element at all.
 
 An intent often translates into several gestures: "fill in the address" or
 "sign in" are several actions, in order — but all on the screen you are
@@ -98,11 +102,18 @@ export function retryMessage(errors: string[], tree?: string): string {
 
 export function checksMessage(input: {
   tree: string;
+  /** Sans elle, une assertion d'URL serait à deviner. */
+  location: string;
   expectations: string[];
   captures: Record<string, string>;
   availableCaptures: Record<string, string>;
 }): string {
-  const parts = ['The actions have been executed. Here is the resulting screen:', '', input.tree, ''];
+  const parts = [
+    `The actions have been executed. Here is the resulting screen (${input.location}):`,
+    '',
+    input.tree,
+    '',
+  ];
 
   if (Object.keys(input.captures).length > 0) {
     parts.push('Captures to produce from this screen:', ...captureLines(input.captures));
