@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { chromium, type Browser } from 'playwright';
 import type { UINode } from '../types.ts';
@@ -32,6 +35,8 @@ const FIXTURE = `<!doctype html>
     <button id="supprimer">Supprimer le compte</button>
     <button id="renommer">Renommer</button>
     <p data-testid="etat">intact</p>
+    <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
+    <p data-testid="depose">aucun fichier</p>
   </main>
   <p id="salut"></p>
   <script>
@@ -50,6 +55,10 @@ const FIXTURE = `<!doctype html>
     });
     document.getElementById('renommer').addEventListener('click', () => {
       etat.textContent = prompt('Nouveau nom ?') ?? 'annulé';
+    });
+    document.getElementById('piece').addEventListener('change', (e) => {
+      document.querySelector('[data-testid=depose]').textContent =
+        [...e.target.files].map((f) => f.name).join(', ');
     });
   </script>
 </body></html>`;
@@ -283,6 +292,34 @@ describe('PlaywrightWebDriver', () => {
       assert.equal(driver.takePendingDialogs(), 1);
       assert.equal(driver.takePendingDialogs(), 0, 'la lecture doit aussi désarmer');
     });
+  });
+
+  /**
+   * Le champ de téléversement est presque toujours masqué derrière un bouton
+   * stylé. `setInputFiles` accepte l'élément invisible là où un clic échouerait
+   * — sans quoi tout import, avatar ou pièce jointe reste intestable.
+   */
+  it('dépose un fichier dans un champ masqué', async () => {
+    const dossier = await mkdtemp(join(tmpdir(), 'qai-upload-'));
+    const fichier = join(dossier, 'releve.txt');
+    await writeFile(fichier, 'contenu');
+
+    try {
+      await driver.act({
+        kind: 'upload',
+        target: { primary: { role: 'unknown', name: 'introuvable' }, fallback: { testId: 'piece-jointe' } },
+        files: [fichier],
+      });
+      await driver.settle();
+
+      const outcome = await driver.resolve({
+        primary: { role: 'text', name: 'Libellé absent' },
+        fallback: { testId: 'depose' },
+      });
+      assert.equal(outcome.found && outcome.node.name, 'releve.txt');
+    } finally {
+      await rm(dossier, { recursive: true, force: true });
+    }
   });
 
   it('refuse une action que la plateforme ne sait pas faire', async () => {

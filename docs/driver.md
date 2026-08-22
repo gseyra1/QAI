@@ -41,6 +41,23 @@ a second "Valider" button, a test that "passes" by silently clicking the wrong
 one is worse than no test at all. The driver refuses to choose and reports the
 match count.
 
+## Uploading a file
+
+```json
+{ "kind": "upload", "target": { … }, "files": ["fixtures/statement.csv"] }
+```
+
+The paths are **relative to the scenario file**, and it is the engine that makes
+them absolute just before acting. The resolution file is versioned: writing an
+absolute path into it would produce a cache that only replays on the machine
+that wrote it.
+
+The target is the `input[type=file]` itself, almost always hidden behind a
+styled button. `setInputFiles` accepts it where a click would fail. An input
+with no accessible name has nothing to target semantically: the resolution will
+go through its technical fallback, and this is the case where that fallback is
+legitimate rather than a sign of degradation.
+
 ## Native dialogs are declared before the gesture
 
 Playwright **auto-dismisses** `confirm()`, `alert()` and `prompt()` as long as

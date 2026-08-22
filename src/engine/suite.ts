@@ -11,6 +11,8 @@ export interface SuiteItem {
   resolution: Resolution;
   /** Où réécrire la résolution si le parcours est réparé. */
   resolutionPath: string;
+  /** Dossier du fichier scénario : racine des chemins relatifs d'un upload. */
+  baseDir?: string;
 }
 
 export interface SuiteInput {
@@ -87,6 +89,7 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       ...(input.healBudget !== undefined ? { healBudget: input.healBudget } : {}),
       ...(input.assertTimeoutMs !== undefined ? { assertTimeoutMs: input.assertTimeoutMs } : {}),
       ...(input.captureArtifact !== undefined ? { captureArtifact: input.captureArtifact } : {}),
+      ...(item.baseDir !== undefined ? { baseDir: item.baseDir } : {}),
     });
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);

@@ -316,7 +316,9 @@ export async function main(argv: string[]): Promise<number> {
       for (const issue of issues) process.stderr.write(`  • ${formatIssue(issue)}\n`);
       continue;
     }
-    items.push({ scenario, resolution, resolutionPath });
+    // Les chemins d'un téléversement sont relatifs au fichier scénario, pas au
+    // répertoire d'où la commande est lancée.
+    items.push({ scenario, resolution, resolutionPath, baseDir: dirname(path) });
   }
 
   if (command === 'check') {

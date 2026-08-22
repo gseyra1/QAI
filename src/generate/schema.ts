@@ -163,6 +163,19 @@ export function stepProposalSchema(): Record<string, unknown> {
             action('scrollTo', { target: targetSchema() }, ['target']),
             action('hover', { target: targetSchema() }, ['target']),
             action(
+              'upload',
+              {
+                target: targetSchema(),
+                files: {
+                  type: 'array',
+                  minItems: 1,
+                  items: { type: 'string' },
+                  description: "chemins relatifs au fichier scénario ; cible = l'input[type=file], même masqué",
+                },
+              },
+              ['target', 'files'],
+            ),
+            action(
               'expectDialog',
               {
                 response: { enum: ['accept', 'dismiss'] },
