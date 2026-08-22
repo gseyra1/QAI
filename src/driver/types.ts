@@ -164,6 +164,42 @@ export interface Capabilities {
   deepLink: boolean;
   /** Dialogues natifs : alert, confirm, prompt — et leurs équivalents mobiles. */
   dialogs: boolean;
+  /** Observation passive du réseau et de la console. */
+  network: boolean;
+}
+
+/**
+ * Une requête sortante observée pendant une étape.
+ *
+ * `status: null` distingue l'échec réseau — DNS, CORS, connexion refusée — du
+ * code d'erreur applicatif. Les deux cassent une interface, mais pas pour les
+ * mêmes raisons, et le rapport doit permettre de les séparer.
+ */
+export interface NetworkEntry {
+  method: string;
+  url: string;
+  status: number | null;
+  durationMs: number;
+  at: string;
+}
+
+export interface ConsoleEntry {
+  level: 'error' | 'warning';
+  text: string;
+  at: string;
+}
+
+/**
+ * Ce qui s'est passé hors de l'arbre pendant une étape.
+ *
+ * Une assertion prouve ce que l'écran affiche ; ces observations disent ce que
+ * l'application a fait pour l'afficher. Un écran vide parce qu'un appel a rendu
+ * 500 et un écran vide parce qu'il n'y a rien à montrer se ressemblent
+ * exactement — c'est la seule information qui les sépare.
+ */
+export interface Observations {
+  network: NetworkEntry[];
+  console: ConsoleEntry[];
 }
 
 export type ResolveOutcome =
@@ -267,6 +303,16 @@ export interface Driver {
    * plus souvent que le bouton de confirmation a disparu de l'application.
    */
   takePendingDialogs?(): number;
+
+  /**
+   * Rend et vide ce qui a été observé depuis le dernier appel.
+   *
+   * Optionnelle, et doublée d'une capability : un driver mobile peut ne pas
+   * savoir écouter le réseau, et le moteur doit continuer de fonctionner sans.
+   * Vider à la lecture est ce qui découpe l'observation par étape sans que le
+   * driver ait à connaître la notion d'étape.
+   */
+  drainObservations?(): Observations;
 
   dispose(): Promise<void>;
 }

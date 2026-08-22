@@ -42,6 +42,19 @@ function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
         : `  - [capture de l'écran au moment de l'échec](${options.runUrl}) (\`${step.screenshot}\`)`,
     );
   }
+
+  /**
+   * Le réseau et la console à côté de la capture : c'est ce qui distingue « la
+   * liste est vide » de « l'appel qui la remplit a rendu 500 ». Les trois
+   * dernières entrées suffisent — au-delà, le commentaire de pull request
+   * cesse d'être lu.
+   */
+  for (const entry of (step.network ?? []).slice(-3)) {
+    lines.push(`  - ↯ \`${entry.method} ${entry.url}\` → ${entry.status ?? 'échec réseau'}`);
+  }
+  for (const error of (step.consoleErrors ?? []).slice(-3)) {
+    lines.push(`  - ⚡ console : \`${error}\``);
+  }
   return lines;
 }
 

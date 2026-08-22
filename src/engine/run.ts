@@ -1,7 +1,10 @@
 import { resolve as resolvePath } from 'node:path';
 import type {
   Action,
+  ConsoleEntry,
   Driver,
+  NetworkEntry,
+  Observations,
   Platform,
   ResolvedTarget,
   ResolveOutcome,
@@ -9,13 +12,14 @@ import type {
   UISnapshot,
 } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
-import { targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
+import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
 import {
   evaluateCheck,
   extractValue,
   interpolate,
+  isFailed,
   InterpolationError,
   interpolateLocator,
   redact,
@@ -56,7 +60,36 @@ export interface StepReport {
   warnings?: string[];
   /** Identifiant rendu par `captureArtifact`, pour l'échec de cette étape. */
   screenshot?: string;
+  /**
+   * Requêtes en échec et erreurs console de l'étape.
+   *
+   * Attachées **uniquement quand l'étape échoue ou qu'un garde-fou se
+   * déclenche** : le rapport d'une suite de cinquante parcours deviendrait
+   * sinon illisible, et le diagnostic n'a d'intérêt que là où quelque chose a
+   * cassé.
+   */
+  network?: NetworkEntry[];
+  consoleErrors?: string[];
   durationMs: number;
+}
+
+/** Ce qu'un garde-fou fait de ce qu'il voit. `off` par défaut. */
+export type WatchdogLevel = 'off' | 'warn' | 'fail';
+
+/**
+ * Garde-fous de suite : ce qu'aucune assertion ne déclare mais que personne
+ * n'accepte vraiment.
+ *
+ * Le défaut est `off` sur les deux, et ce n'est pas de la timidité : les
+ * poser d'emblée en `fail` ferait échouer des suites entières le jour de la
+ * mise à jour, sur des erreurs préexistantes. La montée se fait en deux temps,
+ * `warn` puis `fail`, une fois le bruit connu inscrit dans `allow`.
+ */
+export interface Watchdogs {
+  consoleErrors?: WatchdogLevel;
+  requestFailures?: WatchdogLevel;
+  /** Fragments d'URL ou de message tolérés. */
+  allow?: string[];
 }
 
 /** Trois états, pas deux : « réparé » n'est pas un succès silencieux. */
@@ -129,6 +162,8 @@ export interface RunInput {
    * produirait un cache qui ne rejoue que sur la machine qui l'a écrit.
    */
   baseDir?: string;
+  /** Garde-fous réseau et console. Tout à `off` par défaut. */
+  watchdogs?: Watchdogs;
 }
 
 function supports(driver: Driver, action: Action): boolean {
@@ -343,6 +378,71 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
   return { ok: true, heals, warnings };
 }
 
+const NO_OBSERVATIONS: Observations = { network: [], console: [] };
+
+/**
+ * N'attache au rapport que ce qui explique quelque chose.
+ *
+ * Recopier toutes les requêtes d'une étape rendrait le rapport d'une suite de
+ * cinquante parcours illisible et lourd ; les requêtes en échec et les erreurs
+ * console sont ce qu'on relit vraiment à côté de la capture d'écran.
+ */
+function attachObservations(report: StepReport, observations: Observations | undefined): void {
+  if (observations === undefined) return;
+
+  const failed = observations.network.filter(isFailed);
+  if (failed.length > 0) report.network = failed;
+
+  const errors = observations.console
+    .filter((entry) => entry.level === 'error')
+    .map((entry) => entry.text);
+  if (errors.length > 0) report.consoleErrors = errors;
+}
+
+/**
+ * Les garde-fous de suite, évalués une seule fois par étape.
+ *
+ * Ils ne rejoignent pas la fenêtre de réévaluation : une erreur console ne
+ * devient pas fausse en attendant, et l'y mettre ferait patienter chaque étape
+ * bruyante pendant tout le délai d'assertion.
+ */
+function runWatchdogs(
+  watchdogs: Watchdogs | undefined,
+  observations: Observations,
+): { failures: string[]; warnings: string[] } {
+  const failures: string[] = [];
+  const warnings: string[] = [];
+  if (watchdogs === undefined) return { failures, warnings };
+
+  const tolerated = (text: string): boolean =>
+    watchdogs.allow?.some((pattern) => text.includes(pattern)) === true;
+
+  const requests = watchdogs.requestFailures ?? 'off';
+  if (requests !== 'off') {
+    const failed = observations.network.filter(
+      (entry) => isFailed(entry) && !tolerated(entry.url),
+    );
+    if (failed.length > 0) {
+      const first = failed[0] as NetworkEntry;
+      const message = `${failed.length} requête(s) en échec, dont ${first.method} ${first.url} → ${first.status ?? 'échec réseau'}`;
+      (requests === 'fail' ? failures : warnings).push(message);
+    }
+  }
+
+  const console_ = watchdogs.consoleErrors ?? 'off';
+  if (console_ !== 'off') {
+    const errors = observations.console.filter(
+      (entry) => entry.level === 'error' && !tolerated(entry.text),
+    );
+    if (errors.length > 0) {
+      const message = `${errors.length} erreur(s) console, dont « ${(errors[0] as ConsoleEntry).text} »`;
+      (console_ === 'fail' ? failures : warnings).push(message);
+    }
+  }
+
+  return { failures, warnings };
+}
+
 export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const { scenario, resolution, driver, healer } = input;
   const healBudget = input.healBudget ?? 3;
@@ -391,7 +491,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
 
     const fail = async (error: string): Promise<void> => {
       const screenshot = await shoot();
-      steps.push({
+      const report: StepReport = {
         stepId: step.id,
         intent,
         status: 'failed',
@@ -399,7 +499,11 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         error,
         ...(screenshot !== undefined ? { screenshot } : {}),
         durationMs: Date.now() - stepStarted,
-      });
+      };
+      // Une action qui échoue est précisément le moment où le réseau explique
+      // souvent tout : la cible n'est pas apparue parce que l'appel a rendu 500.
+      attachObservations(report, driver.drainObservations?.());
+      steps.push(report);
       aborted = true;
     };
 
@@ -468,6 +572,11 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
           failures.push({ assertion, reason: 'aucune forme machine en cache' });
           continue;
         }
+        // Les vérifications d'observation sortent de la fenêtre de
+        // réévaluation : une erreur console ne devient pas fausse en
+        // attendant, et les y laisser ferait patienter chaque étape bruyante
+        // pendant tout le délai d'assertion.
+        if (isObservationCheck(check)) continue;
         try {
           const result = evaluateCheck(check, { root, location, bag });
           if (!result.ok) failures.push({ assertion, reason: result.reason });
@@ -502,7 +611,31 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       ({ captureErrors, failures } = evaluate(snapshot.root, snapshot.location));
     }
 
-    const broken = failures.length > 0 || captureErrors.length > 0;
+    /**
+     * Les observations sont relevées une seule fois, la fenêtre close.
+     *
+     * Ce qui s'est passé pendant l'étape ne changera plus : les remettre dans
+     * la boucle ne ferait qu'attendre pour rien, et vider le tampon à chaque
+     * tour perdrait ce qu'on veut justement rapporter.
+     */
+    const observations = driver.drainObservations?.() ?? NO_OBSERVATIONS;
+
+    for (const assertion of expectationsOf(step)) {
+      const check = cached.assertions?.[assertion];
+      if (check === undefined || !isObservationCheck(check)) continue;
+      const result = evaluateCheck(check, {
+        root: snapshot.root,
+        location: snapshot.location,
+        bag,
+        observations,
+      });
+      if (!result.ok) failures.push({ assertion, reason: result.reason });
+    }
+
+    const watch = runWatchdogs(input.watchdogs, observations);
+    const warnings = [...outcome.warnings, ...watch.warnings];
+
+    const broken = failures.length > 0 || captureErrors.length > 0 || watch.failures.length > 0;
     const report: StepReport = {
       stepId: step.id,
       intent,
@@ -510,16 +643,20 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       failures,
       durationMs: Date.now() - stepStarted,
     };
-    if (captureErrors.length > 0) report.error = captureErrors.join(' ; ');
+    const errors = [...captureErrors, ...watch.failures];
+    if (errors.length > 0) report.error = errors.join(' ; ');
     if (outcome.heals.length > 0) {
       report.healNotes = outcome.heals.map((heal) => heal.note);
       applied.push(...outcome.heals);
     }
-    if (outcome.warnings.length > 0) report.warnings = outcome.warnings;
+    if (warnings.length > 0) report.warnings = warnings;
     if (broken) {
       const screenshot = await shoot();
       if (screenshot !== undefined) report.screenshot = screenshot;
     }
+    // Le diagnostic n'accompagne que ce qui a cassé, ou ce qu'un garde-fou a
+    // relevé : partout ailleurs il gonflerait le rapport sans rien apprendre.
+    if (broken || warnings.length > 0) attachObservations(report, observations);
     steps.push(report);
 
     if (broken) aborted = true;

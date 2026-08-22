@@ -66,6 +66,50 @@ La valeur accepte `{{capture}}`, ce qui permet d'affirmer une adresse construite
 Comme toute assertion, une vérification d'URL est réévaluée dans la fenêtre
 `assertTimeout` : une redirection qui arrive après le repos réseau est vue.
 
+## Ce que l'application a fait, pas seulement ce qu'elle affiche
+
+Le driver écoute passivement le réseau et la console pendant chaque étape. Rien
+n'est bloqué ni modifié : `drainObservations()` rend ce qui s'est accumulé et
+vide le tampon, ce qui découpe l'observation par étape sans que le driver ait à
+connaître la notion d'étape.
+
+Cette information est la seule qui sépare deux écrans identiques : une liste
+vide parce qu'il n'y a rien à montrer, et une liste vide parce que l'appel qui
+la remplit a rendu 500. Sans elle, le rapport dit « élément introuvable » là où
+la cause est ailleurs.
+
+Les requêtes en échec et les erreurs console apparaissent dans le rapport
+**uniquement sur une étape cassée ou signalée** — partout ailleurs elles
+gonfleraient le rapport sans rien apprendre.
+
+### Deux niveaux, tous deux optionnels
+
+**Assertion d'étape**, déclarée comme les autres :
+
+```json
+{ "check": "noFailedRequests", "allow": ["/api/telemetrie"] }
+{ "check": "noConsoleErrors" }
+```
+
+**Garde-fou de suite**, dans `qai.config.json` :
+
+```json
+"watchdogs": { "consoleErrors": "warn", "requestFailures": "fail", "allow": ["/analytics"] }
+```
+
+Le défaut est `off` sur les deux. Ce n'est pas de la timidité : les poser
+d'emblée en `fail` ferait échouer des suites entières le jour de la mise à
+jour, sur des erreurs préexistantes. La montée se fait en deux temps — `warn`,
+puis `fail` une fois le bruit connu inscrit dans `allow`.
+
+`allow` existe pour la même raison : une intégration tierce bruyante ne doit
+pas apprendre à l'équipe à désactiver le garde-fou, ce qui coûterait plus cher
+que de ne jamais l'avoir posé.
+
+**Ces vérifications sortent de la fenêtre de réévaluation.** Une erreur console
+ne devient pas fausse en attendant, et les y laisser ferait patienter chaque
+étape bruyante pendant tout le délai d'assertion.
+
 ## La frontière de sécurité, rendue structurelle
 
 Le moteur n'appelle le réparateur **que** sur un échec de résolution de cible.

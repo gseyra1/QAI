@@ -13,9 +13,12 @@
 export type {
   Action,
   Capabilities,
+  ConsoleEntry,
   Cookie,
   Driver,
   Locator,
+  NetworkEntry,
+  Observations,
   PlatformFallback,
   PreparedState,
   ResolvedTarget,
@@ -53,6 +56,8 @@ export type {
   ScenarioStatus,
   StepReport,
   StepStatus,
+  WatchdogLevel,
+  Watchdogs,
 } from './engine/run.ts';
 export type { SuiteEntry, SuiteInput, SuiteItem, SuiteReport } from './engine/suite.ts';
 export type { QaiConfig } from './config.ts';

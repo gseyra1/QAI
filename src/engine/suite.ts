@@ -3,7 +3,7 @@ import type { Driver } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import type { StateProvider } from '../state/types.ts';
-import type { Healer, ScenarioReport } from './run.ts';
+import type { Healer, ScenarioReport, Watchdogs } from './run.ts';
 import { runScenario } from './run.ts';
 
 export interface SuiteItem {
@@ -30,6 +30,8 @@ export interface SuiteInput {
   assertTimeoutMs?: number;
   /** Range une capture d'échec et rend son identifiant. Voir RunInput. */
   captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
+  /** Garde-fous réseau et console, communs à toute la suite. */
+  watchdogs?: Watchdogs;
 }
 
 export interface SuiteEntry {
@@ -78,6 +80,7 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       ...(input.assertTimeoutMs !== undefined ? { assertTimeoutMs: input.assertTimeoutMs } : {}),
       ...(input.captureArtifact !== undefined ? { captureArtifact: input.captureArtifact } : {}),
       ...(item.baseDir !== undefined ? { baseDir: item.baseDir } : {}),
+      ...(input.watchdogs !== undefined ? { watchdogs: input.watchdogs } : {}),
     });
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);

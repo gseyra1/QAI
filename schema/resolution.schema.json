@@ -209,6 +209,20 @@
             "check": { "enum": ["urlContains", "urlEquals"] },
             "value": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "required": ["check"],
+          "additionalProperties": false,
+          "description": "Garde-fou d'étape : porte sur ce que l'application a FAIT, pas sur ce qu'elle affiche. Évalué une seule fois, hors de la fenêtre de réévaluation.",
+          "properties": {
+            "check": { "enum": ["noFailedRequests", "noConsoleErrors"] },
+            "allow": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Fragments d'URL ou de message tolérés, pour qu'une intégration tierce bruyante n'apprenne pas à l'équipe à désactiver le garde-fou."
+            }
+          }
         }
       ]
     },

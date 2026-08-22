@@ -5,6 +5,7 @@ import type {
   Action,
   Capabilities,
   Driver,
+  Observations,
   Platform,
   ResolvedTarget,
   ResolveOutcome,
@@ -36,6 +37,7 @@ class FakeDriver implements Driver {
     navigateByUrl: true,
     deepLink: true,
     dialogs: true,
+    network: false,
   };
 
   readonly acted: Action[] = [];
@@ -512,6 +514,122 @@ describe('runScenario', () => {
       depose?.kind === 'upload' ? depose.files : null,
       [resolve('qa', 'fixtures', 'releve.csv')],
     );
+  });
+
+  /**
+   * Une assertion prouve ce que l'écran affiche ; ces vérifications disent ce
+   * que l'application a fait pour l'afficher. Un écran vide parce qu'un appel
+   * a rendu 500 et un écran vide parce qu'il n'y a rien à montrer se
+   * ressemblent exactement.
+   */
+  describe('observations réseau et console', () => {
+    class ObservingDriver extends FakeDriver {
+      observations: Observations;
+
+      constructor(root: UINode, observations: Observations) {
+        super(root);
+        this.observations = observations;
+      }
+
+      drainObservations(): Observations {
+        const drained = this.observations;
+        this.observations = { network: [], console: [] };
+        return drained;
+      }
+    }
+
+    const CASSE: Observations = {
+      network: [
+        { method: 'GET', url: '/api/eleves', status: 500, durationMs: 12, at: '2026-08-01T10:00:00Z' },
+        { method: 'GET', url: '/api/ok', status: 200, durationMs: 4, at: '2026-08-01T10:00:00Z' },
+      ],
+      console: [{ level: 'error', text: 'TypeError: x is not a function', at: '2026-08-01T10:00:00Z' }],
+    };
+
+    const parcours = (
+      driver: Driver,
+      assertions: Resolution['steps'][string]['assertions'],
+      watchdogs?: Parameters<typeof runScenario>[0]['watchdogs'],
+    ) =>
+      runScenario({
+        driver,
+        ...(watchdogs !== undefined ? { watchdogs } : {}),
+        assertTimeoutMs: 200,
+        scenario: scenario([
+          { id: 's1', do: 'ouvrir la liste', ...(assertions ? { expect: Object.keys(assertions) } : {}) },
+        ]),
+        resolution: resolution({ s1: { actions: [], ...(assertions ? { assertions } : {}) } }),
+      });
+
+    it('fait échouer l\'étape sur une requête en échec, en la nommant', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'aucun appel ne casse': { check: 'noFailedRequests' },
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.match(report.steps[0]?.failures[0]?.reason ?? '', /GET \/api\/eleves → 500/);
+    });
+
+    it('tolère ce que « allow » autorise', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'aucun appel ne casse': { check: 'noFailedRequests', allow: ['/api/eleves'] },
+      });
+
+      assert.equal(report.status, 'passed');
+    });
+
+    it('relève une erreur console', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'la console reste propre': { check: 'noConsoleErrors' },
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.match(report.steps[0]?.failures[0]?.reason ?? '', /TypeError/);
+    });
+
+    /**
+     * Une erreur console ne devient pas fausse en attendant. La laisser dans
+     * la fenêtre de réévaluation ferait patienter chaque étape bruyante
+     * pendant tout le délai d'assertion.
+     */
+    it('n\'attend pas la fenêtre de réévaluation pour conclure', async () => {
+      const driver = new ObservingDriver(TREE, CASSE);
+      const debut = Date.now();
+      await parcours(driver, { 'la console reste propre': { check: 'noConsoleErrors' } });
+
+      assert.ok(Date.now() - debut < 200, 'la fenêtre de 200 ms ne doit pas être consommée');
+    });
+
+    it('reste silencieux par défaut, avertit en warn, échoue en fail', async () => {
+      const muet = await parcours(new ObservingDriver(TREE, CASSE), undefined);
+      assert.equal(muet.status, 'passed', 'les garde-fous sont off par défaut');
+      assert.equal(muet.steps[0]?.warnings, undefined);
+
+      const avertit = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        consoleErrors: 'warn',
+        requestFailures: 'warn',
+      });
+      assert.equal(avertit.status, 'passed');
+      assert.equal(avertit.steps[0]?.warnings?.length, 2);
+
+      const echoue = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        requestFailures: 'fail',
+      });
+      assert.equal(echoue.status, 'failed');
+      assert.match(echoue.steps[0]?.error ?? '', /requête\(s\) en échec/);
+    });
+
+    it('n\'attache le diagnostic qu\'aux étapes qui ont cassé', async () => {
+      const propre = await parcours(new ObservingDriver(TREE, { network: [], console: [] }), undefined);
+      assert.equal(propre.steps[0]?.network, undefined);
+
+      const cassee = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        requestFailures: 'fail',
+      });
+      // Seules les requêtes en échec sont recopiées : /api/ok n'apprend rien.
+      assert.equal(cassee.steps[0]?.network?.length, 1);
+      assert.equal(cassee.steps[0]?.consoleErrors?.length, 1);
+    });
   });
 
   it('efface le secret du message quand le pilote échoue', async () => {

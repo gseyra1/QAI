@@ -34,6 +34,7 @@ const FIXTURE = `<!doctype html>
     <button id="supprimer">Supprimer le compte</button>
     <button id="renommer">Renommer</button>
     <p data-testid="etat">intact</p>
+    <button id="casser">Charger la liste</button>
     <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
     <p data-testid="depose">aucun fichier</p>
   </main>
@@ -48,6 +49,11 @@ const FIXTURE = `<!doctype html>
     });
     document.getElementById('renommer').addEventListener('click', () => {
       etat.textContent = prompt('Nouveau nom ?') ?? 'annulé';
+    });
+    document.getElementById('casser').addEventListener('click', () => {
+      fetch('/api/casse');
+      console.error('appel en echec');
+      console.warn('juste un avertissement');
     });
     document.getElementById('piece').addEventListener('change', (e) => {
       document.querySelector('[data-testid=depose]').textContent =
@@ -75,7 +81,13 @@ describe('PlaywrightWebDriver', () => {
   let baseUrl: string;
 
   before(async () => {
-    server = createServer((_req, res) => {
+    server = createServer((req, res) => {
+      // Un endpoint qui refuse : c'est la panne que l'observation doit voir.
+      if (req.url?.startsWith('/api/casse') === true) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end('{"erreur":"boum"}');
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(FIXTURE);
     });
@@ -298,6 +310,32 @@ describe('PlaywrightWebDriver', () => {
     } finally {
       await rm(dossier, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * Sans ces observations, un écran vide parce qu'un appel a rendu 500 est
+   * indiscernable d'un écran vide parce qu'il n'y a rien à montrer — et le
+   * rapport dit « élément introuvable » là où la cause est ailleurs.
+   */
+  it('observe les requêtes en échec et les erreurs console', async () => {
+    driver.drainObservations();
+
+    await driver.act({
+      kind: 'click',
+      target: { primary: { role: 'button', name: 'Charger la liste' } },
+    });
+    await driver.settle();
+
+    const { network, console: journal } = driver.drainObservations();
+
+    const casse = network.find((entry) => entry.url.includes('/api/casse'));
+    assert.equal(casse?.status, 500);
+    assert.equal(casse?.method, 'GET');
+
+    assert.ok(journal.some((e) => e.level === 'error' && e.text.includes('appel en echec')));
+    assert.ok(journal.some((e) => e.level === 'warning'), 'les avertissements sont aussi collectés');
+
+    assert.deepEqual(driver.drainObservations(), { network: [], console: [] }, 'la lecture doit vider');
   });
 
   it('refuse une action que la plateforme ne sait pas faire', async () => {

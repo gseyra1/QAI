@@ -15,7 +15,8 @@ depuis n'importe où dans le dépôt.
   "maxCost": 2,
   "assertTimeout": 5000,
   "artifacts": ".qai/artifacts",
-  "strict": false
+  "strict": false,
+  "watchdogs": { "consoleErrors": "off", "requestFailures": "off", "allow": [] }
 }
 ```
 
@@ -45,6 +46,25 @@ cohérence et la génération portent sur exactement le même lot que le rejeu.
 
 **Un filtre qui ne retient rien fait échouer la commande.** Sortir en 0 ferait
 qu'un tag mal orthographié rendrait un job de CI vert sans avoir rien joué.
+
+## Les garde-fous
+
+`watchdogs` relève ce qu'aucune assertion ne déclare mais que personne
+n'accepte vraiment : une requête en échec, une erreur console. Trois niveaux
+par garde-fou — `off`, `warn`, `fail` — et une liste `allow` de fragments
+tolérés.
+
+Le défaut est `off` partout, et la montée se fait en deux temps :
+
+```json
+"watchdogs": { "requestFailures": "warn" }   ... puis "fail"
+```
+
+Les poser d'emblée en `fail` ferait échouer des suites entières le jour de la
+mise à jour, sur des erreurs préexistantes — et l'équipe apprendrait à les
+désactiver, ce qui coûte plus cher que de ne jamais les avoir posés.
+
+Détail du comportement dans [docs/engine.md](engine.md).
 
 ## Deux règles
 
