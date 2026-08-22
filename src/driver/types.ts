@@ -75,6 +75,14 @@ export interface UINode {
   /** Nom accessible, calculé selon les règles de la plateforme. */
   name: string;
   value?: string;
+  /**
+   * Identifiant de test exposé par la page (`data-testid` sur le web).
+   *
+   * Présent pour que le modèle puisse proposer un repli `fallback.testId`
+   * réel : sans lui dans l'arbre, la règle « ne fournis un repli que si la
+   * page en expose un » était insatisfiable par construction.
+   */
+  testId?: string;
   state: NodeState;
   rect: Rect;
   children: UINode[];

@@ -103,6 +103,12 @@ describe('PlaywrightWebDriver', () => {
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Bouton masqué').length, 0);
   });
 
+  it('remonte l\'identifiant de test des éléments qui en portent un', async () => {
+    const snapshot = await driver.observe();
+    const bouton = findAll(snapshot.root, (n) => n.name === 'Ajouter au panier');
+    assert.equal(bouton[0]?.testId, 'add-to-cart');
+  });
+
   it('ne publie jamais la valeur d\'un champ mot de passe', async () => {
     const snapshot = await driver.observe();
     const champ = findAll(snapshot.root, (n) => n.name === 'Mot de passe');

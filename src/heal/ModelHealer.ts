@@ -8,7 +8,7 @@ export const HEAL_SYSTEM_PROMPT = `Un test automatisé ne retrouve plus un élé
 
 On te donne l'intention de l'étape, la cible qui ne fonctionne plus, la raison
 de l'échec, et l'arbre de l'écran courant — une ligne par élément :
-  <rôle> "<nom accessible>" [état]
+  <rôle> "<nom accessible>" [état] #identifiant-de-test
 
 Tu rends la nouvelle cible et une phrase d'explication.
 
@@ -17,6 +17,11 @@ Règles :
   fait, ne propose pas un élément approchant : mieux vaut échouer que faire
   passer un test sur autre chose.
 - Une cible se décrit par rôle et nom accessible, jamais par un sélecteur CSS.
+- Conserve ce qui rendait la cible stable : ne remplace jamais une forme
+  { "contains": "..." } par le nom exact affiché aujourd'hui si celui-ci
+  contient une donnée (numéro, montant, date) — elle changera au prochain
+  rejeu. Quand la ligne visée porte #identifiant, garde-le en
+  "fallback": { "testId": "identifiant" }.
 - Si plusieurs éléments correspondent, lève l'ambiguïté avec "within" ou "nth".
 - La note sera lue par un développeur dans un diff de revue. Dis ce qui a changé
   dans l'application — « le libellé du bouton est passé de X à Y » — pas ce que
