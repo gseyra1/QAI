@@ -77,3 +77,23 @@ export function targetOf(action: Action): ResolvedTarget | null {
 export function withTarget(action: Action, target: ResolvedTarget): Action {
   return targetOf(action) === null ? action : { ...action, target } as Action;
 }
+
+/**
+ * La valeur littérale d'une action, quand elle en porte une.
+ *
+ * Ces valeurs sont des templates : elles sont interpolées au moment d'agir —
+ * au rejeu comme à la génération — et jamais à l'écriture. C'est ce qui permet
+ * à un mot de passe de rester dans l'environnement plutôt que dans un fichier
+ * versionné, et à une saisie de reprendre ce qu'une étape précédente a lu.
+ */
+export function valueOf(action: Action): string | null {
+  if (action.kind === 'fill') return action.value;
+  if (action.kind === 'select') return action.option;
+  return null;
+}
+
+export function withValue(action: Action, value: string): Action {
+  if (action.kind === 'fill') return { ...action, value };
+  if (action.kind === 'select') return { ...action, option: value };
+  return action;
+}

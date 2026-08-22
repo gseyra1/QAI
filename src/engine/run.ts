@@ -8,10 +8,18 @@ import type {
   UISnapshot,
 } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
-import { targetOf, withTarget } from '../resolution/types.ts';
+import { targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
-import { evaluateCheck, extractValue, InterpolationError, interpolateLocator } from './assert.ts';
+import {
+  evaluateCheck,
+  extractValue,
+  interpolate,
+  InterpolationError,
+  interpolateLocator,
+  redact,
+  usesEnv,
+} from './assert.ts';
 import { matchOne } from './match.ts';
 
 export interface AssertionFailure {
@@ -149,12 +157,15 @@ interface ActionsContext {
   healCount: number;
   stepId: string;
   intent: string;
+  bag: Readonly<Record<string, string>>;
 }
 
 async function performActions(actions: Action[], context: ActionsContext): Promise<ActionsOutcome> {
   const { driver, healer } = context;
   const heals: AppliedHeal[] = [];
   const warnings: string[] = [];
+  /** Valeurs résolues depuis l'environnement, à effacer de tout message. */
+  const secrets: string[] = [];
 
   for (const [index, original] of actions.entries()) {
     if (!supports(driver, original)) {
@@ -249,10 +260,33 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
       }
     }
 
+    /**
+     * La valeur est interpolée juste avant d'agir, jamais à l'écriture.
+     *
+     * C'est ce qui permet à `{{env.MOT_DE_PASSE}}` de ne jamais exister
+     * ailleurs que dans la mémoire du processus : le fichier de résolution vit
+     * dans git, et un secret recopié dedans y resterait pour toujours. Le même
+     * mécanisme rend `{{capture}}` utilisable dans une saisie — saisir dans un
+     * champ ce qu'on vient de lire à l'écran précédent.
+     */
+    const template = valueOf(action);
+    if (template !== null) {
+      try {
+        const resolved = interpolate(template, context.bag);
+        if (usesEnv(template)) secrets.push(resolved);
+        action = withValue(action, resolved);
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+
     try {
       await driver.act(action);
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      // Un message de driver peut recopier ce qui a été saisi ; un rapport
+      // d'échec, lui, finit dans les journaux d'une CI.
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: redact(message, secrets) };
     }
   }
 
@@ -276,6 +310,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     healCount: 0,
     stepId: '',
     intent: '',
+    bag,
   };
   let aborted = false;
 

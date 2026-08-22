@@ -112,7 +112,7 @@
             "target": { "$ref": "#/$defs/target" },
             "value": {
               "type": "string",
-              "description": "Peut référencer une capture via {{nom}}. Un secret ne doit jamais être écrit en clair ici."
+              "description": "Template, interpolé au moment d'agir : {{capture}} ou {{env.NOM}} pour une valeur lue dans l'environnement. Un secret ne doit jamais être écrit en clair ici — ce fichier vit dans git."
             }
           }
         },

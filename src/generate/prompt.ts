@@ -45,6 +45,15 @@ Rules for assertions:
   "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
   bear on no element at all.
 
+Rules for typed values:
+- When the intent designates a value by an environment variable ("sign in with
+  QAI_USER and QAI_PASS"), return the template {{env.QAI_USER}}, never the
+  value itself nor an invented one. The file produced is versioned: a secret
+  copied into it stays there forever. The engine resolves these templates at
+  the moment of acting.
+- {{capture}} also works in a typed value, to reuse what was read at an
+  earlier step.
+
 An intent often translates into several gestures: "fill in the address" or
 "sign in" are several actions, in order — but all on the screen you are
 shown: every target is verified against this screen before any execution.`;
