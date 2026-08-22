@@ -1,6 +1,7 @@
-import type { Action, Driver, UINode } from '../driver/types.ts';
+import type { Action, Driver, Locator, UINode } from '../driver/types.ts';
 import { evaluateCheck, extractValue, interpolate, interpolateLocator } from '../engine/assert.ts';
 import { matchOne } from '../engine/match.ts';
+import { suggestNearest } from '../engine/nearest.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
 import { targetOf, valueOf, withValue } from '../resolution/types.ts';
@@ -86,6 +87,17 @@ function asChecks(output: unknown): Pick<Proposal, 'captures' | 'assertions'> | 
 async function verifyActions(driver: Driver, actions: Action[]): Promise<string[]> {
   const errors: string[] = [];
 
+  /**
+   * L'arbre n'est observé que si une cible se perd, et une seule fois pour
+   * toutes. Rendre au modèle les libellés proches de ce qu'il a proposé
+   * raccourcit la boucle : il corrige un mot au lieu de re-deviner l'écran.
+   */
+  let observed: UINode | null = null;
+  const suggest = async (target: Locator): Promise<string> => {
+    observed ??= (await driver.observe({ interactiveOnly: true })).root;
+    return suggestNearest(observed, target);
+  };
+
   for (const [index, action] of actions.entries()) {
     const target = targetOf(action);
     if (target === null) continue;
@@ -113,7 +125,9 @@ async function verifyActions(driver: Driver, actions: Action[]): Promise<string[
     } else if (outcome.reason === 'not-visible') {
       errors.push(`action ${index} : cible trouvée mais non visible`);
     } else {
-      errors.push(`action ${index} : aucun élément ne correspond à cette cible`);
+      errors.push(
+        `action ${index} : aucun élément ne correspond à cette cible${await suggest(target.primary)}`,
+      );
     }
   }
 

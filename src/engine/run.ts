@@ -21,6 +21,7 @@ import {
   usesEnv,
 } from './assert.ts';
 import { matchOne } from './match.ts';
+import { suggestNearest } from './nearest.ts';
 
 export interface AssertionFailure {
   assertion: string;
@@ -186,24 +187,42 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
       }
 
       if (!outcome.found) {
-        const failure = describeOutcome(outcome);
+        const repairable = healer !== undefined && context.healCount < context.healBudget;
+
+        /**
+         * Un seul instantané sert les deux usages : suggérer les libellés
+         * proches, et alimenter le réparateur. Observer deux fois doublerait le
+         * coût du chemin d'échec sans rien apprendre de plus.
+         *
+         * Sur une cible ambiguë, il n'y a rien à suggérer : le nom correspond
+         * déjà, trop bien même.
+         */
+        const snapshot =
+          outcome.reason === 'no-match' || repairable
+            ? await driver.observe({ screenshot: repairable })
+            : null;
+
+        const failure =
+          describeOutcome(outcome) +
+          (snapshot !== null && outcome.reason === 'no-match'
+            ? suggestNearest(snapshot.root, target.primary)
+            : '');
 
         if (healer === undefined) return { ok: false, error: failure };
-        if (context.healCount >= context.healBudget) {
+        if (!repairable) {
           return {
             ok: false,
             error: `${failure} — budget de réparation épuisé (${context.healBudget})`,
           };
         }
 
-        const snapshot = await driver.observe({ screenshot: true });
         const healed = await healer.heal({
           stepId: context.stepId,
           actionIndex: index,
           intent: context.intent,
           target,
           outcome,
-          snapshot,
+          snapshot: snapshot ?? (await driver.observe({ screenshot: true })),
         });
 
         if (!healed.healed) {
