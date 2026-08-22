@@ -188,6 +188,30 @@ Types ship with the package — no `@types/…` needed.
 import type { ModelProvider, StateProvider, Scenario, ScenarioReport } from 'tilmiqai';
 ```
 
+### Embedding the engine
+
+The engine is exported too, so QAI runs inside the test runner you already
+have — vitest, jest, or a plain script — instead of asking you to adopt a
+second one.
+
+```typescript
+import { chromium } from 'playwright';
+import { loadScenario, loadResolution, runScenario, PlaywrightWebDriver } from 'tilmiqai';
+
+const scenario = await loadScenario('qa/checkout.qai.yaml');
+const resolution = await loadResolution('qa/.qai/resolutions/checkout.web.json');
+const driver = new PlaywrightWebDriver(() => chromium.launch());
+
+await driver.launch({ entry: 'http://localhost:3000/' });
+const report = await runScenario({ scenario, resolution, driver });
+await driver.dispose();
+
+expect(report.status).toBe('passed'); // 'healed' and 'failed' are the other two
+```
+
+`runSuite` adds the parallelism, the driver lifecycle and the starting state;
+`checkConsistency` catches a scenario that drifted away from its resolution.
+
 ## Documentation
 
 | | |
