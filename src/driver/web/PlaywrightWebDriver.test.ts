@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { chromium } from 'playwright';
+import { chromium, type Browser } from 'playwright';
 import type { UINode } from '../types.ts';
 import { PlaywrightWebDriver } from './PlaywrightWebDriver.ts';
 
@@ -182,5 +182,68 @@ describe('PlaywrightWebDriver', () => {
       () => driver.act({ kind: 'swipe', direction: 'up' }),
       (error: unknown) => error instanceof Error && error.message.includes('glissement'),
     );
+  });
+  /**
+   * Le mappage des cookies n'etait couvert nulle part. Un attribut perdu ici ne
+   * casse aucun test : il produit une session muette, donc un parcours qui
+   * demarre anonyme et echoue plusieurs etapes plus loin sur une assertion sans
+   * rapport. C'est precisement le defaut le plus couteux a diagnostiquer.
+   *
+   * Le pilote recoit son lanceur par injection : le test s'en sert pour garder
+   * une reference sur le navigateur, sans elargir l'API publique de la classe.
+   */
+  it('pose un cookie inter-site avec ses attributs Secure et SameSite', async () => {
+    let browser: Browser | null = null;
+    const local = new PlaywrightWebDriver(async () => {
+      browser = await chromium.launch();
+      return browser;
+    });
+
+    try {
+      await local.launch({ entry: baseUrl, viewport: { width: 800, height: 600 } });
+      await local.applyState({
+        cookies: [{
+          name: 'tc_session', value: 'jeton-de-test',
+          domain: '127.0.0.1', path: '/',
+          secure: true, sameSite: 'None',
+        }],
+      });
+
+      const context = (browser as unknown as Browser).contexts()[0];
+      assert.ok(context, 'le contexte doit exister');
+      const session = (await context.cookies()).find((c) => c.name === 'tc_session');
+
+      assert.ok(session, 'le cookie doit avoir ete pose');
+      assert.equal(session.value, 'jeton-de-test');
+      assert.equal(session.sameSite, 'None');
+      assert.equal(session.secure, true);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('laisse le navigateur decider quand Secure et SameSite sont omis', async () => {
+    let browser: Browser | null = null;
+    const local = new PlaywrightWebDriver(async () => {
+      browser = await chromium.launch();
+      return browser;
+    });
+
+    try {
+      await local.launch({ entry: baseUrl, viewport: { width: 800, height: 600 } });
+      await local.applyState({
+        cookies: [{ name: 'sans_attributs', value: 'x', domain: '127.0.0.1', path: '/' }],
+      });
+
+      const context = (browser as unknown as Browser).contexts()[0];
+      assert.ok(context);
+      const cookie = (await context.cookies()).find((c) => c.name === 'sans_attributs');
+
+      // Comportement inchange pour les appelants qui ne se prononcent pas.
+      assert.ok(cookie, 'omettre les attributs ne doit pas empecher la pose');
+      assert.equal(cookie.value, 'x');
+    } finally {
+      await local.dispose();
+    }
   });
 });

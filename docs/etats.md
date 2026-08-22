@@ -40,11 +40,37 @@ Partez de [examples/states-exemple.ts](../examples/states-exemple.ts).
 | Champ | Effet sur le web | Équivalent mobile prévu |
 |---|---|---|
 | `cookies` | posés sur le contexte du navigateur | stockage de la webview |
+| `cookies[].secure` · `.sameSite` | attributs du cookie posé | portés par la webview |
 | `storage` | écrits dans `localStorage`, avant et après navigation | préférences de l'application |
 | `entry` | point d'entrée imposé | lien profond |
 
 C'est pourquoi le contrat ne parle pas de « cookies » à son plus haut niveau
 mais d'**état préparé** : le vocabulaire doit rester exprimable sur mobile.
+
+## Sessions inter-site
+
+Si l'application testée et son API ne partagent pas le même site — un front sur
+`localhost:3000` contre une API déployée, le cas courant en développement — la
+session ne s'installe qu'avec les deux attributs :
+
+```ts
+return {
+  cookies: [{
+    name: 'session', value: token,
+    domain: '.exemple.com', path: '/',
+    secure: true, sameSite: 'None',
+  }],
+};
+```
+
+Omettre `sameSite` fait retomber le cookie sur « Lax » côté navigateur, qui
+refuse alors de l'envoyer sur les requêtes vers l'API. Rien ne le signale : le
+parcours démarre anonyme et échoue plusieurs étapes plus loin, sur une
+assertion qui n'a rien à voir. Un cookie « SameSite=None » doit aussi être
+« Secure », c'est une exigence du navigateur.
+
+Les deux champs sont **omis** de l'appel quand vous ne les renseignez pas : le
+navigateur applique alors ses propres défauts.
 
 ## Deux règles
 

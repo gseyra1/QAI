@@ -9,6 +9,7 @@ export interface QaiConfig {
   workers?: number;
   maxCost?: number;
   attempts?: number;
+  assertTimeout?: number;
   artifacts?: string;
   strict?: boolean;
 }
@@ -55,7 +56,7 @@ function parse(raw: string, path: string): QaiConfig {
     const value = document[key];
     if (typeof value === 'string') config[key] = value;
   }
-  for (const key of ['workers', 'maxCost', 'attempts'] as const) {
+  for (const key of ['workers', 'maxCost', 'attempts', 'assertTimeout'] as const) {
     const value = document[key];
     if (typeof value === 'number') config[key] = value;
   }
