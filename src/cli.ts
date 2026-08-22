@@ -41,6 +41,9 @@ Options
   --heal                réparer les cibles périmées et réécrire les résolutions
   --max-cost <n>        plafond de dépense du modèle
   --attempts <n>        tentatives par étape à la génération (défaut 3)
+  --assert-timeout <ms> fenêtre de réévaluation d'une assertion encore fausse,
+                        pour un rendu qui se termine après le repos réseau
+                        (défaut 5000)
   --resolution <path>   forcer le chemin de résolution (un seul scénario)
   --config <path>       défaut : qai.config.json, cherché en remontant
   --artifacts <dir>     où ranger les captures d'échec (défaut .qai/artifacts)
@@ -98,6 +101,7 @@ export async function main(argv: string[]): Promise<number> {
       workers: { type: 'string' },
       'max-cost': { type: 'string' },
       attempts: { type: 'string' },
+      'assert-timeout': { type: 'string' },
       heal: { type: 'boolean', default: false },
       config: { type: 'string' },
       artifacts: { type: 'string' },
@@ -122,6 +126,10 @@ export async function main(argv: string[]): Promise<number> {
     workers: values.workers !== undefined ? Number(values.workers) : config.workers,
     maxCost: values['max-cost'] !== undefined ? Number(values['max-cost']) : config.maxCost,
     attempts: values.attempts !== undefined ? Number(values.attempts) : config.attempts,
+    assertTimeout:
+      values['assert-timeout'] !== undefined
+        ? Number(values['assert-timeout'])
+        : config.assertTimeout,
     artifacts: values.artifacts ?? config.artifacts ?? '.qai/artifacts',
     strict: values.strict === true || config.strict === true,
   };
@@ -290,6 +298,7 @@ export async function main(argv: string[]): Promise<number> {
       ? { createHealer: (driver: Driver) => new ModelHealer({ driver, provider }) }
       : {}),
     ...(settings.workers !== undefined ? { workers: settings.workers } : {}),
+    ...(settings.assertTimeout !== undefined ? { assertTimeoutMs: settings.assertTimeout } : {}),
     captureArtifact: artifactWriter(settings.artifacts),
   });
 

@@ -78,6 +78,32 @@ class FakeDriver implements Driver {
   async dispose(): Promise<void> {}
 }
 
+/**
+ * Pilote dont l'arbre change apres un nombre donne d'observations.
+ *
+ * Reproduit ce qu'aucun arbre fige ne peut montrer : un ecran dont le rendu se
+ * termine APRES le repos reseau — module charge a la demande, animation
+ * d'entree, scene 3D.
+ */
+class TardyDriver extends FakeDriver {
+  observeCalls = 0;
+
+  readonly #late: UINode;
+  readonly #after: number;
+
+  constructor(early: UINode, late: UINode, after: number) {
+    super(early);
+    this.#late = late;
+    this.#after = after;
+  }
+
+  override async observe(): Promise<UISnapshot> {
+    this.observeCalls += 1;
+    const snapshot = await super.observe();
+    return this.observeCalls > this.#after ? { ...snapshot, root: this.#late } : snapshot;
+  }
+}
+
 class SpyHealer implements Healer {
   readonly calls: HealRequest[] = [];
   readonly #result: HealResult;
@@ -312,5 +338,53 @@ describe('runScenario', () => {
     });
     assert.equal(report.status, 'failed');
     assert.match(report.steps[0]?.error ?? '', /aucune résolution en cache/);
+  });
+  it('reevalue une assertion encore fausse pendant la fenetre accordee', async () => {
+    const vide = node('group', 'page', [node('text', 'Chargement…')]);
+    const rempli = node('group', 'page', [node('text', '1')]);
+    // L'arbre ne se remplit qu'a la 3e observation : sans fenetre, le verdict
+    // serait prononce sur la premiere et le parcours tomberait au rouge.
+    const driver = new TardyDriver(vide, rempli, 2);
+
+    const report = await runScenario({
+      driver,
+      assertTimeoutMs: 5000,
+      scenario: scenario([{ id: 's1', do: 'lire le panier', expect: 'le panier affiche 1' }]),
+      resolution: resolution({
+        s1: {
+          actions: [],
+          assertions: {
+            'le panier affiche 1': { check: 'textEquals', target: { role: 'text', name: '1' }, value: '1' },
+          },
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    assert.ok(driver.observeCalls > 1, 'l’arbre doit avoir ete observe plusieurs fois');
+  });
+
+  it('conclut a l’echec quand la fenetre expire sans que l’assertion devienne vraie', async () => {
+    const vide = node('group', 'page', [node('text', 'Chargement…')]);
+    // L'arbre ne se remplit jamais : la fenetre accorde du temps, elle ne doit
+    // en aucun cas finir par masquer un echec reel.
+    const driver = new TardyDriver(vide, vide, 0);
+
+    const report = await runScenario({
+      driver,
+      assertTimeoutMs: 400,
+      scenario: scenario([{ id: 's1', do: 'lire le panier', expect: 'le panier affiche 1' }]),
+      resolution: resolution({
+        s1: {
+          actions: [],
+          assertions: {
+            'le panier affiche 1': { check: 'textEquals', target: { role: 'text', name: '1' }, value: '1' },
+          },
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.equal(report.steps[0]?.failures.length, 1);
   });
 });
