@@ -49,9 +49,15 @@ runs:
     # Installé avant le navigateur : « playwright install » doit résoudre la
     # version de Playwright dont dépend QAI. Une version obtenue à part
     # téléchargerait un binaire que QAI ne saurait pas lancer.
+    #
+    # Aucun input n'est interpolé (${{ }}) dans un script : le shell évaluerait
+    # ce qu'un appelant hostile y glisse. Tout passe par l'environnement, que
+    # bash développe sans jamais le réinterpréter.
     - name: Installation
       shell: bash
-      run: npm i --no-save --no-audit --no-fund --ignore-scripts tilmiqai@${{ inputs.version }}
+      env:
+        VERSION: ${{ inputs.version }}
+      run: npm i --no-save --no-audit --no-fund --ignore-scripts "tilmiqai@$VERSION"
 
     - name: Navigateur
       shell: bash
@@ -62,16 +68,26 @@ runs:
       shell: bash
       env:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        SCENARIOS: ${{ inputs.scenarios }}
+        BASE_URL: ${{ inputs.base-url }}
+        CONFIG: ${{ inputs.config }}
+        STATES: ${{ inputs.states }}
+        HEAL: ${{ inputs.heal }}
+        STRICT: ${{ inputs.strict }}
       run: |
+        # Les arguments sont assemblés en tableau : chaque valeur reste un mot,
+        # jamais du code. Seul SCENARIOS est découpé sur les espaces — c'est un
+        # input multi-fichiers — et le découpage ne réévalue rien.
+        args=(run)
+        for s in $SCENARIOS; do args+=("$s"); done
+        args+=(--base-url "$BASE_URL")
+        [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
+        [ -n "$STATES" ] && args+=(--states "$STATES")
+        [ "$HEAL" = "true" ] && args+=(--heal)
+        [ "$STRICT" = "true" ] && args+=(--strict)
+        args+=(--format markdown --out "$RUNNER_TEMP/qai-report.md" --run-url "$RUN_URL")
         set +e
-        npx qai run ${{ inputs.scenarios }} \
-          --base-url "${{ inputs.base-url }}" \
-          ${{ inputs.config && format('--config {0}', inputs.config) || '' }} \
-          ${{ inputs.states && format('--states {0}', inputs.states) || '' }} \
-          ${{ inputs.heal == 'true' && '--heal' || '' }} \
-          ${{ inputs.strict == 'true' && '--strict' || '' }} \
-          --format markdown --out "$RUNNER_TEMP/qai-report.md" \
-          --run-url "$RUN_URL"
+        npx qai "${args[@]}"
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
         set -e
 
@@ -92,15 +108,16 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
       run: |
         REPORT="$RUNNER_TEMP/qai-report.md"
         [ -f "$REPORT" ] || exit 0
         # Un marqueur invisible permet de mettre à jour le commentaire existant
         # plutôt que d'en empiler un à chaque exécution.
-        EXISTING=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" \
+        EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
           --jq 'map(select(.body | startswith("<!-- qai-report -->"))) | .[0].id // empty')
         if [ -n "$EXISTING" ]; then
-          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+          gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" \
             -F body=@"$REPORT" > /dev/null
         else
           gh pr comment "$PR" --body-file "$REPORT"
@@ -108,4 +125,6 @@ runs:
 
     - name: Verdict
       shell: bash
-      run: exit ${{ steps.qai.outputs.exit-code }}
+      env:
+        CODE: ${{ steps.qai.outputs.exit-code }}
+      run: exit "$CODE"

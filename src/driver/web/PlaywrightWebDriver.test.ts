@@ -14,6 +14,7 @@ const FIXTURE = `<!doctype html>
   </header>
   <main>
     <input type="search" aria-label="Rechercher un produit">
+    <input type="password" aria-label="Mot de passe" value="secret-en-clair">
     <ul aria-label="Résultats">
       <li><a href="/p/1">Chaise de bureau</a></li>
       <li><a href="/p/2">Lampe de bureau</a></li>
@@ -100,6 +101,15 @@ describe('PlaywrightWebDriver', () => {
     const snapshot = await driver.observe();
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Fantôme').length, 0);
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Bouton masqué').length, 0);
+  });
+
+  it('ne publie jamais la valeur d\'un champ mot de passe', async () => {
+    const snapshot = await driver.observe();
+    const champ = findAll(snapshot.root, (n) => n.name === 'Mot de passe');
+    assert.equal(champ.length, 1, 'le champ doit rester présent dans le snapshot');
+    assert.equal(champ[0]?.value, undefined);
+    // Le secret ne doit apparaître nulle part, pas seulement hors du champ.
+    assert.equal(findAll(snapshot.root, (n) => n.value === 'secret-en-clair').length, 0);
   });
 
   it('remonte l\'état désactivé', async () => {
