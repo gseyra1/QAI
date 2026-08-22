@@ -126,6 +126,7 @@ function supports(driver: Driver, action: Action): boolean {
   if (action.kind === 'hover') return driver.capabilities.hover;
   if (action.kind === 'swipe') return driver.capabilities.swipe;
   if (action.kind === 'navigate') return driver.capabilities.navigateByUrl;
+  if (action.kind === 'expectDialog') return driver.capabilities.dialogs;
   return true;
 }
 
@@ -307,6 +308,19 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, error: redact(message, secrets) };
     }
+  }
+
+  /**
+   * Une politique armée que personne n'a consommée signale presque toujours
+   * que le bouton de confirmation a disparu de l'application : le clic a
+   * réussi, mais sans le dialogue attendu. Le parcours ne prouve alors plus ce
+   * qu'il croit prouver, et se taire laisserait passer la régression.
+   */
+  const pending = context.driver.takePendingDialogs?.() ?? 0;
+  if (pending > 0) {
+    warnings.push(
+      `${pending} dialogue(s) attendu(s) ne se sont pas présentés : la confirmation native a peut-être disparu de l'application`,
+    );
   }
 
   return { ok: true, heals, warnings };

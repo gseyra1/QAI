@@ -35,7 +35,7 @@ export interface GenerateResult {
 }
 
 const ACTION_KINDS = new Set([
-  'navigate', 'click', 'fill', 'select', 'press', 'scrollTo', 'hover', 'swipe',
+  'navigate', 'click', 'fill', 'select', 'press', 'scrollTo', 'hover', 'swipe', 'expectDialog',
 ]);
 
 interface Proposal {

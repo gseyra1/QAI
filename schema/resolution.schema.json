@@ -152,6 +152,17 @@
             "kind": { "const": "swipe" },
             "direction": { "enum": ["up", "down", "left", "right"] }
           }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "response"],
+          "additionalProperties": false,
+          "description": "Arme la réponse au prochain dialogue natif. Se place JUSTE AVANT le geste qui le déclenche : le dialogue bloque la page dès le clic, il n'y a aucun moment après pour répondre.",
+          "properties": {
+            "kind": { "const": "expectDialog" },
+            "response": { "enum": ["accept", "dismiss"] },
+            "promptText": { "type": "string", "description": "Uniquement pour un prompt()." }
+          }
         }
       ]
     },

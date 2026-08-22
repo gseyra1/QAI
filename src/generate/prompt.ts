@@ -54,6 +54,13 @@ Rules for typed values:
 - {{capture}} also works in a typed value, to reuse what was read at an
   earlier step.
 
+Rule for native confirmations:
+- A gesture that triggers a browser dialog (confirm, alert, prompt) must be
+  PRECEDED by { "kind": "expectDialog", "response": "accept" }. The dialog
+  blocks the page from the click onwards: there is no moment after it to
+  answer. Without this action the dialog is dismissed, and the deletion, the
+  confirmation or the exit never happens.
+
 An intent often translates into several gestures: "fill in the address" or
 "sign in" are several actions, in order — but all on the screen you are
 shown: every target is verified against this screen before any execution.`;

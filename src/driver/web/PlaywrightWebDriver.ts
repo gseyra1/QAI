@@ -50,12 +50,15 @@ export class PlaywrightWebDriver implements Driver {
     swipe: false,
     navigateByUrl: true,
     deepLink: true,
+    dialogs: true,
   };
 
   readonly #launch: () => Promise<Browser>;
   #browser: Browser | null = null;
   #page: Page | null = null;
   #baseUrl = '';
+  /** File des politiques armées par `expectDialog`, consommées dans l'ordre. */
+  readonly #dialogs: { response: 'accept' | 'dismiss'; promptText?: string }[] = [];
 
   constructor(launcher: () => Promise<Browser>) {
     this.#launch = launcher;
@@ -74,6 +77,16 @@ export class PlaywrightWebDriver implements Driver {
       target.viewport ? { viewport: target.viewport } : {},
     );
     this.#page = await context.newPage();
+    /**
+     * Sans écouteur, Playwright refuse automatiquement tout dialogue natif.
+     * Le poser rend la décision au scénario — et le défaut reste le refus,
+     * pour qu'un parcours qui n'a rien déclaré se comporte comme avant.
+     */
+    this.#page.on('dialog', (dialog) => {
+      const policy = this.#dialogs.shift();
+      void (policy?.response === 'accept' ? dialog.accept(policy.promptText) : dialog.dismiss());
+    });
+
     this.#baseUrl = target.entry;
     await this.#page.addInitScript({ content: COLLECTOR_SOURCE });
     await this.#page.goto(target.entry);
@@ -255,6 +268,13 @@ export class PlaywrightWebDriver implements Driver {
         return;
       case 'swipe':
         throw new DriverError('swipe does not exist on the web driver', 'unsupported');
+      case 'expectDialog':
+        // Rien n'est exécuté : on arme, le geste suivant déclenchera.
+        this.#dialogs.push({
+          response: action.response,
+          ...(action.promptText !== undefined ? { promptText: action.promptText } : {}),
+        });
+        return;
       case 'click':
         await (await this.#locatorFor(action.target)).click();
         return;
@@ -288,6 +308,12 @@ export class PlaywrightWebDriver implements Driver {
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }),
     );
+  }
+
+  takePendingDialogs(): number {
+    const pending = this.#dialogs.length;
+    this.#dialogs.length = 0;
+    return pending;
   }
 
   async dispose(): Promise<void> {

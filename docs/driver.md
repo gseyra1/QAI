@@ -41,6 +41,31 @@ a second "Valider" button, a test that "passes" by silently clicking the wrong
 one is worse than no test at all. The driver refuses to choose and reports the
 match count.
 
+## Native dialogs are declared before the gesture
+
+Playwright **auto-dismisses** `confirm()`, `alert()` and `prompt()` as long as
+nobody is listening. A "delete then confirm" journey therefore ran without any
+error and without deleting anything: the worst case, a green that proves
+nothing.
+
+`expectDialog` arms the answer to the **next** dialog, once only:
+
+```json
+[
+  { "kind": "expectDialog", "response": "accept" },
+  { "kind": "click", "target": { "primary": { "role": "button", "name": "Delete" } } }
+]
+```
+
+The order is not negotiable. The dialog blocks the page from the click onwards:
+there is no instant *after* the gesture where one could still answer.
+
+With no policy armed, the driver dismisses — the previous behaviour, so that
+existing resolutions do not change meaning. A policy armed that nobody consumed
+becomes a step **warning**: the click succeeded but the expected dialog never
+appeared, which almost always means the confirmation disappeared from the
+application.
+
 ## `select` targets the label, not the value
 
 Playwright's `selectOption("std")` matches the option's **value** — a technical

@@ -162,6 +162,14 @@ export function stepProposalSchema(): Record<string, unknown> {
             action('press', { key: { type: 'string' } }, ['key']),
             action('scrollTo', { target: targetSchema() }, ['target']),
             action('hover', { target: targetSchema() }, ['target']),
+            action(
+              'expectDialog',
+              {
+                response: { enum: ['accept', 'dismiss'] },
+                promptText: { type: 'string', description: 'uniquement pour un prompt()' },
+              },
+              ['response'],
+            ),
           ],
         },
       },
