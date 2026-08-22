@@ -30,7 +30,23 @@ export type Check =
    * instantané.
    */
   | { check: 'urlContains'; value: string }
-  | { check: 'urlEquals'; value: string };
+  | { check: 'urlEquals'; value: string }
+  /**
+   * Les deux vérifications qui portent sur ce que l'application a *fait*,
+   * pas sur ce qu'elle affiche.
+   *
+   * `allow` liste des fragments d'URL ou de message tolérés : une intégration
+   * tierce bruyante ne doit pas apprendre à l'équipe à désactiver le garde-fou.
+   * Elles ne sont évaluées qu'une fois : une erreur console ne devient pas
+   * fausse en attendant.
+   */
+  | { check: 'noFailedRequests'; allow?: string[] }
+  | { check: 'noConsoleErrors'; allow?: string[] };
+
+/** Vrai pour les vérifications portant sur les observations, pas sur l'arbre. */
+export function isObservationCheck(check: Check): boolean {
+  return check.check === 'noFailedRequests' || check.check === 'noConsoleErrors';
+}
 
 export interface StepResolution {
   /**

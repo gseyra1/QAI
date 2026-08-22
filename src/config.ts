@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
+import type { WatchdogLevel, Watchdogs } from './engine/run.ts';
 
 export interface QaiConfig {
   scenarios?: string[];
@@ -14,6 +15,8 @@ export interface QaiConfig {
   assertTimeout?: number;
   artifacts?: string;
   strict?: boolean;
+  /** Garde-fous réseau et console. Absent = tout à « off ». */
+  watchdogs?: Watchdogs;
 }
 
 const FILE = 'qai.config.json';
@@ -38,6 +41,23 @@ function absolutize(config: QaiConfig, base: string): QaiConfig {
     out.scenarios = out.scenarios.map((path) => (isAbsolute(path) ? path : resolve(base, path)));
   }
   return out;
+}
+
+const LEVELS: ReadonlySet<string> = new Set(['off', 'warn', 'fail']);
+
+/**
+ * Un niveau inconnu est ignoré plutôt que corrigé au plus strict : une faute
+ * de frappe ne doit pas faire tomber une suite entière, ni la rendre verte
+ * sans qu'on l'ait demandé.
+ */
+function parseWatchdogs(raw: Record<string, unknown>): Watchdogs {
+  const watchdogs: Watchdogs = {};
+  for (const key of ['consoleErrors', 'requestFailures'] as const) {
+    const value = raw[key];
+    if (typeof value === 'string' && LEVELS.has(value)) watchdogs[key] = value as WatchdogLevel;
+  }
+  if (Array.isArray(raw['allow'])) watchdogs.allow = raw['allow'] as string[];
+  return watchdogs;
 }
 
 function parse(raw: string, path: string): QaiConfig {
@@ -68,6 +88,9 @@ function parse(raw: string, path: string): QaiConfig {
     if (typeof value === 'number') config[key] = value;
   }
   if (typeof document['strict'] === 'boolean') config.strict = document['strict'];
+
+  const watchdogs = document['watchdogs'];
+  if (isRecord(watchdogs)) config.watchdogs = parseWatchdogs(watchdogs);
 
   return absolutize(config, dirname(resolve(path)));
 }

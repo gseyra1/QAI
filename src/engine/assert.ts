@@ -1,4 +1,4 @@
-import type { Locator, UINode } from '../driver/types.ts';
+import type { ConsoleEntry, Locator, NetworkEntry, Observations, UINode } from '../driver/types.ts';
 import type { Check, ExtractKind } from '../resolution/types.ts';
 import { matchNodes } from './match.ts';
 
@@ -166,6 +166,17 @@ export interface CheckContext {
   /** URL sur le web, identifiant d'écran ou d'activité sur mobile. */
   location: string;
   bag: Readonly<Record<string, string>>;
+  /** Ce que l'application a fait pendant l'étape. Vide si le driver ne sait pas observer. */
+  observations?: Observations;
+}
+
+/** Une requête est en échec si elle n'a pas abouti, ou si le serveur a refusé. */
+export function isFailed(entry: NetworkEntry): boolean {
+  return entry.status === null || entry.status >= 400;
+}
+
+function allowed(text: string, patterns: readonly string[] | undefined): boolean {
+  return patterns?.some((pattern) => text.includes(pattern)) === true;
 }
 
 export function evaluateCheck(check: Check, context: CheckContext): CheckResult {
@@ -193,6 +204,33 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
     return observed === expected
       ? { ok: true }
       : { ok: false, reason: `attendu l'URL « ${shown} », observé « ${observed} »` };
+  }
+
+  /**
+   * Les garde-fous d'observation passent aussi avant l'arbre : ils ne parlent
+   * pas d'un élément mais de ce que l'application a fait pour l'afficher.
+   */
+  if (check.check === 'noFailedRequests') {
+    const failed = (context.observations?.network ?? [])
+      .filter(isFailed)
+      .filter((entry) => !allowed(entry.url, check.allow));
+    if (failed.length === 0) return { ok: true };
+    const first = failed[0] as NetworkEntry;
+    return {
+      ok: false,
+      reason: `${failed.length} requête(s) en échec, dont ${first.method} ${first.url} → ${first.status ?? 'échec réseau'}`,
+    };
+  }
+
+  if (check.check === 'noConsoleErrors') {
+    const errors = (context.observations?.console ?? [])
+      .filter((entry) => entry.level === 'error')
+      .filter((entry) => !allowed(entry.text, check.allow));
+    if (errors.length === 0) return { ok: true };
+    return {
+      ok: false,
+      reason: `${errors.length} erreur(s) console, dont « ${(errors[0] as ConsoleEntry).text} »`,
+    };
   }
 
   const matched = matchNodes(root, interpolateLocator(check.target, bag));

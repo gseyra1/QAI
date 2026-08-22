@@ -33,6 +33,17 @@ function formatStep(step: StepReport): string[] {
   for (const warning of step.warnings ?? []) {
     lines.push(`        ⚠ ${warning}`);
   }
+
+  /**
+   * Les trois dernières, pas toutes : c'est ce qui vient de se passer qui
+   * explique l'échec, et une liste de vingt lignes ne serait plus lue.
+   */
+  for (const entry of (step.network ?? []).slice(-3)) {
+    lines.push(`        ↯ ${entry.method} ${entry.url} → ${entry.status ?? 'échec réseau'}`);
+  }
+  for (const error of (step.consoleErrors ?? []).slice(-3)) {
+    lines.push(`        ⚡ console : ${error}`);
+  }
   return lines;
 }
 

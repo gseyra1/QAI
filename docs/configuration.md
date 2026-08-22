@@ -15,7 +15,8 @@ anywhere in the repo.
   "maxCost": 2,
   "assertTimeout": 5000,
   "artifacts": ".qai/artifacts",
-  "strict": false
+  "strict": false,
+  "watchdogs": { "consoleErrors": "off", "requestFailures": "off", "allow": [] }
 }
 ```
 
@@ -44,6 +45,24 @@ and the generation bear on exactly the same set as the replay.
 
 **A filter that keeps nothing fails the command.** Exiting 0 would mean a
 misspelled tag turns a CI job green without having run anything.
+
+## The watchdogs
+
+`watchdogs` reports what no assertion declares but nobody really accepts: a
+failed request, a console error. Three levels per watchdog — `off`, `warn`,
+`fail` — and an `allow` list of tolerated fragments.
+
+The default is `off` everywhere, and the climb happens in two steps:
+
+```json
+"watchdogs": { "requestFailures": "warn" }   ... then "fail"
+```
+
+Setting them straight to `fail` would break whole suites on the day of the
+upgrade, on pre-existing errors — and the team would learn to switch them off,
+which costs more than never having set them.
+
+Behaviour in detail in [docs/engine.md](engine.md).
 
 ## Rules
 

@@ -360,6 +360,7 @@ export async function main(argv: string[]): Promise<number> {
       : {}),
     ...(settings.workers !== undefined ? { workers: settings.workers } : {}),
     ...(settings.assertTimeout !== undefined ? { assertTimeoutMs: settings.assertTimeout } : {}),
+    ...(config.watchdogs !== undefined ? { watchdogs: config.watchdogs } : {}),
     captureArtifact: artifactWriter(settings.artifacts),
   });
 
