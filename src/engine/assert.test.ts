@@ -101,4 +101,18 @@ describe('evaluateCheck', () => {
     assert.equal(result.ok, false);
     assert.match(result.ok === false ? result.reason : '', /aucun élément/);
   });
+
+  it('tolère une valeur numérique venue du schéma de génération', () => {
+    // Le schéma de sortie autorise un nombre (countAtLeast l'exige) : un modèle
+    // qui émet { value: 129 } pour numberEquals ne doit pas produire un
+    // TypeError sur .replace, mais une comparaison normale.
+    const ecran = node('group', 'page', [node('text', '129,00 €')]);
+    const check = {
+      check: 'numberEquals',
+      target: { role: 'text' },
+      value: 129 as unknown as string,
+    } as const;
+
+    assert.deepEqual(evaluateCheck(check, ecran, {}), { ok: true });
+  });
 });

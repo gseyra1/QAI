@@ -171,8 +171,9 @@ Trois garde-fous complètent la règle :
   signifie que l'application a changé de nature, pas que le test est périmé.
 - **Une réparation ne peut pas supprimer d'étape.** Contourner une étape qui ne
   passe plus est précisément la définition d'un faux négatif.
-- **Une réparation est un diff.** Elle apparaît dans la revue, avec une capture
-  avant/après. Personne n'a à croire l'agent sur parole.
+- **Une réparation est un diff.** Elle réécrit le fichier de résolution avec la
+  raison attachée (`healNote`), et c'est ce diff qui passe en revue. Personne
+  n'a à croire l'agent sur parole.
 
 ## Les trois étages d'exécution
 

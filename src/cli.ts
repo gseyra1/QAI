@@ -148,6 +148,18 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${flag} exige ${exige}\n`);
     return 1;
   };
+  // Number('') vaut 0 : une variable de CI non définie (« --assert-timeout
+  // $QAI_TIMEOUT ») passerait la conversion et désactiverait la fenêtre en
+  // silence. Le vide se refuse avant de convertir.
+  const bruts: [string, string | undefined][] = [
+    ['--workers', values.workers],
+    ['--max-cost', values['max-cost']],
+    ['--attempts', values.attempts],
+    ['--assert-timeout', values['assert-timeout']],
+  ];
+  for (const [flag, raw] of bruts) {
+    if (raw !== undefined && raw.trim() === '') return invalide(flag, 'une valeur non vide');
+  }
   const { workers, maxCost: plafond, attempts, assertTimeout } = settings;
   if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) {
     return invalide('--workers', 'un entier ≥ 1');

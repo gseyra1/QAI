@@ -87,15 +87,29 @@ describe('exécution d\'une suite', () => {
     );
   });
 
-  it('sans fournisseur d\'état, le parcours qui exige une session échoue', async () => {
+  it('sans fournisseur d\'état, tout parcours déclarant « given » est refusé explicitement', async () => {
     const report = await runSuite({ items, baseUrl, createDriver, workers: 2 });
 
+    // Refusés avant de démarrer, pas exécutés anonymes : un parcours joué sans
+    // son état pourrait sortir vert et ne prouverait rien. Les deux scénarios
+    // d'exemple déclarent « given » — la même règle que « resolve » s'applique.
     assert.equal(report.status, 'failed');
-    const connecte = report.entries.find((entry) => entry.scenarioId === 'compte-connecte');
-    assert.equal(connecte?.report?.status, 'failed');
+    for (const entry of report.entries) {
+      assert.equal(entry.report, null);
+      assert.match(entry.error ?? '', /StateProvider/);
+    }
+  });
 
-    const guest = report.entries.find((entry) => entry.scenarioId === 'checkout-guest');
-    assert.equal(guest?.report?.status, 'passed', 'les autres parcours ne doivent pas être affectés');
+  it('un parcours sans « given » se joue sans fournisseur d\'état', async () => {
+    const sansEtat = items
+      .filter((item) => item.scenario.id === 'checkout-guest')
+      .map((item) => ({
+        ...item,
+        scenario: (({ given: _given, ...rest }) => rest)(item.scenario),
+      }));
+    const report = await runSuite({ items: sansEtat, baseUrl, createDriver, workers: 1 });
+
+    assert.equal(report.status, 'passed');
   });
 
   it('isole les parcours : aucun état ne fuit d\'un scénario à l\'autre', async () => {

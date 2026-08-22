@@ -165,6 +165,14 @@ function verifyChecks(
     }
   }
 
+  // Symétrique du refus des assertions inventées : une capture hors scénario
+  // serait persistée sans jamais être vérifiée, et casserait un rejeu sain.
+  for (const name of Object.keys(proposal.captures)) {
+    if (step.capture?.[name] === undefined) {
+      errors.push(`capture « ${name} » inconnue du scénario — ne l'invente pas`);
+    }
+  }
+
   const expectations = expectationsOf(step);
   for (const expectation of expectations) {
     const check = proposal.assertions[expectation];

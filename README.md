@@ -8,15 +8,17 @@
 [![license](https://img.shields.io/npm/l/tilmiqai.svg)](LICENSE)
 
 ```
-checkout-guest — FAILED   1.2 s
+1 parcours — ÉCHEC   6.8 s
 
-  ✓ s1…s7
-  ✖ s8   pay with the test card
-        order is confirmed → no element matches the target
-  ⊘ s9   check the order appears in tracking
+  ✖ checkout-guest         ÉCHEC   6.4 s
+    ✖ s8   payer avec la carte de test
+          la commande est confirmée → aucun élément ne correspond à la cible
 
-No repair was applied: a false assertion is a regression, not a stale test.
+1 parcours en échec.
 ```
+
+A false assertion is a regression, not a stale test — no repair was applied,
+the pull request goes red.
 
 ## Features
 
@@ -200,7 +202,7 @@ import type { ModelProvider, StateProvider, Scenario, ScenarioReport } from 'til
 
 ## Status
 
-Web is implemented and covered by 100 tests, including full journeys driven through a real browser. **Mobile drivers are not built yet** — the scenario format and driver contract are designed for them, nothing more.
+Web is implemented and covered by 123 tests, including full journeys driven through a real browser. **Mobile drivers are not built yet** — the scenario format and driver contract are designed for them, nothing more.
 
 `resolve` and `--heal` are verified end to end against a real application using scripted models: the loop, the verification, the produced file and the resulting diff. The *quality* of a real model's proposals depends on the model you plug in and is not measured here.
 
@@ -214,7 +216,7 @@ npm test
 
 ```bash
 npm run demo          # demo shop on :8899
-npm run qai -- run examples/ --base-url http://127.0.0.1:8899/
+npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-exemple.ts
 ```
 
 Issues and pull requests welcome at [github.com/gseyra1/QAI](https://github.com/gseyra1/QAI/issues).

@@ -96,5 +96,5 @@ dépense s'applique à l'ensemble de la génération.
 ## Et l'étage 2
 
 Réparer, c'est cette même boucle appliquée à une seule cible au lieu d'un
-parcours entier : observer, proposer, vérifier avec `resolve()`. L'interface
-`Healer` attend son implémentation, mais la partie difficile est écrite.
+parcours entier : observer, proposer, vérifier avec `resolve()`. C'est
+`ModelHealer` — voir [reparation.md](reparation.md).
