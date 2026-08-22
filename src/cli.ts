@@ -140,6 +140,27 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
+
+  // Un réglage numérique illisible doit arrêter la commande, pas se dissoudre :
+  // « --workers abc » produisait une suite verte à zéro parcours, et
+  // « --max-cost abc » désactivait le plafond que l'utilisateur croyait poser.
+  const invalide = (flag: string, exige: string): number => {
+    process.stderr.write(`${flag} exige ${exige}\n`);
+    return 1;
+  };
+  const { workers, maxCost: plafond, attempts, assertTimeout } = settings;
+  if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) {
+    return invalide('--workers', 'un entier ≥ 1');
+  }
+  if (plafond !== undefined && (!Number.isFinite(plafond) || plafond <= 0)) {
+    return invalide('--max-cost', 'un nombre > 0');
+  }
+  if (attempts !== undefined && (!Number.isInteger(attempts) || attempts < 1)) {
+    return invalide('--attempts', 'un entier ≥ 1');
+  }
+  if (assertTimeout !== undefined && (!Number.isFinite(assertTimeout) || assertTimeout < 0)) {
+    return invalide('--assert-timeout', 'un nombre de millisecondes ≥ 0');
+  }
   if (command === undefined || requested.length === 0) {
     // Une invocation incomplète doit échouer : passer en silence ferait
     // qu'un job de CI mal configuré serait vert sans avoir rien testé.
