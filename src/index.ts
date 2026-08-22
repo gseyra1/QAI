@@ -81,6 +81,8 @@ export type { ModelHealerOptions } from './heal/ModelHealer.ts';
 export { ModelHealer } from './heal/ModelHealer.ts';
 
 // Rendu des rapports, pour brancher QAI sur un reporter existant.
+export type { JUnitOptions } from './report/junit.ts';
+export { formatJUnit } from './report/junit.ts';
 export type { MarkdownOptions } from './report/markdown.ts';
 export { COMMENT_MARKER, formatMarkdown } from './report/markdown.ts';
 export { formatIssues, formatReport, formatSuite } from './report/text.ts';
