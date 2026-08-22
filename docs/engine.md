@@ -37,6 +37,35 @@ La lecture des nombres tolère les formats français et anglais : `129,00 €`,
 soucier. Un point suivi de trois chiffres est traité comme séparateur de
 milliers — le pari juste sur des montants affichés.
 
+`evaluateCheck()` reçoit un contexte — l'arbre, l'adresse courante, les captures
+déjà connues — et non le seul arbre. C'est ce qui permet à une vérification de
+porter sur autre chose qu'un nœud.
+
+### Vérifier l'adresse
+
+`urlContains` et `urlEquals` sont les deux seules vérifications **sans cible** :
+une URL n'est pas un nœud de l'interface. Elles rendent exprimable la famille
+entière des parcours de droits d'accès — « l'utilisateur anonyme est redirigé
+vers la connexion » — qui n'a rien à affirmer sur l'écran d'arrivée sinon
+l'endroit où il a atterri.
+
+```json
+{ "check": "urlContains", "value": "/connexion" }
+{ "check": "urlEquals", "value": "https://app.exemple.fr/connexion?next=/admin" }
+```
+
+La comparaison est **brute** : ni barre finale, ni paramètre de requête, ni
+fragment ne sont normalisés. Les effacer ferait passer une redirection vers
+`/connexion?next=/admin` pour une redirection vers `/connexion`, alors que la
+différence est précisément ce qu'un parcours de droits cherche à prouver.
+`urlContains` couvre le cas courant où seul le chemin compte.
+
+La valeur accepte `{{capture}}`, ce qui permet d'affirmer une adresse construite
+à l'étape précédente — `/eleves/{{id}}` après la création d'une fiche.
+
+Comme toute assertion, une vérification d'URL est réévaluée dans la fenêtre
+`assertTimeout` : une redirection qui arrive après le repos réseau est vue.
+
 ## La frontière de sécurité, rendue structurelle
 
 Le moteur n'appelle le réparateur **que** sur un échec de résolution de cible.

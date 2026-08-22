@@ -20,7 +20,17 @@ export type Check =
   | { check: 'textContains'; target: Locator; value: string }
   | { check: 'countAtLeast'; target: Locator; value: number }
   | { check: 'numberEquals'; target: Locator; value: string }
-  | { check: 'stateIs'; target: Locator; value: 'checked' | 'disabled' | 'selected' };
+  | { check: 'stateIs'; target: Locator; value: 'checked' | 'disabled' | 'selected' }
+  /**
+   * Les deux seules vérifications sans cible : une URL n'est pas un nœud.
+   *
+   * Sans elles, « l'utilisateur est redirigé vers la connexion » — donc toute
+   * la famille des parcours d'authentification et de droits d'accès — reste
+   * inexprimable, alors que le moteur observe déjà `location` à chaque
+   * instantané.
+   */
+  | { check: 'urlContains'; value: string }
+  | { check: 'urlEquals'; value: string };
 
 export interface StepResolution {
   /**

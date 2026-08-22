@@ -105,6 +105,21 @@ suivantes via `{{nom}}`. C'est ce qui permet d'écrire des assertions qui ont du
 sens (« le total est égal au prix vu sur la fiche produit ») plutôt que des
 constantes qui cassent au premier changement de catalogue.
 
+### `expect` — y compris sur l'adresse
+
+Une attente se formule en langage naturel, et le modèle choisit la forme
+machine. Elle peut porter sur l'adresse aussi bien que sur l'écran :
+
+```yaml
+  - id: s2
+    do: ouvrir /admin sans être connecté
+    expect: l'utilisateur est redirigé vers la page de connexion
+```
+
+se résout en `{ "check": "urlContains", "value": "/connexion" }`. Le scénario ne
+mentionne toujours aucune URL : c'est une intention, et le chemin exact reste un
+détail de résolution — il changera sans que le scénario bouge.
+
 ### `given` — l'état de départ
 
 Un scénario ne construit pas son propre contexte à coups de clics : il déclare

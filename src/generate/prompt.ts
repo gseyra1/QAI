@@ -23,6 +23,10 @@ Règles pour les assertions :
   état connu comme bon : une assertion fausse ici serait un test faux.
 - Une valeur peut référencer une capture avec {{nom}}, y compris dans le nom
   d'une cible.
+- Quand l'assertion parle de l'adresse — une redirection, un accès refusé, une
+  navigation — utilise "urlContains" (un fragment stable, ex. "/connexion") ou
+  "urlEquals" (l'URL entière, comparée telle quelle). Ces deux vérifications
+  n'ont pas de "target" : elles ne portent sur aucun élément.
 
 Une intention se traduit souvent en plusieurs gestes : « renseigner l'adresse »
 ou « se connecter » sont plusieurs actions, dans l'ordre.`;
@@ -71,11 +75,18 @@ export function retryMessage(errors: string[], tree?: string): string {
 
 export function checksMessage(input: {
   tree: string;
+  /** Sans elle, une assertion d'URL serait à deviner. */
+  location: string;
   expectations: string[];
   captureNames: string[];
   availableCaptures: Record<string, string>;
 }): string {
-  const parts = ['Les actions ont été exécutées. Voici l\'écran obtenu :', '', input.tree, ''];
+  const parts = [
+    `Les actions ont été exécutées. Voici l'écran obtenu (${input.location}) :`,
+    '',
+    input.tree,
+    '',
+  ];
 
   if (input.captureNames.length > 0) {
     parts.push(`Captures à produire depuis cet écran : ${input.captureNames.join(', ')}`);

@@ -156,20 +156,34 @@
       ]
     },
     "check": {
-      "type": "object",
-      "required": ["check"],
-      "additionalProperties": false,
       "description": "Forme machine d'une assertion. La clé sous laquelle elle est rangée est le texte exact de l'assertion du scénario.",
-      "properties": {
-        "check": {
-          "enum": [
-            "visible", "absent", "textEquals", "textContains", "countAtLeast",
-            "numberEquals", "stateIs"
-          ]
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["check", "target"],
+          "additionalProperties": false,
+          "properties": {
+            "check": {
+              "enum": [
+                "visible", "absent", "textEquals", "textContains", "countAtLeast",
+                "numberEquals", "stateIs"
+              ]
+            },
+            "target": { "$ref": "#/$defs/locator" },
+            "value": { "type": ["string", "number"] }
+          }
         },
-        "target": { "$ref": "#/$defs/locator" },
-        "value": { "type": ["string", "number"] }
-      }
+        {
+          "type": "object",
+          "required": ["check", "value"],
+          "additionalProperties": false,
+          "description": "Vérification de l'adresse courante. Sans cible : une URL n'est pas un nœud. La comparaison est brute, barre finale et paramètres compris.",
+          "properties": {
+            "check": { "enum": ["urlContains", "urlEquals"] },
+            "value": { "type": "string" }
+          }
+        }
+      ]
     },
     "step": {
       "type": "object",

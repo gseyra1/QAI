@@ -133,6 +133,7 @@ interface CheckOutcome {
  */
 function verifyChecks(
   root: UINode,
+  location: string,
   bag: Readonly<Record<string, string>>,
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
@@ -173,7 +174,7 @@ function verifyChecks(
       continue;
     }
     try {
-      const result = evaluateCheck(check, root, merged);
+      const result = evaluateCheck(check, { root, location, bag: merged });
       if (!result.ok) {
         errors.push(`assertion « ${expectation} » fausse sur cet écran : ${result.reason}`);
       }
@@ -282,7 +283,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     await driver.settle();
     let after = await driver.observe({ interactiveOnly: true });
     let checks: Pick<Proposal, 'captures' | 'assertions'> = proposal;
-    let outcome = verifyChecks(after.root, bag, checks, step);
+    let outcome = verifyChecks(after.root, after.location, bag, checks, step);
 
     const checksConversation: ModelMessage[] = [];
     while (outcome.errors.length > 0 && used < attempts) {
@@ -297,6 +298,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
               type: 'text',
               text: checksMessage({
                 tree: renderTree(after.root),
+                location: after.location,
                 expectations: expectationsOf(step),
                 captureNames: Object.keys(step.capture ?? {}),
                 availableCaptures: bag,
@@ -330,7 +332,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       after = await driver.observe({ interactiveOnly: true });
       checks = candidate;
-      outcome = verifyChecks(after.root, bag, checks, step);
+      outcome = verifyChecks(after.root, after.location, bag, checks, step);
     }
 
     if (outcome.errors.length > 0) {
