@@ -387,4 +387,100 @@ describe('runScenario', () => {
     assert.equal(report.status, 'failed');
     assert.equal(report.steps[0]?.failures.length, 1);
   });
+
+  /**
+   * Sans interpolation au rejeu, la résolution devrait contenir le mot de
+   * passe en clair pour qu'un parcours de connexion fonctionne — c'est-à-dire
+   * qu'aucune application authentifiée ne serait testable sans verser un
+   * secret dans git.
+   */
+  it('résout la valeur d\'une saisie au moment d\'agir, jamais dans le fichier', async () => {
+    process.env['QAI_TEST_PASS'] = 'hunter2';
+    try {
+      const driver = new FakeDriver(TREE);
+      const report = await runScenario({
+        driver,
+        scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+        resolution: resolution({
+          s1: {
+            actions: [
+              { kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_PASS}}' },
+              { kind: 'select', target: CLICK, option: '{{env.QAI_TEST_PASS}}' },
+            ],
+          },
+        }),
+      });
+
+      assert.equal(report.status, 'passed');
+      const [rempli, choisi] = driver.acted;
+      assert.equal(rempli?.kind === 'fill' ? rempli.value : null, 'hunter2');
+      assert.equal(choisi?.kind === 'select' ? choisi.option : null, 'hunter2');
+    } finally {
+      delete process.env['QAI_TEST_PASS'];
+    }
+  });
+
+  it('saisit ce qu\'une étape précédente a capturé', async () => {
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([
+        { id: 's1', do: 'lire le prix', capture: { prix: 'le prix affiché' } },
+        { id: 's2', do: 'recopier le prix' },
+      ]),
+      resolution: resolution({
+        s1: { actions: [], captures: { prix: { from: { role: 'text', name: '129,00 €' }, extract: 'text' } } },
+        s2: { actions: [{ kind: 'fill', target: CLICK, value: '{{prix}}' }] },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    const rempli = driver.acted.at(-1);
+    assert.equal(rempli?.kind === 'fill' ? rempli.value : null, '129,00 €');
+  });
+
+  /**
+   * Une variable absente doit arrêter l'étape en la nommant : un champ mot de
+   * passe rempli avec du vide échouerait plus loin, sur un message muet.
+   */
+  it('échoue en nommant la variable d\'environnement manquante', async () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+      resolution: resolution({
+        s1: { actions: [{ kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_ABSENT}}' }] },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /QAI_TEST_ABSENT/);
+    assert.equal(driver.acted.length, 0, 'rien ne doit être saisi');
+  });
+
+  it('efface le secret du message quand le pilote échoue', async () => {
+    process.env['QAI_TEST_PASS'] = 'hunter2';
+    try {
+      class LeakyDriver extends FakeDriver {
+        override async act(action: Action): Promise<void> {
+          throw new Error(`impossible de saisir « ${action.kind === 'fill' ? action.value : ''} »`);
+        }
+      }
+
+      const report = await runScenario({
+        driver: new LeakyDriver(TREE),
+        scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+        resolution: resolution({
+          s1: { actions: [{ kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_PASS}}' }] },
+        }),
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.doesNotMatch(report.steps[0]?.error ?? '', /hunter2/);
+      assert.match(report.steps[0]?.error ?? '', /\*\*\*/);
+    } finally {
+      delete process.env['QAI_TEST_PASS'];
+    }
+  });
 });

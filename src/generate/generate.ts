@@ -1,9 +1,9 @@
 import type { Action, Driver, UINode } from '../driver/types.ts';
-import { evaluateCheck, extractValue, interpolateLocator } from '../engine/assert.ts';
+import { evaluateCheck, extractValue, interpolate, interpolateLocator } from '../engine/assert.ts';
 import { matchOne } from '../engine/match.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
-import { targetOf } from '../resolution/types.ts';
+import { targetOf, valueOf, withValue } from '../resolution/types.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
 import { checksMessage, retryMessage, stepMessage, SYSTEM_PROMPT } from './prompt.ts';
@@ -272,7 +272,15 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     try {
-      for (const action of proposal.actions) await driver.act(action);
+      // Les valeurs sont interpolées ici aussi : sans ça, la génération
+      // saisirait « {{env.MOT_DE_PASSE}} » littéralement dans le champ et
+      // résoudrait l'étape suivante contre un écran de connexion refusée.
+      for (const action of proposal.actions) {
+        const template = valueOf(action);
+        await driver.act(
+          template === null ? action : withValue(action, interpolate(template, bag)),
+        );
+      }
     } catch (error) {
       rejections.push(error instanceof Error ? error.message : String(error));
       reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections });

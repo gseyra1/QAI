@@ -82,6 +82,35 @@ six étapes plus loin.
 navigateur neuf, donc rien ne fuit de l'un à l'autre — un test vérifie
 explicitement ce point.
 
+## Les secrets : `{{env.NOM}}`
+
+Passer par un état préparé évite la plupart des connexions par formulaire. Mais
+quand c'est le formulaire lui-même qu'on veut prouver, il faut bien saisir un
+mot de passe — et le fichier de résolution vit dans git.
+
+Une valeur d'action peut donc référencer l'environnement :
+
+```json
+{ "kind": "fill", "target": { … }, "value": "{{env.QAI_PASS}}" }
+```
+
+Le fichier ne contient que le **template**. La valeur est lue dans
+`process.env` au moment d'agir, au rejeu comme à la génération, et n'est jamais
+réécrite dans un fichier. Une variable absente arrête l'étape en la nommant —
+remplir un champ mot de passe avec du vide échouerait plus loin, sur un message
+qui ne dirait rien de la cause.
+
+Ce qui vient de `env.` est traité comme un secret : les rapports d'échec le
+remplacent par `***`, y compris quand le message vient du driver. Un rapport de
+test finit dans les journaux d'une CI.
+
+À la génération, formulez l'intention en nommant la variable — « se connecter
+avec QAI_USER et QAI_PASS » — et le modèle émettra le template plutôt qu'une
+valeur inventée.
+
+Le même mécanisme rend `{{capture}}` utilisable dans une saisie : recopier dans
+un champ ce qu'une étape précédente a lu à l'écran.
+
 ## Les fixtures
 
 Le champ `given.fixtures` est transmis tel quel à votre `prepare` : à vous d'y

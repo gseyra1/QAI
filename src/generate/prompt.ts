@@ -28,6 +28,15 @@ Règles pour les assertions :
   "urlEquals" (l'URL entière, comparée telle quelle). Ces deux vérifications
   n'ont pas de "target" : elles ne portent sur aucun élément.
 
+Règle pour les valeurs saisies :
+- Quand l'intention désigne une valeur par une variable d'environnement
+  (« se connecter avec QAI_USER et QAI_PASS »), rends le template
+  {{env.QAI_USER}}, jamais la valeur elle-même ni une valeur inventée. Le
+  fichier produit est versionné : un secret recopié dedans y reste pour
+  toujours. Le moteur résout ces templates au moment d'agir.
+- {{capture}} fonctionne aussi dans une valeur saisie, pour reprendre ce qui a
+  été lu à une étape précédente.
+
 Une intention se traduit souvent en plusieurs gestes : « renseigner l'adresse »
 ou « se connecter » sont plusieurs actions, dans l'ordre.`;
 

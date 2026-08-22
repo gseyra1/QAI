@@ -3,19 +3,63 @@ import type { Check, ExtractKind } from '../resolution/types.ts';
 import { matchNodes } from './match.ts';
 
 export class InterpolationError extends Error {
+  /** Les noms non résolus, préfixe `env.` compris. */
   readonly missing: string[];
 
   constructor(missing: string[]) {
-    super(`capture(s) inconnue(s) : ${missing.join(', ')}`);
+    const captures = missing.filter((name) => !name.startsWith(ENV_PREFIX));
+    const variables = missing
+      .filter((name) => name.startsWith(ENV_PREFIX))
+      .map((name) => name.slice(ENV_PREFIX.length));
+
+    const parts: string[] = [];
+    if (captures.length > 0) parts.push(`capture(s) inconnue(s) : ${captures.join(', ')}`);
+    if (variables.length > 0) {
+      parts.push(`variable(s) d'environnement non définie(s) : ${variables.join(', ')}`);
+    }
+
+    super(parts.join(' ; '));
     this.name = 'InterpolationError';
     this.missing = missing;
   }
 }
 
+const ENV_PREFIX = 'env.';
+const PLACEHOLDER = /\{\{(env\.[A-Za-z_][A-Za-z0-9_]*|\w+)\}\}/g;
+
+/**
+ * Un template puise-t-il dans l'environnement ?
+ *
+ * Sert au masquage : ce qui vient de `env.` est un secret par hypothèse, et un
+ * rapport de test finit dans les journaux d'une CI, c'est-à-dire à peu près
+ * partout.
+ */
+export function usesEnv(template: string): boolean {
+  PLACEHOLDER.lastIndex = 0;
+  for (const match of template.matchAll(PLACEHOLDER)) {
+    if ((match[1] as string).startsWith(ENV_PREFIX)) return true;
+  }
+  return false;
+}
+
+/**
+ * Substitue les captures et les variables d'environnement.
+ *
+ * `{{env.NOM}}` est résolu **à l'exécution**, jamais à l'écriture : le fichier
+ * de résolution vit dans git, et un mot de passe recopié dedans y resterait
+ * pour toujours. C'est ce qui rend un parcours de connexion écrivable — sans
+ * quoi aucune application authentifiée n'est testable de bout en bout.
+ *
+ * Une variable absente lève, elle ne produit pas une chaîne vide : un champ
+ * mot de passe rempli avec du vide échouerait six étapes plus loin, sur un
+ * message qui ne dirait rien de la cause.
+ */
 export function interpolate(template: string, bag: Readonly<Record<string, string>>): string {
   const missing: string[] = [];
-  const out = template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
-    const value = bag[name];
+  const out = template.replace(PLACEHOLDER, (_match, name: string) => {
+    const value = name.startsWith(ENV_PREFIX)
+      ? process.env[name.slice(ENV_PREFIX.length)]
+      : bag[name];
     if (value === undefined) {
       missing.push(name);
       return '';
@@ -23,6 +67,15 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
     return value;
   });
   if (missing.length > 0) throw new InterpolationError(missing);
+  return out;
+}
+
+/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
+export function redact(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (secret !== '') out = out.split(secret).join('***');
+  }
   return out;
 }
 
@@ -126,15 +179,16 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
    */
   if (check.check === 'urlContains' || check.check === 'urlEquals') {
     const expected = interpolate(check.value, bag);
+    const shown = usesEnv(check.value) ? '***' : expected;
     const observed = context.location;
     if (check.check === 'urlContains') {
       return observed.includes(expected)
         ? { ok: true }
-        : { ok: false, reason: `« ${expected} » absent de l'URL « ${observed} »` };
+        : { ok: false, reason: `« ${shown} » absent de l'URL « ${observed} »` };
     }
     return observed === expected
       ? { ok: true }
-      : { ok: false, reason: `attendu l'URL « ${expected} », observé « ${observed} »` };
+      : { ok: false, reason: `attendu l'URL « ${shown} », observé « ${observed} »` };
   }
 
   const matched = matchNodes(root, interpolateLocator(check.target, bag));
@@ -168,11 +222,14 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
   }
 
   const expected = interpolate(check.value, bag);
+  // Ce qui vient de l'environnement est un secret par hypothèse, et un rapport
+  // d'échec finit dans les journaux d'une CI.
+  const shown = usesEnv(check.value) ? '***' : expected;
 
   if (check.check === 'textContains') {
     return matched.some((node) => textOf(node).includes(expected))
       ? { ok: true }
-      : { ok: false, reason: `« ${expected} » introuvable dans « ${textOf(matched[0] as UINode)} »` };
+      : { ok: false, reason: `« ${shown} » introuvable dans « ${textOf(matched[0] as UINode)} »` };
   }
 
   const observed = textOf(matched[0] as UINode);
@@ -180,7 +237,7 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
   if (check.check === 'textEquals') {
     return observed === expected
       ? { ok: true }
-      : { ok: false, reason: `attendu « ${expected} », observé « ${observed} »` };
+      : { ok: false, reason: `attendu « ${shown} », observé « ${observed} »` };
   }
 
   const left = toNumber(observed);

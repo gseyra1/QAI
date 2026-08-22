@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { UINode } from '../driver/types.ts';
-import { evaluateCheck, InterpolationError, interpolate, toNumber } from './assert.ts';
+import { evaluateCheck, InterpolationError, interpolate, redact, toNumber, usesEnv } from './assert.ts';
 import { node } from './fixtures.ts';
 
 /** Contexte d'évaluation minimal : la plupart des vérifications ignorent l'URL. */
@@ -40,6 +40,53 @@ describe('interpolate', () => {
       () => interpolate('{{absent}}', {}),
       (error: unknown) => error instanceof InterpolationError && error.missing.includes('absent'),
     );
+  });
+
+  /**
+   * Le fichier de résolution vit dans git : un mot de passe recopié dedans y
+   * reste pour toujours. Le template y va, la valeur est lue à l'exécution.
+   */
+  it('résout une variable d\'environnement à l\'exécution', () => {
+    process.env['QAI_TEST_SECRET'] = 'ouvre-toi';
+    try {
+      assert.equal(interpolate('{{env.QAI_TEST_SECRET}}', {}), 'ouvre-toi');
+      assert.equal(usesEnv('{{env.QAI_TEST_SECRET}}'), true);
+      assert.equal(usesEnv('{{prix}}'), false);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  /**
+   * Une variable absente doit crier. Remplir un champ mot de passe avec du
+   * vide échouerait six étapes plus loin, sur un message muet sur la cause.
+   */
+  it('nomme la variable d\'environnement manquante', () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    assert.throws(
+      () => interpolate('{{env.QAI_TEST_ABSENT}}', {}),
+      (error: unknown) =>
+        error instanceof InterpolationError &&
+        error.missing.includes('env.QAI_TEST_ABSENT') &&
+        /variable\(s\) d'environnement non définie\(s\) : QAI_TEST_ABSENT/.test(error.message),
+    );
+  });
+
+  it('distingue capture manquante et variable manquante dans le même message', () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    assert.throws(
+      () => interpolate('{{inconnu}}/{{env.QAI_TEST_ABSENT}}', {}),
+      (error: unknown) =>
+        error instanceof InterpolationError &&
+        /capture\(s\) inconnue\(s\) : inconnu/.test(error.message) &&
+        /variable\(s\) d'environnement/.test(error.message),
+    );
+  });
+
+  it('efface les valeurs secrètes d\'un message de rapport', () => {
+    assert.equal(redact('saisie « hunter2 » refusée', ['hunter2']), 'saisie « *** » refusée');
+    assert.equal(redact('rien à cacher', []), 'rien à cacher');
+    assert.equal(redact('rien à cacher', ['']), 'rien à cacher');
   });
 });
 
