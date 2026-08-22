@@ -276,6 +276,11 @@ export class PlaywrightWebDriver implements Driver {
       case 'hover':
         await (await this.#locatorFor(action.target)).hover();
         return;
+      case 'upload':
+        // Le champ est très souvent masqué derrière un bouton stylé :
+        // `setInputFiles` accepte l'élément invisible, contrairement à un clic.
+        await (await this.#locatorFor(action.target)).setInputFiles(action.files);
+        return;
       case 'scrollTo':
         await (await this.#locatorFor(action.target)).scrollIntoViewIfNeeded();
         return;

@@ -45,6 +45,23 @@ suite pour l'étage de réparation :
 vaut moins que pas de test du tout. Le driver refuse de choisir et remonte le
 nombre de correspondances.
 
+## Téléverser un fichier
+
+```json
+{ "kind": "upload", "target": { … }, "files": ["fixtures/releve.csv"] }
+```
+
+Les chemins sont **relatifs au fichier scénario**, et c'est le moteur qui les
+absolutise juste avant d'agir. Le fichier de résolution est versionné : y
+écrire un chemin absolu produirait un cache qui ne rejoue que sur la machine
+qui l'a écrit.
+
+La cible est l'`input[type=file]` lui-même, presque toujours masqué derrière un
+bouton stylé. `setInputFiles` l'accepte là où un clic échouerait. Un input sans
+nom accessible n'a rien à cibler sémantiquement : la résolution passera par son
+repli technique, et c'est le cas où ce repli est légitime plutôt que le signe
+d'une dégradation.
+
 ## Les dialogues natifs se déclarent avant le geste
 
 Playwright **refuse automatiquement** `confirm()`, `alert()` et `prompt()` tant

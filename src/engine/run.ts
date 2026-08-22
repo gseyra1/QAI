@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from 'node:path';
 import type {
   Action,
   Driver,
@@ -120,6 +121,14 @@ export interface RunInput {
    * rendraient une suite de cinquante parcours ingérable.
    */
   captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
+  /**
+   * Dossier de référence des chemins relatifs — celui du fichier scénario.
+   *
+   * Seul `upload` s'en sert aujourd'hui. Les chemins restent relatifs dans le
+   * fichier de résolution, qui est versionné : les absolutiser à l'écriture
+   * produirait un cache qui ne rejoue que sur la machine qui l'a écrit.
+   */
+  baseDir?: string;
 }
 
 function supports(driver: Driver, action: Action): boolean {
@@ -154,6 +163,7 @@ type ActionsOutcome =
 
 interface ActionsContext {
   driver: Driver;
+  baseDir: string;
   healer: Healer | undefined;
   healBudget: number;
   healCount: number;
@@ -289,6 +299,13 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
      * mécanisme rend `{{capture}}` utilisable dans une saisie — saisir dans un
      * champ ce qu'on vient de lire à l'écran précédent.
      */
+    if (action.kind === 'upload') {
+      action = {
+        ...action,
+        files: action.files.map((file) => resolvePath(context.baseDir, file)),
+      };
+    }
+
     const template = valueOf(action);
     if (template !== null) {
       try {
@@ -338,6 +355,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const applied: AppliedHeal[] = [];
   const context: ActionsContext = {
     driver,
+    baseDir: input.baseDir ?? process.cwd(),
     healer,
     healBudget,
     healCount: 0,

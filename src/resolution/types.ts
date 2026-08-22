@@ -67,7 +67,7 @@ export interface Resolution {
   steps: Record<string, StepResolution>;
 }
 
-const WITH_TARGET = new Set(['click', 'fill', 'select', 'scrollTo', 'hover']);
+const WITH_TARGET = new Set(['click', 'fill', 'select', 'scrollTo', 'hover', 'upload']);
 
 /** Les actions sans cible (navigate, press, swipe) ne peuvent pas être réparées. */
 export function targetOf(action: Action): ResolvedTarget | null {

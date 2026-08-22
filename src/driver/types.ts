@@ -132,6 +132,14 @@ export type Action =
   | { kind: 'hover'; target: ResolvedTarget }
   | { kind: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' }
   /**
+   * Dépose des fichiers dans un champ de téléversement.
+   *
+   * Les chemins sont relatifs au **fichier scénario** et résolus par le moteur,
+   * pas par le driver : un chemin absolu dans une résolution versionnée ne
+   * fonctionnerait que sur la machine qui l'a écrite.
+   */
+  | { kind: 'upload'; target: ResolvedTarget; files: string[] }
+  /**
    * Arme la réponse au **prochain** dialogue natif, pour une seule fois.
    *
    * Se place juste avant le geste qui le déclenche, jamais après : le dialogue

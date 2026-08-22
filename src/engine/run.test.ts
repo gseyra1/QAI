@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import type {
   Action,
@@ -486,6 +487,31 @@ describe('runScenario', () => {
     assert.equal(report.status, 'failed');
     assert.match(report.steps[0]?.error ?? '', /QAI_TEST_ABSENT/);
     assert.equal(driver.acted.length, 0, 'rien ne doit être saisi');
+  });
+
+  /**
+   * Le fichier de résolution est versionné : y écrire un chemin absolu
+   * produirait un cache qui ne rejoue que sur la machine qui l'a écrit. Le
+   * chemin reste donc relatif au scénario, et c'est le moteur qui l'absolutise
+   * juste avant d'agir.
+   */
+  it('résout les chemins d\'un téléversement depuis le dossier du scénario', async () => {
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      baseDir: join('qa', 'fixtures'),
+      scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
+      resolution: resolution({
+        s1: { actions: [{ kind: 'upload', target: CLICK, files: ['releve.csv'] }] },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    const depose = driver.acted[0];
+    assert.deepEqual(
+      depose?.kind === 'upload' ? depose.files : null,
+      [resolve('qa', 'fixtures', 'releve.csv')],
+    );
   });
 
   it('efface le secret du message quand le pilote échoue', async () => {
