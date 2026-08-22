@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Resolution, StepResolution } from './types.ts';
+import { RESOLUTION_VERSION } from './types.ts';
 
 export class ResolutionError extends Error {
   readonly path: string;
@@ -43,6 +44,26 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   if (typeof recordedAt !== 'string') throw new ResolutionError('champ recordedAt manquant', path);
   if (!isRecord(steps)) throw new ResolutionError('champ steps manquant', path);
 
+  // Champ absent = 1 : les fichiers écrits avant l'introduction du champ
+  // doivent continuer à se charger tels quels.
+  const rawVersion = doc['version'];
+  let version = RESOLUTION_VERSION;
+  if (rawVersion !== undefined) {
+    if (typeof rawVersion !== 'number' || !Number.isInteger(rawVersion) || rawVersion < 1) {
+      throw new ResolutionError('champ version invalide (entier ≥ 1 attendu)', path);
+    }
+    if (rawVersion > RESOLUTION_VERSION) {
+      // Lire quand même produirait des verts qui ne prouvent rien : un format
+      // plus récent peut décrire une observation que ce moteur ne sait pas
+      // reproduire.
+      throw new ResolutionError(
+        `résolution en v${rawVersion}, ce QAI lit jusqu'à la v${RESOLUTION_VERSION} — mettre à jour QAI ou régénérer la résolution`,
+        path,
+      );
+    }
+    version = rawVersion;
+  }
+
   const parsed: Record<string, StepResolution> = {};
   for (const [stepId, value] of Object.entries(steps)) {
     if (!isRecord(value)) throw new ResolutionError(`étape ${stepId} mal formée`, path);
@@ -53,6 +74,7 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   }
 
   const resolution: Resolution = {
+    version,
     scenario,
     platform: platform as Resolution['platform'],
     recordedAt,

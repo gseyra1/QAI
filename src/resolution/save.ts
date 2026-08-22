@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Resolution, StepResolution } from './types.ts';
+import { RESOLUTION_VERSION } from './types.ts';
 
 const HEADER =
   'Fichier généré par QAI. Ne pas éditer à la main — il est régénérable. Il est versionné pour que la CI rejoue de façon déterministe et pour qu\'une auto-réparation apparaisse en diff de revue.';
@@ -67,6 +68,10 @@ function print(value: unknown, depth: number): string {
 export function serializeResolution(resolution: Resolution): string {
   const document: Record<string, unknown> = {
     $comment: HEADER,
+    // Toujours écrit, même sur une résolution chargée sans le champ : une
+    // sauvegarde est un fichier neuf, et laisser la version implicite
+    // reporterait le problème sur le prochain changement de format.
+    version: resolution.version ?? RESOLUTION_VERSION,
     scenario: resolution.scenario,
     platform: resolution.platform,
     recordedAt: resolution.recordedAt,
