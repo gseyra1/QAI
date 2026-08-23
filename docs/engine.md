@@ -1,85 +1,79 @@
-# Le moteur de rejeu
+# The replay engine
 
-Le moteur prend un scénario, sa résolution et un driver, et produit un rapport.
-Il ignore totalement la plateforme : c'est le driver qui la connaît.
+The engine takes a scenario, its resolution, and a driver, and produces a report.
+It knows nothing about the platform — the driver does.
 
-## L'étage 1, celui qui doit coûter zéro
+## Tier 1 must cost zero
 
-En régime nominal, le moteur ne fait qu'exécuter ce que la résolution contient
-déjà. Aucun appel de modèle, aucune inférence, aucune interprétation du langage
-naturel — le texte de l'intention n'est utilisé que pour l'affichage du rapport.
-C'est ce qui rend le coût d'un run négligeable et un tarif self-serve viable.
+In the nominal case, the engine only executes what the resolution already
+contains. No model call, no inference, no natural-language interpretation — the
+intent text is used only in the report. This keeps a run's cost negligible and
+self-serve pricing viable.
 
-## Une intention, plusieurs gestes
+## One intent, several gestures
 
-Une étape se résout en une **liste** d'actions, pas une seule : « renseigner
-l'adresse de livraison » ou « se connecter » correspondent à plusieurs gestes
-primitifs. Les assertions et les captures sont évaluées après le dernier geste
-de l'étape, et **réévaluées tant qu'elles sont fausses** dans une fenêtre bornée
-(`--assert-timeout`, 5 s par défaut).
+A step resolves to a **list** of actions, not one: "fill in the shipping
+address" or "log in" map to several primitive gestures. Assertions and captures
+are evaluated after the step's last gesture, and **re-evaluated while false**
+within a bounded window (`--assert-timeout`, 5 s default).
 
-Cette fenêtre n'assouplit rien : l'assertion n'est ni réécrite ni élargie, on lui
-laisse le temps d'être vraie. Elle existe parce que le repos réseau ne signe pas
-la fin du rendu — une scène 3D, une animation d'entrée ou un module chargé à la
-demande arrivent après. Sans elle, ces applications ne peuvent affirmer aucun
-écran.
+The window relaxes nothing: the assertion is never rewritten or widened — it is
+given time to become true. It exists because network idle does not mean
+rendering is done: a 3D scene, an entry animation, or a lazily loaded module
+lands later. Without it, such applications could not assert any screen.
 
-## Les assertions vivent ici, pas dans les drivers
+## Assertions live here, not in drivers
 
-`matchNodes()` apparie un locator contre l'arbre observé, et `evaluateCheck()`
-applique le contrôle. Les deux sont des fonctions pures, testables sans
-navigateur, et **communes à toutes les plateformes**. C'est la garantie
-structurelle que « le total est égal à 42 » veut dire exactement la même chose
-sur le web et sur mobile.
+`matchNodes()` matches a locator against the observed tree; `evaluateCheck()`
+applies the check. Both are pure functions, testable without a browser, and
+**shared by all platforms**. That is the structural guarantee that "the total
+equals 42" means exactly the same thing on web and mobile.
 
-La lecture des nombres tolère les formats français et anglais : `129,00 €`,
-`$1,234.56` et `1 234,56 €` se comparent sans que le scénario ait à s'en
-soucier. Un point suivi de trois chiffres est traité comme séparateur de
-milliers — le pari juste sur des montants affichés.
+Number parsing tolerates French and English formats: `129,00 €`, `$1,234.56`
+and `1 234,56 €` compare without the scenario caring. A dot followed by three
+digits is treated as a thousands separator — the right bet for displayed
+amounts.
 
-## La frontière de sécurité, rendue structurelle
+## The safety boundary, made structural
 
-Le moteur n'appelle le réparateur **que** sur un échec de résolution de cible.
-Une assertion fausse ne le déclenche jamais, et ce n'est pas une option de
-configuration : le code n'offre aucun chemin pour le faire. Un test le vérifie
-explicitement.
+The engine calls the healer **only** on a target resolution failure. A false
+assertion never triggers it, and this is not a configuration option: the code
+offers no path to do it. A test verifies this explicitly.
 
-L'ordre exact devant l'étage 2 :
+The exact order before tier 2:
 
-1. `resolve()` — le cache suffit, on continue.
-2. Échec non ambigu : `settle()` puis un second `resolve()`. Ce réessai absorbe
-   l'instabilité de rendu avant d'engager le moindre coût.
-3. Toujours introuvable : appel du réparateur, dans la limite du budget.
-4. Assertion fausse : **échec**, quoi qu'il arrive.
+1. `resolve()` — the cache is enough, continue.
+2. Non-ambiguous failure: `settle()`, then a second `resolve()`. This retry
+   absorbs rendering instability before spending anything.
+3. Still not found: call the healer, within budget.
+4. False assertion: **failure**, no matter what.
 
-Une cible ambiguë est traitée à part et **n'est pas réessayée** : deux éléments
-qui correspondent ne se réduiront pas à un avec le temps. Le cache est
-sous-spécifié, il faut le régénérer.
+An ambiguous target is handled separately and **is not retried**: two matching
+elements will not collapse into one over time. The cache is under-specified and
+must be regenerated.
 
-## Le rapport à trois états
+## The three-state report
 
-`passed` / `healed` / `failed`. « Réparé » n'est pas un succès silencieux — il
-signifie que le parcours fonctionne mais que le cache a changé, et que ce
-changement attend une relecture humaine.
+`passed` / `healed` / `failed`. Healed is not a silent success — it means the
+journey works but the cache changed, and that change awaits human review.
 
-Après un échec, les étapes suivantes sont marquées `skipped` plutôt
-qu'exécutées : l'état de l'application a divergé, poursuivre ne produirait que
-du bruit.
+After a failure, the remaining steps are marked `skipped` rather than executed:
+application state has diverged; continuing would only produce noise.
 
-## Le contrôle de cohérence
+## The consistency check
 
-`checkConsistency()` compare un scénario et sa résolution avant même de lancer
-quoi que ce soit. Il détecte la dérive silencieuse : une étape ajoutée sans
-régénération du cache, une assertion reformulée dont la forme machine est restée
-sur l'ancien texte, une résolution orpheline après suppression d'une étape.
+`checkConsistency()` compares a scenario and its resolution before running
+anything. It catches silent drift: a step added without regenerating the cache,
+a reworded assertion whose machine form still points at the old text, an
+orphan resolution left behind by a deleted step.
 
-Aucun de ces cas ne casse à l'exécution — ils produisent des faux verts, ce qui
-est pire. Le contrôle doit tourner en CI avant le rejeu.
+None of these breaks at runtime — they produce false greens, which is worse.
+Run the check in CI before replay.
 
-## Les autres étages
+## The other tiers
 
-Le réparateur existe ([reparation.md](reparation.md)), la génération existe
-([generation.md](generation.md)), l'intégration CI existe ([ci.md](ci.md)).
-Sans réparateur fourni, une cible introuvable produit simplement un échec.
+The healer exists ([repairing.md](repairing.md)), resolving exists
+([resolving.md](resolving.md)), CI integration exists ([ci.md](ci.md)).
+Without a healer supplied, a missing target is simply a failure.
 
-Seuls les drivers mobiles restent à écrire.
+Only the mobile drivers remain to be written.

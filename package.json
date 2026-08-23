@@ -1,8 +1,8 @@
 {
   "name": "tilmiqai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "Agent QA — scénarios écrits en intentions, rejouables sur le web puis sur le mobile",
+  "description": "Agentic QA — scenarios written as intent, replayed on the web today and on mobile next",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",

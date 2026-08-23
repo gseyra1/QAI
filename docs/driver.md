@@ -1,61 +1,57 @@
-# Le contrat de driver
+# The driver contract
 
-Un driver est l'unique endroit du système qui sait sur quelle plateforme on
-tourne. Tout ce qui est au-dessus — moteur de rejeu, étage de réparation,
-évaluation des assertions — ignore s'il pilote un navigateur ou un simulateur
-iOS. C'est cette frontière qui rend la promesse « un scénario, deux plateformes »
-tenable.
+A driver is the only place in the system that knows which platform it runs on.
+Everything above it — replay engine, repair stage, assertion evaluation —
+neither knows nor cares whether it drives a browser or an iOS simulator. That
+boundary is what makes "one scenario, two platforms" hold.
 
-## Quatre responsabilités, pas cinq
+## Four responsibilities, not five
 
-| Méthode | Rôle |
+| Method | Role |
 |---|---|
-| `observe()` | rendre l'écran courant sous forme d'arbre normalisé, plus une capture à la demande |
-| `resolve()` | traduire une cible du cache en élément concret, ou dire précisément pourquoi elle échoue |
-| `act()` | exécuter une action |
-| `settle()` | attendre le repos avant d'observer ou de conclure à un échec |
+| `observe()` | render the current screen as a normalized tree, plus a capture on demand |
+| `resolve()` | translate a cached target into a concrete element, or say precisely why it fails |
+| `act()` | execute an action |
+| `settle()` | wait for quiescence before observing or declaring a failure |
 
-**L'évaluation des assertions est délibérément absente.** Elle vit dans le
-moteur, appliquée sur un `UISnapshot`. Si chaque driver implémentait ses propres
-assertions, le web et le mobile finiraient par diverger sur ce que signifie « le
-total est égal à 42 », et la portabilité tomberait sans que personne ne le
-remarque avant un client mécontent.
+**Assertion evaluation is deliberately absent.** It lives in the engine,
+applied to a `UISnapshot`. If each driver implemented its own assertions, web
+and mobile would drift apart on what "the total equals 42" means, and
+portability would silently break.
 
-`settle()` mérite d'exister au niveau du contrat plutôt que d'être bricolé dans
-le moteur : c'est le filtre anti-instabilité placé **devant** l'étage de
-réparation. Sans lui, chaque élément pas encore rendu déclencherait un appel de
-modèle et polluerait l'historique des réparations avec du bruit de timing.
+`settle()` belongs in the contract rather than being improvised in the engine:
+it is the anti-flakiness filter placed **before** the repair stage. Without it,
+every not-yet-rendered element would trigger a model call and pollute the
+repair history with timing noise.
 
-## Ce que `resolve()` doit distinguer
+## What `resolve()` must distinguish
 
-C'est la méthode la plus chargée de sens, parce que son résultat décide de la
-suite pour l'étage de réparation :
+Its result decides what the repair stage does next:
 
-| Résultat | Signification | Suite |
+| Result | Meaning | Next |
 |---|---|---|
-| `found`, `usedFallback: false` | cache valide | rejeu, coût nul |
-| `found`, `usedFallback: true` | le locator sémantique a échoué, le repli a marché | fonctionne, mais l'accessibilité de l'app s'est dégradée — à signaler |
-| `no-match` | rien ne correspond | étage 2 : le modèle relocalise |
-| `ambiguous` | plusieurs candidats légitimes | **ne pas agir** — le cache est sous-spécifié, à régénérer |
-| `not-visible` | trouvé mais hors écran ou masqué | faire défiler, puis réessayer |
+| `found`, `usedFallback: false` | cache valid | replay, zero cost |
+| `found`, `usedFallback: true` | semantic locator failed, fallback worked | works, but the app's accessibility has degraded — report it |
+| `no-match` | nothing matches | tier 2: the model relocates |
+| `ambiguous` | several legitimate candidates | **do not act** — the cache is under-specified, regenerate it |
+| `not-visible` | found but off-screen or hidden | scroll, then retry |
 
-`ambiguous` est le cas qu'on est tenté de traiter en prenant le premier
-élément. C'est un piège : le jour où l'application ajoute un second bouton
-« Valider », un test qui « passe » en cliquant silencieusement sur le mauvais
-vaut moins que pas de test du tout. Le driver refuse de choisir et remonte le
-nombre de correspondances.
+`ambiguous` tempts you to pick the first element. Don't: the day the app adds
+a second "Valider" button, a test that "passes" by silently clicking the wrong
+one is worse than no test at all. The driver refuses to choose and reports the
+match count.
 
-## La correspondance des rôles
+## Role mapping
 
-C'est le tableau qui décide si la portabilité est réelle. Le vocabulaire de QAI
-est l'intersection de ce que les trois plateformes exposent nativement.
+This table decides whether portability is real. QAI's vocabulary is the
+intersection of what the three platforms expose natively.
 
 | QAI | Web (ARIA) | iOS (XCUIElementType) | Android |
 |---|---|---|---|
 | `button` | `button` | `.button` | `Button` |
 | `link` | `link` | `.link` | `TextView` + `URLSpan` |
-| `text` | contenu textuel | `.staticText` | `TextView` |
-| `heading` | `heading` | `.staticText` + trait `header` | `AccessibilityHeading` |
+| `text` | text content | `.staticText` | `TextView` |
+| `heading` | `heading` | `.staticText` + `header` trait | `AccessibilityHeading` |
 | `image` | `img` | `.image` | `ImageView` |
 | `textbox` | `textbox` | `.textField` | `EditText` |
 | `searchbox` | `searchbox` | `.searchField` | `SearchView` |
@@ -65,45 +61,42 @@ est l'intersection de ce que les trois plateformes exposent nativement.
 | `switch` | `switch` | `.switch` | `Switch` |
 | `slider` | `slider` | `.slider` | `SeekBar` |
 | `list` | `list` | `.table`, `.collectionView` | `RecyclerView` |
-| `listitem` | `listitem` | `.cell` | enfant direct de la liste |
-| `table` / `row` / `cell` | idem | `.table` / `.cell` / `.staticText` | `GridView` |
-| `tab` / `tablist` | idem | `.button` dans `.tabBar` / `.tabBar` | `TabLayout.Tab` |
+| `listitem` | `listitem` | `.cell` | direct child of the list |
+| `table` / `row` / `cell` | same | `.table` / `.cell` / `.staticText` | `GridView` |
+| `tab` / `tablist` | same | `.button` inside `.tabBar` / `.tabBar` | `TabLayout.Tab` |
 | `dialog` | `dialog` | `.alert`, `.sheet` | `AlertDialog` |
-| `menu` / `menuitem` | idem | `.menu` / `.menuItem` | `Menu` / `MenuItem` |
+| `menu` / `menuitem` | same | `.menu` / `.menuItem` | `Menu` / `MenuItem` |
 | `progressbar` | `progressbar` | `.progressIndicator` | `ProgressBar` |
 | `alert` | `alert` | `.alert` | `Toast`, `Snackbar` |
 | `group` | `group` | `.other` | `ViewGroup` |
 
-Le nom accessible suit le même principe : `aria-label` et le calcul accname sur
-le web, `accessibilityLabel` sur iOS, `contentDescription` puis `text` sur
-Android. Un même scénario retrouve donc « Ajouter au panier » sur les trois.
+The accessible name follows the same principle: `aria-label` and accname
+computation on the web, `accessibilityLabel` on iOS, `contentDescription` then
+`text` on Android. The same scenario finds "Ajouter au panier" on all three.
 
-Deux correspondances sont imparfaites et il vaut mieux le savoir maintenant :
-`link` n'a pas d'équivalent natif sur mobile, et `heading` n'existe sur iOS que
-comme trait d'un `staticText`. Ce n'est pas bloquant, parce que **la portabilité
-vit dans le scénario, pas dans le locator** : l'intention « ouvrir le panier »
-produit une résolution `link` sur le web et `button` sur iOS, dans deux fichiers
-distincts. Le vocabulaire n'a besoin d'être commun que pour être exprimable des
-deux côtés, pas identique.
+Two mappings are imperfect: `link` has no native equivalent on mobile, and
+`heading` exists on iOS only as a trait on a `staticText`. Not blocking,
+because **portability lives in the scenario, not in the locator**: the intent
+"open the cart" produces a `link` resolution on the web and a `button`
+resolution on iOS, in two separate files. The vocabulary only needs to be
+expressible on both sides, not identical.
 
-## La limite honnête du mobile
+## The honest mobile limit
 
-La résolution sémantique suppose que l'application testée est correctement
-accessible. Sur le web, l'échec se voit et se corrige. Sur mobile, une app sans
-`accessibilityLabel` ni `contentDescription` dégrade la résolution vers
-l'identifiant d'accessibilité, puis vers le repli vision.
+Semantic resolution assumes the app under test is properly accessible. On the
+web, that failure is visible and fixable. On mobile, an app without
+`accessibilityLabel` or `contentDescription` degrades resolution to the
+accessibility identifier, then to the vision fallback.
 
-C'est la vraie difficulté du portage, et elle est produit autant que technique :
-il faudra soit accompagner les clients vers un étiquetage correct — ce qui a une
-valeur en soi, l'accessibilité étant de plus en plus contrainte réglementairement
-— soit assumer un étage vision plus coûteux sur mobile. À arbitrer avant de
-promettre une parité de tarif entre les deux plateformes.
+This is the real porting difficulty, and it is as much product as technical:
+either help customers label their apps correctly — valuable in itself, as
+accessibility regulation tightens — or accept a more expensive vision tier on
+mobile. Decide before promising price parity between the two platforms.
 
-## Écrire un nouveau driver
+## Writing a new driver
 
-Implémenter `Driver` depuis `src/driver/types.ts`, puis faire passer la même
-suite de tests que le driver web. Les douze cas de
-`src/driver/web/PlaywrightWebDriver.test.ts` ne testent rien de spécifique au
-navigateur : normalisation, géométrie, exclusion des nœuds masqués, états,
-résolution, ambiguïté, repli, action observable, capacité refusée. Ils
-constituent de fait le test de conformité du contrat.
+Implement `Driver` from `src/driver/types.ts`, then pass the same test suite
+as the web driver: `src/driver/web/PlaywrightWebDriver.test.ts` covers
+normalization, geometry, exclusion of hidden nodes, states, resolution,
+ambiguity, fallback, observable action, refused capability. It is the de facto
+conformance test of the contract.
