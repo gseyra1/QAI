@@ -45,6 +45,17 @@ Rules for assertions:
   "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
   bear on no element at all.
 
+Rules for what the application DOES, which is not visible on screen:
+- When the assertion speaks of network calls — "no call breaks", "the search
+  raised no error" — use "noFailedRequests".
+- When it speaks of the console — "the console stays quiet" — use
+  "noConsoleErrors".
+- Neither takes a "target": they bear on no element. NEVER replace them with a
+  screen or URL check that happens to be true: it would pass while asserting
+  something other than what was asked.
+- "allow" lists the tolerated fragments, when a failure is the expected answer
+  (for instance a 401 on /me for an anonymous visitor).
+
 Rules for typed values:
 - When the intent designates a value by an environment variable ("sign in with
   QAI_USER and QAI_PASS"), return the template {{env.QAI_USER}}, never the

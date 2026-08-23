@@ -67,6 +67,9 @@ const CHECKS = ['visible', 'absent', 'textEquals', 'textContains', 'countAtLeast
 /** Les seules vérifications sans cible : une URL n'est pas un nœud de l'arbre. */
 const URL_CHECKS = ['urlContains', 'urlEquals'];
 
+/** Ce que l'application a FAIT pendant l'étape, et qui ne se voit pas à l'écran. */
+const OBSERVATION_CHECKS = ['noFailedRequests', 'noConsoleErrors'];
+
 function captures(): Record<string, unknown> {
   return {
     type: 'object',
@@ -119,6 +122,22 @@ function assertions(): Record<string, unknown> {
             },
           },
           required: ['check', 'value'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          description:
+            "vérification de ce que l'application a FAIT pendant l'étape : appels réseau, console",
+          properties: {
+            check: { enum: OBSERVATION_CHECKS },
+            allow: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                "fragments d'URL ou de message tolérés, quand un échec est la réponse attendue",
+            },
+          },
+          required: ['check'],
           additionalProperties: false,
         },
       ],
