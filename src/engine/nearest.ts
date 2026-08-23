@@ -116,7 +116,7 @@ export function nearest(tree: UINode, target: Locator, limit = 3): Suggestion[] 
 export function describeSuggestions(suggestions: readonly Suggestion[]): string {
   if (suggestions.length === 0) return '';
   const list = suggestions.map((one) => `${one.role} "${one.name}"`).join(', ');
-  return ` — plus proches : ${list}`;
+  return ` — closest: ${list}`;
 }
 
 /** Le raccourci employé partout : chercher puis formuler. */

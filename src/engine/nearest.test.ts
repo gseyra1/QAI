@@ -74,7 +74,7 @@ describe('describeSuggestions', () => {
   it('se lit comme un arbre observé', () => {
     assert.equal(
       suggestNearest(PAGE, { role: 'button', name: 'Sauvegarde' }),
-      ' — plus proches : button "Sauvegarder"',
+      ' — closest: button "Sauvegarder"',
     );
   });
 

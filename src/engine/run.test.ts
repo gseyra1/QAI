@@ -406,7 +406,7 @@ describe('runScenario', () => {
     });
 
     assert.equal(report.status, 'failed');
-    assert.match(report.steps[0]?.error ?? '', /cible introuvable — plus proches : button "Ajouter au panier ⚡"/);
+    assert.match(report.steps[0]?.error ?? '', /target not found — closest: button "Ajouter au panier ⚡"/);
   });
 
   it('ne suggère rien sur une cible ambiguë : le nom correspond déjà', async () => {
@@ -417,7 +417,7 @@ describe('runScenario', () => {
     });
 
     assert.equal(report.status, 'failed');
-    assert.doesNotMatch(report.steps[0]?.error ?? '', /plus proches/);
+    assert.doesNotMatch(report.steps[0]?.error ?? '', /closest/);
   });
 
   /**

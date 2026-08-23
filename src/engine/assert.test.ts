@@ -68,7 +68,7 @@ describe('interpolate', () => {
       (error: unknown) =>
         error instanceof InterpolationError &&
         error.missing.includes('env.QAI_TEST_ABSENT') &&
-        /variable\(s\) d'environnement non définie\(s\) : QAI_TEST_ABSENT/.test(error.message),
+        /undefined environment variable\(s\): QAI_TEST_ABSENT/.test(error.message),
     );
   });
 
@@ -78,8 +78,8 @@ describe('interpolate', () => {
       () => interpolate('{{inconnu}}/{{env.QAI_TEST_ABSENT}}', {}),
       (error: unknown) =>
         error instanceof InterpolationError &&
-        /capture\(s\) inconnue\(s\) : inconnu/.test(error.message) &&
-        /variable\(s\) d'environnement/.test(error.message),
+        /unknown capture\(s\): inconnu/.test(error.message) &&
+        /undefined environment variable/.test(error.message),
     );
   });
 
@@ -202,6 +202,6 @@ describe('evaluateCheck', () => {
       value: 129 as unknown as string,
     } as const;
 
-    assert.deepEqual(evaluateCheck(check, ecran, {}), { ok: true });
+    assert.deepEqual(evaluateCheck(check, { root: ecran, location: 'http://app.test/', bag: {} }), { ok: true });
   });
 });

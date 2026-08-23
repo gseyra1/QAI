@@ -35,8 +35,11 @@ const PLACEHOLDER = /\{\{(env\.[A-Za-z_][A-Za-z0-9_]*|\w+)\}\}/g;
  * partout.
  */
 export function usesEnv(template: string): boolean {
+  // Même garde que `interpolate` : le schéma de sortie autorise une valeur
+  // numérique (countAtLeast l'exige), donc ce qui arrive ici n'est pas
+  // toujours une chaîne malgré le type.
   PLACEHOLDER.lastIndex = 0;
-  for (const match of template.matchAll(PLACEHOLDER)) {
+  for (const match of String(template).matchAll(PLACEHOLDER)) {
     if ((match[1] as string).startsWith(ENV_PREFIX)) return true;
   }
   return false;

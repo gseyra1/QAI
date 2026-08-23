@@ -209,8 +209,7 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
   if (values.resolution !== undefined && selected.length > 1) {
-    process.stderr.write('--resolution only applies to a single scenario
-');
+    process.stderr.write('--resolution only applies to a single scenario\n');
     return 1;
   }
 
