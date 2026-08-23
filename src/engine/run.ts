@@ -177,6 +177,17 @@ function supports(driver: Driver, action: Action): boolean {
 /** Agir sur un élément désactivé n'a pas de sens ; le survol et le défilement, si. */
 const NEEDS_ENABLED = new Set(['click', 'fill', 'select']);
 
+/**
+ * Le seul geste qui vise légitimement un élément invisible.
+ *
+ * Un `input[type=file]` est presque toujours masqué derrière un bouton stylé —
+ * c'est le rendu par défaut de toutes les bibliothèques de composants. Le
+ * dépôt de fichier ne passe pas par un clic : il écrit directement dans le
+ * champ, ce que le navigateur autorise sur un élément masqué. Exiger la
+ * visibilité ici rendrait `upload` inutilisable partout où il sert.
+ */
+const ALLOWS_INVISIBLE = new Set(['upload']);
+
 function describeTarget(target: ResolvedTarget): string {
   const { name, role } = target.primary;
   if (typeof name === 'string') return name;
@@ -232,7 +243,12 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         outcome = await driver.resolve(target);
       }
 
-      if (!outcome.found) {
+      // Cible trouvée mais masquée, et le geste l'accepte : on continue. Le
+      // pilote sait agir dessus, seule la porte de visibilité s'y opposait.
+      const masqueMaisAcceptable =
+        !outcome.found && outcome.reason === 'not-visible' && ALLOWS_INVISIBLE.has(action.kind);
+
+      if (!outcome.found && !masqueMaisAcceptable) {
         const repairable = healer !== undefined && context.healCount < context.healBudget;
 
         /**
@@ -284,6 +300,9 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
           degraded: healed.degraded === true,
         });
         context.healCount += 1;
+      } else if (!outcome.found) {
+        // Masqué mais accepté par le geste : rien à vérifier de plus, le
+        // pilote agira directement sur le champ.
       } else if (NEEDS_ENABLED.has(action.kind) && outcome.node.state.disabled === true) {
         // Trouvé mais inerte : c'est l'application qui est en cause, pas le
         // cache. Aucune réparation n'a de sens, et le message doit le dire
