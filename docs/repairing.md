@@ -39,9 +39,9 @@ portability die unnoticed**. So QAI repairs to restore semantic targeting, and
 warns when it cannot:
 
 ```
-⚠ « Ajouter au panier » n'a été atteint que par son repli technique :
-  l'accessibilité de l'application s'est dégradée et ce ciblage ne survivra
-  pas au portage mobile
+⚠ "Ajouter au panier" was only reached through its technical fallback:
+  the application's accessibility has degraded and this targeting will
+  not survive the mobile port
 ```
 
 ## The diff is the whole argument
@@ -52,8 +52,8 @@ Repairing a label produces exactly this:
 -          "target": { "primary": { "role": "button", "name": "Commander en tant qu'invité" } }
 +          "target": { "primary": { "role": "button", "name": "Continuer sans compte" } }
 -      "healedAt": null
-+      "healedAt": "2026-07-29T17:58:01.263Z",
-+      "healNote": "Le libellé du bouton est passé de « Commander en tant qu'invité » à « Continuer sans compte »."
++      "healedAt": "2026-08-23T21:12:09.114Z",
++      "healNote": "The guest checkout button label changed from 'Commander en tant qu'invité' to 'Continuer sans compte'."
 ```
 
 Four lines, reason attached. Not cosmetic: if a one-word repair produced three
