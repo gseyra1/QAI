@@ -1,8 +1,8 @@
-# Le fichier de configuration
+# The configuration file
 
-`qai.config.json`, cherché **en remontant** depuis le répertoire courant —
-comme les autres outils de la chaîne Node, parce qu'une équipe lance ses tests
-depuis n'importe où dans le dépôt.
+`qai.config.json`, found by walking **upward** from the current directory —
+like the rest of the Node toolchain, because a team runs its tests from
+anywhere in the repo.
 
 ```json
 {
@@ -18,27 +18,25 @@ depuis n'importe où dans le dépôt.
 }
 ```
 
-Puis, quel que soit le dossier :
+Then, from any directory:
 
 ```bash
 qai run
 ```
 
-**Les options de la ligne de commande priment toujours** sur le fichier, ce qui
-permet de surcharger `--base-url` par environnement sans dupliquer la
-configuration.
+**Command-line options always override the file** — override `--base-url` per
+environment without duplicating the configuration.
 
-## Deux règles
+## Rules
 
-**Les chemins se lisent relativement au fichier**, pas au répertoire courant.
-Sans ça, lancer QAI depuis un sous-dossier casserait silencieusement la
-résolution de `states` et `provider`.
+**Paths resolve relative to the file**, not the current directory. Otherwise,
+running QAI from a subfolder would silently break the resolution of `states`
+and `provider`.
 
-**Une clé inconnue est ignorée en silence.** `assertTimeout` n'existe que depuis
-la 0.1.0 : posée dans un projet qui utilise une version antérieure, elle ne
-produit aucune erreur et aucun effet. Vérifiez la version avant de conclure
-qu'un réglage ne sert à rien.
+**An unknown key is silently ignored.** `assertTimeout` only exists since
+0.1.0: set in a project running an older version, it produces no error and no
+effect. Check the version before concluding a setting does nothing.
 
-**Un fichier présent mais invalide fait échouer la commande.** L'ignorer ferait
-tourner la suite avec des réglages que personne n'a voulus — un champ mal typé
-est ignoré individuellement, mais un JSON cassé arrête tout.
+**A file that exists but is invalid fails the command.** Ignoring it would run
+the suite with settings nobody chose — a mistyped field is dropped
+individually, but broken JSON stops everything.

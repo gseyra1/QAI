@@ -1,9 +1,6 @@
-# Dans la boucle de pull request
+# In the pull request loop
 
-QAI casse le build quand une régression passe — mais casser un build sans rien
-dire n'aide personne. L'action GitHub poste le rapport **là où le développeur
-travaille**, et le met à jour à chaque exécution plutôt que d'empiler les
-commentaires.
+QAI breaks the build when a regression slips through — but a silent broken build helps no one. The GitHub action posts the report **where the developer works**, and updates it on each run instead of stacking comments.
 
 ```yaml
 - uses: gseyra1/QAI@main
@@ -11,11 +8,9 @@ commentaires.
     base-url: ${{ steps.deploy.outputs.preview-url }}
 ```
 
-C'est tout. Les parcours sont lus depuis `qai.config.json`, les captures
-d'échec publiées en artefact, le commentaire posté ou mis à jour, et le job
-échoue si l'application a régressé.
+That's it. Journeys are read from `qai.config.json`, failure captures are published as an artifact, the comment is posted or updated, and the job fails if the application regressed.
 
-## Le commentaire
+## The comment
 
 ```markdown
 ## ❌ QAI — régression détectée
@@ -36,25 +31,17 @@ d'échec publiées en artefact, le commentaire posté ou mis à jour, et le job
 > régression de l'application, pas un test périmé.
 ```
 
-Un parcours vert n'a **pas** de section de détail. Un commentaire qui déroule
-cinquante parcours réussis ne se lit pas, donc ne se lit pas du tout : seul ce
-qui demande une action apparaît.
+A green journey gets **no** detail section: only what needs action appears.
 
-La dernière ligne n'est pas décorative. Elle dit au relecteur *pourquoi* rien
-n'a été réparé, ce qui est la seule information utile face à un rouge.
+The final line matters. It tells the reviewer *why* nothing was repaired — the one useful piece of information in front of a red.
 
-## Les captures
+## Captures
 
-Une capture n'est prise **qu'à l'échec** — 300 Kio par étape rendraient une
-suite de cinquante parcours ingérable. Elles atterrissent dans
-`.qai/artifacts/`, que l'action publie sous le nom `qai-captures`, et le
-commentaire y renvoie.
+A capture is taken **only on failure** — 300 KiB per step would make a fifty-journey suite unmanageable. Captures land in `.qai/artifacts/`, which the action publishes as `qai-captures`; the comment links to it.
 
-Le moteur n'écrit rien sur disque : il rend les octets et un nom, l'appelant
-décide où ils vont. C'est ce qui permettra plus tard de les envoyer ailleurs
-qu'en artefact de CI sans toucher au moteur.
+The engine never writes to disk: it returns bytes and a name, the caller decides where they go. That is what will later allow sending captures somewhere other than a CI artifact without touching the engine.
 
-## Réparer depuis la CI
+## Repairing from CI
 
 ```yaml
 - uses: gseyra1/QAI@main
@@ -63,34 +50,28 @@ qu'en artefact de CI sans toucher au moteur.
     heal: 'true'
 ```
 
-`--heal` exige un fournisseur de modèle : l'action ne le passe pas en entrée,
-il vient de la clé `provider` de votre `qai.config.json` (et sa clé d'API, de
-l'environnement du job).
+`--heal` requires a model provider: the action does not take it as an input — it comes from the `provider` key of your `qai.config.json` (and its API key, from the job's environment).
 
-Les résolutions réparées sont réécrites dans le dépôt de travail du runner. À
-vous d'en faire ce que vous voulez : les commiter sur la branche de la PR, ou
-les publier en artefact. Le commentaire signale la réparation ; le diff, lui,
-est dans le fichier réécrit. Ajoutez `strict: 'true'` si une réparation doit
-bloquer la fusion plutôt que passer.
+Repaired resolutions are rewritten in the runner's working copy. What you do with them is up to you: commit them to the PR branch, or publish them as an artifact. The comment flags the repair; the diff is in the rewritten file. Add `strict: 'true'` if a repair should block the merge instead of passing.
 
 ## Options
 
-| Entrée | Défaut | Rôle |
+| Input | Default | Role |
 |---|---|---|
-| `base-url` | — | obligatoire |
-| `scenarios` | `qai.config.json` | fichiers, dossiers ou motif |
-| `config` | découvert | chemin du fichier de configuration |
-| `states` | — | module `StateProvider`, pour l'état déclaré par `given` |
-| `heal` | `false` | réparer les cibles périmées |
-| `strict` | `false` | une réparation fait échouer le job |
-| `comment` | `true` | poster le rapport |
-| `github-token` | `github.token` | jeton pour poster le commentaire |
-| `version` | `latest` | version de QAI |
+| `base-url` | — | required |
+| `scenarios` | `qai.config.json` | files, directories, or glob |
+| `config` | discovered | path to the configuration file |
+| `states` | — | `StateProvider` module, for state declared by `given` |
+| `heal` | `false` | repair stale targets |
+| `strict` | `false` | a repair fails the job |
+| `comment` | `true` | post the report |
+| `github-token` | `github.token` | token for posting the comment |
+| `version` | `latest` | QAI version |
 
-## Sans GitHub
+## Without GitHub
 
-Le CLI produit le markdown, le reste vous appartient :
+The CLI produces the markdown; the rest is yours:
 
 ```bash
-qai run --base-url $URL --format markdown --out rapport.md
+qai run --base-url $URL --format markdown --out report.md
 ```

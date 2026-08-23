@@ -1,40 +1,40 @@
 name: QAI
-description: Rejoue les parcours critiques et commente la pull request
+description: Replays the critical journeys and comments on the pull request
 
 inputs:
   base-url:
-    description: Racine de l'application à tester (déploiement de prévisualisation)
+    description: Root of the application under test (preview deployment)
     required: true
   scenarios:
-    description: Fichiers, dossiers ou motif. Par défaut, lus depuis qai.config.json
+    description: Files, directories, or a glob. Defaults to qai.config.json
     required: false
     default: ''
   config:
-    description: Chemin du fichier de configuration
+    description: Path to the configuration file
     required: false
     default: ''
   states:
-    description: Module exportant un StateProvider, pour l'état déclaré par « given »
+    description: Module exporting a StateProvider, for state declared by "given"
     required: false
     default: ''
   heal:
-    description: Réparer les cibles périmées et réécrire les résolutions
+    description: Repair stale targets and rewrite the resolutions
     required: false
     default: 'false'
   strict:
-    description: Une réparation fait échouer la vérification
+    description: A repair fails the check
     required: false
     default: 'false'
   comment:
-    description: Poster le rapport en commentaire de la pull request
+    description: Post the report as a pull-request comment
     required: false
     default: 'true'
   github-token:
-    description: Jeton pour poster le commentaire
+    description: Token used to post the comment
     required: false
     default: ${{ github.token }}
   version:
-    description: Version de QAI à utiliser
+    description: QAI version to install
     required: false
     default: latest
 
@@ -46,24 +46,24 @@ runs:
       with:
         node-version: '22'
 
-    # Installé avant le navigateur : « playwright install » doit résoudre la
-    # version de Playwright dont dépend QAI. Une version obtenue à part
-    # téléchargerait un binaire que QAI ne saurait pas lancer.
+    # Installed before the browser: "playwright install" must resolve the
+    # Playwright version QAI depends on. A separately obtained version would
+    # download a binary QAI cannot drive.
     #
-    # Aucun input n'est interpolé (${{ }}) dans un script : le shell évaluerait
-    # ce qu'un appelant hostile y glisse. Tout passe par l'environnement, que
-    # bash développe sans jamais le réinterpréter.
-    - name: Installation
+    # No input is interpolated (${{ }}) inside a script: the shell would
+    # evaluate whatever a hostile caller slips in. Everything goes through the
+    # environment, which bash expands without ever re-interpreting it.
+    - name: Install
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
       run: npm i --no-save --no-audit --no-fund --ignore-scripts "tilmiqai@$VERSION"
 
-    - name: Navigateur
+    - name: Browser
       shell: bash
       run: npx playwright install --with-deps chromium
 
-    - name: Rejeu des parcours
+    - name: Replay journeys
       id: qai
       shell: bash
       env:
@@ -75,9 +75,9 @@ runs:
         HEAL: ${{ inputs.heal }}
         STRICT: ${{ inputs.strict }}
       run: |
-        # Les arguments sont assemblés en tableau : chaque valeur reste un mot,
-        # jamais du code. Seul SCENARIOS est découpé sur les espaces — c'est un
-        # input multi-fichiers — et le découpage ne réévalue rien.
+        # Arguments are assembled as an array: every value stays a word,
+        # never code. Only SCENARIOS is split on spaces — it is a multi-file
+        # input — and word splitting re-evaluates nothing.
         args=(run)
         for s in $SCENARIOS; do args+=("$s"); done
         args+=(--base-url "$BASE_URL")
@@ -91,9 +91,9 @@ runs:
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
         set -e
 
-    # Publiées avant le commentaire : le rapport y renvoie, donc elles doivent
-    # exister quand un relecteur clique.
-    - name: Captures d'échec
+    # Uploaded before the comment: the report links to them, so they must
+    # exist by the time a reviewer clicks.
+    - name: Failure captures
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
@@ -102,7 +102,7 @@ runs:
         if-no-files-found: ignore
         retention-days: 14
 
-    - name: Commentaire de pull request
+    - name: Pull-request comment
       if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
       shell: bash
       env:
@@ -112,8 +112,8 @@ runs:
       run: |
         REPORT="$RUNNER_TEMP/qai-report.md"
         [ -f "$REPORT" ] || exit 0
-        # Un marqueur invisible permet de mettre à jour le commentaire existant
-        # plutôt que d'en empiler un à chaque exécution.
+        # An invisible marker lets the action update the existing comment
+        # instead of stacking a new one per run.
         EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
           --jq 'map(select(.body | startswith("<!-- qai-report -->"))) | .[0].id // empty')
         if [ -n "$EXISTING" ]; then

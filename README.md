@@ -162,7 +162,7 @@ export const pricing: Pricing = { inputPerMTok: 3, outputPerMTok: 15 };
 
 Two constraints, both load-bearing. The response must be a **structured object**, never prose — that is what makes any model swappable without touching QAI. And `usage` is **mandatory**: without token accounting no spend cap is possible, and cost control is existential for this product.
 
-See [docs/modele.md](docs/modele.md) and [examples/provider-exemple.ts](examples/provider-exemple.ts).
+See [docs/model.md](docs/model.md) and [examples/provider-exemple.ts](examples/provider-exemple.ts).
 
 ## Configuration
 
@@ -194,10 +194,10 @@ import type { ModelProvider, StateProvider, Scenario, ScenarioReport } from 'til
 | [Getting started](docs/getting-started.md) | Five-minute walkthrough on a demo shop, healthy then broken |
 | [Scenario format](docs/scenario-format.md) | The format and why it has no selectors |
 | [Engine](docs/engine.md) | Replay, the safety boundary, the three-state report |
-| [Resolving](docs/generation.md) | How a resolution is produced and verified |
-| [Repairing](docs/reparation.md) | The two barriers, and the diff you review |
-| [Starting state](docs/etats.md) | `given`, sessions and fixtures |
-| [Model](docs/modele.md) | Plugging your own model and capping spend |
+| [Resolving](docs/resolving.md) | How a resolution is produced and verified |
+| [Repairing](docs/repairing.md) | The two barriers, and the diff you review |
+| [Starting state](docs/state.md) | `given`, sessions and fixtures |
+| [Model](docs/model.md) | Plugging your own model and capping spend |
 | [CI](docs/ci.md) · [Config](docs/configuration.md) | Pull-request integration and `qai.config.json` |
 
 ## Status
