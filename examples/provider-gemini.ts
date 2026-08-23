@@ -7,20 +7,19 @@ import type {
 } from '../src/model/types.ts';
 
 /**
- * Fournisseur Gemini, prêt à l'emploi — et sans SDK : l'API REST suffit.
+ * Gemini provider, ready to use — and SDK-free: the REST API is enough.
  *
  *   export GEMINI_API_KEY=…
- *   npm run qai -- resolve qa/parcours.qai.yaml --base-url $URL \
+ *   npm run qai -- resolve qa/journey.qai.yaml --base-url $URL \
  *     --provider ./examples/provider-gemini.ts --max-cost 2
  *
- * Ce fichier est un **exemple**, pas une dépendance de QAI : le paquet publié
- * n'embarque aucun SDK de fournisseur. Copiez-le, changez le modèle, ou
- * réécrivez-le pour le vôtre.
+ * This file is an **example**, not a QAI dependency: the published package
+ * ships no provider SDK. Copy it, change the model, or rewrite it for yours.
  */
 
 const MODEL = process.env['QAI_MODEL'] ?? 'gemini-3.6-flash';
 
-/** Tarif du modèle choisi, en dollars par million de jetons (août 2026). */
+/** Price of the chosen model, in dollars per million tokens (August 2026). */
 const PRICES: Record<string, Pricing> = {
   'gemini-3.6-flash': { inputPerMTok: 0.75, outputPerMTok: 3.75, cachedInputPerMTok: 0.075 },
   'gemini-3.5-flash': { inputPerMTok: 1.5, outputPerMTok: 9, cachedInputPerMTok: 0.15 },
@@ -34,7 +33,7 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 function apiKey(): string {
   const key = process.env['GEMINI_API_KEY'];
   if (key === undefined || key === '') {
-    throw new Error('GEMINI_API_KEY est absente de l’environnement');
+    throw new Error('GEMINI_API_KEY is missing from the environment');
   }
   return key;
 }
@@ -61,8 +60,8 @@ export default {
   async complete(request: ModelRequest): Promise<ModelResponse> {
     const response = await fetch(ENDPOINT, {
       method: 'POST',
-      // La clé passe en en-tête, jamais dans l'URL : une URL finit dans des
-      // journaux, un en-tête non.
+      // The key goes in a header, never in the URL: a URL ends up in logs,
+      // a header does not.
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey() },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: request.system }] },
@@ -70,10 +69,10 @@ export default {
         generationConfig: {
           maxOutputTokens: request.maxOutputTokens ?? 8192,
           temperature: 0,
-          // La sortie contrainte par schéma est ce que QAI exige : il ne lit
-          // jamais de prose. `responseJsonSchema` accepte le JSON Schema
-          // standard (oneOf, const…) là où `responseSchema` n'en tolère qu'un
-          // sous-ensemble OpenAPI.
+          // Schema-constrained output is what QAI demands: it never reads
+          // prose. `responseJsonSchema` accepts standard JSON Schema
+          // (oneOf, const…) where `responseSchema` only tolerates an
+          // OpenAPI subset.
           responseMimeType: 'application/json',
           responseJsonSchema: request.responseSchema,
         },
@@ -82,7 +81,7 @@ export default {
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new Error(`Gemini ${response.status} : ${detail.slice(0, 300)}`);
+      throw new Error(`Gemini ${response.status}: ${detail.slice(0, 300)}`);
     }
 
     const body = (await response.json()) as {
@@ -99,22 +98,22 @@ export default {
     };
 
     const candidate = body.candidates?.[0];
-    if (candidate === undefined) throw new Error('réponse sans candidat');
+    if (candidate === undefined) throw new Error('response has no candidate');
     if (candidate.finishReason !== 'STOP') {
-      throw new Error(`génération interrompue : ${candidate.finishReason ?? 'raison inconnue'}`);
+      throw new Error(`generation interrupted: ${candidate.finishReason ?? 'unknown reason'}`);
     }
 
     const text = (candidate.content?.parts ?? [])
       .filter((part) => part.thought !== true && part.text !== undefined)
       .map((part) => part.text)
       .join('');
-    if (text === '') throw new Error('réponse sans contenu textuel');
+    if (text === '') throw new Error('response has no text content');
 
     const meta = body.usageMetadata;
     const usage: ModelResponse['usage'] = {
       inputTokens: meta?.promptTokenCount ?? 0,
-      // Les jetons de réflexion sont facturés comme de la sortie : les omettre
-      // fausserait le plafond de dépense.
+      // Thinking tokens are billed as output: omitting them would skew
+      // the spend cap.
       outputTokens: (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
       cachedInputTokens: meta?.cachedContentTokenCount ?? undefined,
     };

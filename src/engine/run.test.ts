@@ -170,7 +170,7 @@ describe('runScenario', () => {
     assert.equal(healer.calls.length, 0, 'une assertion fausse est une régression, pas un test périmé');
     assert.equal(report.status, 'failed');
     assert.equal(report.healCount, 0);
-    assert.match(report.steps[0]?.failures[0]?.reason ?? '', /attendu « 3 », observé « 1 »/);
+    assert.match(report.steps[0]?.failures[0]?.reason ?? '', /expected "3", observed "1"/);
   });
 
   it('réessaie après repos avant d\'engager une réparation', async () => {
@@ -221,7 +221,7 @@ describe('runScenario', () => {
 
     assert.equal(driver.resolveCalls, 1, 'une ambiguïté ne se stabilise pas avec le temps');
     assert.equal(report.status, 'failed');
-    assert.match(report.steps[0]?.error ?? '', /ambiguë : 2 éléments/);
+    assert.match(report.steps[0]?.error ?? '', /ambiguous target: 2 elements/);
   });
 
   it('s\'arrête quand le budget de réparation est épuisé', async () => {
@@ -245,7 +245,7 @@ describe('runScenario', () => {
     assert.equal(healer.calls.length, 1);
     assert.equal(report.steps[0]?.status, 'healed');
     assert.equal(report.steps[1]?.status, 'failed');
-    assert.match(report.steps[1]?.error ?? '', /budget de réparation épuisé/);
+    assert.match(report.steps[1]?.error ?? '', /heal budget exhausted/);
   });
 
   it('marque ignorées les étapes qui suivent un échec', async () => {
@@ -315,7 +315,7 @@ describe('runScenario', () => {
       resolution: resolution({ s1: { actions: [{ kind: 'swipe', direction: 'up' }] } }),
     });
     assert.equal(report.status, 'failed');
-    assert.match(report.steps[0]?.error ?? '', /non supportée sur web/);
+    assert.match(report.steps[0]?.error ?? '', /not supported on web/);
   });
 
   it('ignore une étape restreinte à une autre plateforme', async () => {
@@ -337,7 +337,7 @@ describe('runScenario', () => {
       resolution: resolution({}),
     });
     assert.equal(report.status, 'failed');
-    assert.match(report.steps[0]?.error ?? '', /aucune résolution en cache/);
+    assert.match(report.steps[0]?.error ?? '', /no cached resolution/);
   });
   it('reevalue une assertion encore fausse pendant la fenetre accordee', async () => {
     const vide = node('group', 'page', [node('text', 'Chargement…')]);

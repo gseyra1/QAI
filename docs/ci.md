@@ -13,22 +13,22 @@ That's it. Journeys are read from `qai.config.json`, failure captures are publis
 ## The comment
 
 ```markdown
-## ❌ QAI — régression détectée
+## ❌ QAI — regression detected
 
-1 parcours en 1.6 s.
+1 journey(s) in 6.8 s.
 
-| | Parcours | Résultat | Durée |
+| | Journey | Result | Duration |
 |:-:|---|---|---:|
-| ❌ | `checkout-guest` | échec | 1.2 s |
+| ❌ | `checkout-guest` | failed | 6.3 s |
 
 ### `checkout-guest`
 
 - ❌ **s8** — payer avec la carte de test
-  - `la commande est confirmée` → aucun élément ne correspond à la cible
-  - [capture de l'écran au moment de l'échec](…)
+  - `la commande est confirmée` → no element matches the target
+  - screenshot: `checkout-guest-s8.png`
 
-> Aucune réparation n'a été appliquée sur un échec d'assertion : c'est une
-> régression de l'application, pas un test périmé.
+> No repair was applied on an assertion failure: it is an application
+> regression, not a stale test.
 ```
 
 A green journey gets **no** detail section: only what needs action appears.

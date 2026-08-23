@@ -6,7 +6,7 @@ export class InterpolationError extends Error {
   readonly missing: string[];
 
   constructor(missing: string[]) {
-    super(`capture(s) inconnue(s) : ${missing.join(', ')}`);
+    super(`unknown capture(s): ${missing.join(', ')}`);
     this.name = 'InterpolationError';
     this.missing = missing;
   }
@@ -98,7 +98,7 @@ export function extractValue(node: UINode, kind: ExtractKind): string | null {
 
 export type CheckResult = { ok: true } | { ok: false; reason: string };
 
-const STATE_LABEL = { checked: 'coché', disabled: 'désactivé', selected: 'sélectionné' } as const;
+const STATE_LABEL = { checked: 'checked', disabled: 'disabled', selected: 'selected' } as const;
 
 export function evaluateCheck(
   check: Check,
@@ -111,28 +111,28 @@ export function evaluateCheck(
     const visible = matched.filter((node) => node.state.visible);
     return visible.length === 0
       ? { ok: true }
-      : { ok: false, reason: `${visible.length} élément(s) encore présent(s)` };
+      : { ok: false, reason: `${visible.length} element(s) still present` };
   }
 
   if (check.check === 'countAtLeast') {
     return matched.length >= check.value
       ? { ok: true }
-      : { ok: false, reason: `attendu au moins ${check.value}, observé ${matched.length}` };
+      : { ok: false, reason: `expected at least ${check.value}, observed ${matched.length}` };
   }
 
-  if (matched.length === 0) return { ok: false, reason: 'aucun élément ne correspond à la cible' };
+  if (matched.length === 0) return { ok: false, reason: 'no element matches the target' };
 
   if (check.check === 'visible') {
     return matched.some((node) => node.state.visible)
       ? { ok: true }
-      : { ok: false, reason: 'élément présent mais non visible' };
+      : { ok: false, reason: 'element present but not visible' };
   }
 
   if (check.check === 'stateIs') {
     const node = matched[0] as UINode;
     return node.state[check.value] === true
       ? { ok: true }
-      : { ok: false, reason: `l'élément n'est pas ${STATE_LABEL[check.value]}` };
+      : { ok: false, reason: `element is not ${STATE_LABEL[check.value]}` };
   }
 
   const expected = interpolate(check.value, bag);
@@ -140,7 +140,7 @@ export function evaluateCheck(
   if (check.check === 'textContains') {
     return matched.some((node) => textOf(node).includes(expected))
       ? { ok: true }
-      : { ok: false, reason: `« ${expected} » introuvable dans « ${textOf(matched[0] as UINode)} »` };
+      : { ok: false, reason: `"${expected}" not found in "${textOf(matched[0] as UINode)}"` };
   }
 
   const observed = textOf(matched[0] as UINode);
@@ -148,15 +148,15 @@ export function evaluateCheck(
   if (check.check === 'textEquals') {
     return observed === expected
       ? { ok: true }
-      : { ok: false, reason: `attendu « ${expected} », observé « ${observed} »` };
+      : { ok: false, reason: `expected "${expected}", observed "${observed}"` };
   }
 
   const left = toNumber(observed);
   const right = toNumber(expected);
   if (left === null || right === null) {
-    return { ok: false, reason: `valeur non numérique : « ${observed} » vs « ${expected} »` };
+    return { ok: false, reason: `non-numeric value: "${observed}" vs "${expected}"` };
   }
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `attendu ${right}, observé ${left}` };
+    : { ok: false, reason: `expected ${right}, observed ${left}` };
 }

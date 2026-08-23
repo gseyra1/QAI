@@ -94,26 +94,26 @@ async function verifyActions(driver: Driver, actions: Action[]): Promise<string[
     try {
       outcome = await driver.resolve(target);
     } catch (error) {
-      errors.push(`action ${index} : ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`action ${index}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
 
     if (outcome.found) {
       if (outcome.usedFallback) {
         errors.push(
-          `action ${index} : seul le repli technique a fonctionné, le ciblage sémantique est faux`,
+          `action ${index}: only the technical fallback worked, the semantic targeting is wrong`,
         );
       }
       continue;
     }
     if (outcome.reason === 'ambiguous') {
       errors.push(
-        `action ${index} : cible ambiguë, ${outcome.matches} éléments correspondent — précise avec "within" ou "nth"`,
+        `action ${index}: ambiguous target, ${outcome.matches} elements match — disambiguate with "within" or "nth"`,
       );
     } else if (outcome.reason === 'not-visible') {
-      errors.push(`action ${index} : cible trouvée mais non visible`);
+      errors.push(`action ${index}: target found but not visible`);
     } else {
-      errors.push(`action ${index} : aucun élément ne correspond à cette cible`);
+      errors.push(`action ${index}: no element matches this target`);
     }
   }
 
@@ -144,24 +144,24 @@ function verifyChecks(
   for (const name of Object.keys(step.capture ?? {})) {
     const spec = proposal.captures[name];
     if (spec === undefined) {
-      errors.push(`capture « ${name} » manquante`);
+      errors.push(`capture "${name}" missing`);
       continue;
     }
     try {
       const node = matchOne(root, interpolateLocator(spec.from, merged));
       if (node === null) {
-        errors.push(`capture « ${name} » : cible introuvable ou ambiguë sur cet écran`);
+        errors.push(`capture "${name}": target not found or ambiguous on this screen`);
         continue;
       }
       const value = extractValue(node, spec.extract);
       if (value === null) {
-        errors.push(`capture « ${name} » : valeur illisible avec extract="${spec.extract}"`);
+        errors.push(`capture "${name}": unreadable value with extract="${spec.extract}"`);
         continue;
       }
       produced[name] = value;
       merged[name] = value;
     } catch (error) {
-      errors.push(`capture « ${name} » : ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`capture "${name}": ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -169,7 +169,7 @@ function verifyChecks(
   // serait persistée sans jamais être vérifiée, et casserait un rejeu sain.
   for (const name of Object.keys(proposal.captures)) {
     if (step.capture?.[name] === undefined) {
-      errors.push(`capture « ${name} » inconnue du scénario — ne l'invente pas`);
+      errors.push(`capture "${name}" not in the scenario — do not invent it`);
     }
   }
 
@@ -177,24 +177,24 @@ function verifyChecks(
   for (const expectation of expectations) {
     const check = proposal.assertions[expectation];
     if (check === undefined) {
-      errors.push(`assertion « ${expectation} » manquante — recopie le texte exactement en clé`);
+      errors.push(`assertion "${expectation}" missing — copy the assertion text exactly as the key`);
       continue;
     }
     try {
       const result = evaluateCheck(check, root, merged);
       if (!result.ok) {
-        errors.push(`assertion « ${expectation} » fausse sur cet écran : ${result.reason}`);
+        errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
       }
     } catch (error) {
       errors.push(
-        `assertion « ${expectation} » : ${error instanceof Error ? error.message : String(error)}`,
+        `assertion "${expectation}": ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
   for (const key of Object.keys(proposal.assertions)) {
     if (!expectations.includes(key)) {
-      errors.push(`assertion « ${key} » inconnue du scénario — ne l'invente pas`);
+      errors.push(`assertion "${key}" not in the scenario — do not invent it`);
     }
   }
 
@@ -257,7 +257,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       const candidate = asProposal(response.output);
       const errors =
         candidate === null
-          ? ['réponse mal formée : « actions » doit être une liste non vide de gestes connus']
+          ? ['malformed response: "actions" must be a non-empty list of known gestures']
           : await verifyActions(driver, candidate.actions);
 
       if (errors.length === 0 && candidate !== null) {
@@ -332,7 +332,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       const candidate = asChecks(response.output);
       if (candidate === null) {
-        outcome = { errors: ['réponse mal formée'], produced: {} };
+        outcome = { errors: ['malformed response'], produced: {} };
         continue;
       }
 

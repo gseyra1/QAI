@@ -43,9 +43,9 @@ function parse(raw: string, path: string): QaiConfig {
   try {
     document = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${path} : ${error instanceof Error ? error.message : 'JSON illisible'}`);
+    throw new Error(`${path}: ${error instanceof Error ? error.message : 'unreadable JSON'}`);
   }
-  if (!isRecord(document)) throw new Error(`${path} : le document n'est pas un objet`);
+  if (!isRecord(document)) throw new Error(`${path}: the document is not an object`);
 
   const config: QaiConfig = {};
   const scenarios = document['scenarios'];

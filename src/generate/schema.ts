@@ -20,7 +20,7 @@ function locator(depth: number): Record<string, unknown> {
     role: { enum: ROLES },
     name: {
       oneOf: [
-        { type: 'string', description: 'nom accessible exact' },
+        { type: 'string', description: 'exact accessible name' },
         {
           type: 'object',
           properties: { contains: { type: 'string' } },
@@ -29,7 +29,7 @@ function locator(depth: number): Record<string, unknown> {
         },
       ],
     },
-    nth: { type: 'integer', minimum: 0, description: 'index, uniquement si plusieurs correspondances sont légitimes' },
+    nth: { type: 'integer', minimum: 0, description: 'index, only when several matches are legitimate' },
   };
   if (depth > 0) properties['within'] = locator(depth - 1);
 
@@ -45,7 +45,7 @@ export function targetSchema(): Record<string, unknown> {
         type: 'object',
         properties: { testId: { type: 'string' }, selector: { type: 'string' } },
         additionalProperties: false,
-        description: 'repli technique, seulement si la page expose un identifiant de test',
+        description: 'technical fallback, only if the page exposes a test id',
       },
     },
     required: ['primary'],
@@ -67,7 +67,7 @@ const CHECKS = ['visible', 'absent', 'textEquals', 'textContains', 'countAtLeast
 function captures(): Record<string, unknown> {
   return {
     type: 'object',
-    description: 'valeurs à extraire de l\'écran, réutilisables plus loin via {{nom}}',
+    description: 'values to extract from the screen, reusable later via {{name}}',
     additionalProperties: {
       type: 'object',
       properties: { from: locator(2), extract: { enum: ['text', 'value', 'number'] } },
@@ -80,7 +80,7 @@ function captures(): Record<string, unknown> {
 function assertions(): Record<string, unknown> {
   return {
     type: 'object',
-    description: 'clé = texte exact de l\'assertion du scénario, valeur = sa forme machine',
+    description: 'key = exact text of the scenario assertion, value = its machine form',
     additionalProperties: {
       type: 'object',
       properties: {
@@ -88,7 +88,7 @@ function assertions(): Record<string, unknown> {
         target: locator(2),
         value: {
           oneOf: [{ type: 'string' }, { type: 'number' }],
-          description: 'peut référencer une capture, ex. "{{prix}}"',
+          description: 'can reference a capture, e.g. "{{price}}"',
         },
       },
       required: ['check', 'target'],
@@ -123,7 +123,7 @@ export function stepProposalSchema(): Record<string, unknown> {
       actions: {
         type: 'array',
         minItems: 1,
-        description: 'les gestes primitifs qui réalisent l\'intention, dans l\'ordre',
+        description: 'the primitive gestures that carry out the intent, in order',
         items: {
           oneOf: [
             action('navigate', { to: { type: 'string' } }, ['to']),
@@ -159,7 +159,7 @@ export function healProposalSchema(): Record<string, unknown> {
       note: {
         type: 'string',
         description:
-          "une phrase, pour un humain qui relira le diff : ce qui a changé dans l'application",
+          'one sentence, for a human who will review the diff: what changed in the application',
       },
     },
     required: ['target', 'note'],

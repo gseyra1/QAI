@@ -40,7 +40,7 @@ runtime errors. Details in [engine.md](engine.md).
 ```bash
 npm run qai -- run examples/checkout-guest.qai.yaml \
   --base-url http://127.0.0.1:8899/ \
-  --states ./examples/states-exemple.ts
+  --states ./examples/states-example.ts
 ```
 
 `--states` provides the state declared by the scenario's `given` block —
@@ -48,14 +48,15 @@ without it, QAI refuses to run a journey that requires one (see
 [state.md](state.md)).
 
 ```
-1 parcours — RÉUSSI   1.6 s
+1 journey(s) — PASSED   1.6 s
 
-  ✓ checkout-guest         RÉUSSI  1.2 s
+  ✓ checkout-guest         PASSED  1.2 s
 
-Tout est vert.
+All green.
 ```
 
-(CLI output is French today.)
+(Step intents appear in the scenario's own language — here French. The tool
+itself speaks English.)
 
 A green journey does not list its steps: detail only appears on failure, where
 it is useful.
@@ -75,19 +76,19 @@ npm run demo -- --bug guest-confirm --port 8898
 ```bash
 npm run qai -- run examples/checkout-guest.qai.yaml \
   --base-url http://127.0.0.1:8898/ \
-  --states ./examples/states-exemple.ts
+  --states ./examples/states-example.ts
 ```
 
 ```
-1 parcours — ÉCHEC   6.8 s
+1 journey(s) — FAILED   6.8 s
 
-  ✖ checkout-guest         ÉCHEC   6.4 s
+  ✖ checkout-guest         FAILED  6.4 s
     ✖ s8   payer avec la carte de test
-          capture « commande » : cible introuvable ou ambiguë
-          la commande est confirmée → aucun élément ne correspond à la cible
-          un numéro de commande est affiché → aucun élément ne correspond à la cible
+          capture "commande": target not found or ambiguous
+          la commande est confirmée → no element matches the target
+          un numéro de commande est affiché → no element matches the target
 
-1 parcours en échec.
+1 journey(s) failed.
 ```
 
 Exit code 1, so CI fails the pull request.
@@ -143,7 +144,7 @@ npm run qai -- resolve my-journey.qai.yaml \
 ```
 
 The provider is yours: QAI ships no model SDK. Start from
-[examples/provider-exemple.ts](../examples/provider-exemple.ts) — one method to
+[examples/provider-example.ts](../examples/provider-example.ts) — one method to
 write. The loop is detailed in [resolving.md](resolving.md).
 
 Then `check` and `run`, as in steps 2 and 3.
@@ -159,25 +160,25 @@ npm run demo -- --bug rename-guest --port 8897
 ```bash
 npm run qai -- run examples/checkout-guest.qai.yaml \
   --base-url http://127.0.0.1:8897/ \
-  --states ./examples/states-exemple.ts \
+  --states ./examples/states-example.ts \
   --heal --provider ./my-provider.ts --max-cost 1
 ```
 
 ```
-1 parcours — RÉPARÉ   5.1 s
+1 journey(s) — HEALED   9.4 s
 
-  ~ checkout-guest         RÉPARÉ  4.7 s
+  ~ checkout-guest         HEALED  9.0 s
     ~ s6   lancer la commande en tant qu'invité
-          réparé : Le libellé du bouton de commande invité est passé de
-          « Commander en tant qu'invité » à « Continuer sans compte ».
+          healed: The guest checkout button label changed from 'Commander en
+          tant qu'invité' to 'Continuer sans compte'.
 
-1 réparation(s) : relire les diffs de résolution avant de fusionner.
-dépense modèle : 0.0023 (1 appels)
+1 repair(s): review the resolution diffs before merging.
+model spend: 0.0020 (1 calls)
 ```
 
-Authentic output — one model call, a quarter of a cent (the « dépense modèle »
-line). The resolution file is rewritten; the diff is a few lines with the
-reason attached, ready for review — see [repairing.md](repairing.md).
+Authentic output — one model call, a fifth of a cent. The resolution file is
+rewritten; the diff is a few lines with the reason attached, ready for
+review — see [repairing.md](repairing.md).
 
 ## 8. Run the whole suite
 
@@ -185,16 +186,16 @@ reason attached, ready for review — see [repairing.md](repairing.md).
 in parallel:
 
 ```bash
-npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-exemple.ts --workers 4
+npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-example.ts --workers 4
 ```
 
 ```
-2 parcours — RÉUSSI   1.8 s
+2 journey(s) — PASSED   1.7 s
 
-  ✓ checkout-guest         RÉUSSI  1.2 s
-  ✓ compte-connecte        RÉUSSI  536 ms
+  ✓ checkout-guest         PASSED  1.2 s
+  ✓ compte-connecte        PASSED  534 ms
 
-Tout est vert.
+All green.
 ```
 
 Each journey gets a fresh browser: sharing one would leak cookies and storage

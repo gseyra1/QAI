@@ -4,28 +4,27 @@ import { renderTree } from '../generate/render.ts';
 import { healProposalSchema } from '../generate/schema.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 
-export const HEAL_SYSTEM_PROMPT = `Un test automatisé ne retrouve plus un élément d'interface. Tu dois le relocaliser.
+export const HEAL_SYSTEM_PROMPT = `An automated test can no longer locate a UI element. You must relocate it.
 
-On te donne l'intention de l'étape, la cible qui ne fonctionne plus, la raison
-de l'échec, et l'arbre de l'écran courant — une ligne par élément :
-  <rôle> "<nom accessible>" [état] #identifiant-de-test
+You are given the step's intent, the target that no longer works, the reason
+for the failure, and the tree of the current screen — one line per element:
+  <role> "<accessible name>" [state] #test-id
 
-Tu rends la nouvelle cible et une phrase d'explication.
+You return the new target and a one-sentence explanation.
 
-Règles :
-- Cherche l'élément qui satisfait la MÊME intention. Si aucun élément ne le
-  fait, ne propose pas un élément approchant : mieux vaut échouer que faire
-  passer un test sur autre chose.
-- Une cible se décrit par rôle et nom accessible, jamais par un sélecteur CSS.
-- Conserve ce qui rendait la cible stable : ne remplace jamais une forme
-  { "contains": "..." } par le nom exact affiché aujourd'hui si celui-ci
-  contient une donnée (numéro, montant, date) — elle changera au prochain
-  rejeu. Quand la ligne visée porte #identifiant, garde-le en
-  "fallback": { "testId": "identifiant" }.
-- Si plusieurs éléments correspondent, lève l'ambiguïté avec "within" ou "nth".
-- La note sera lue par un développeur dans un diff de revue. Dis ce qui a changé
-  dans l'application — « le libellé du bouton est passé de X à Y » — pas ce que
-  tu as fait.`;
+Rules:
+- Look for the element that satisfies the SAME intent. If no element does,
+  do not propose a near match: better to fail than to make a test pass on
+  something else.
+- A target is described by role and accessible name, never by a CSS selector.
+- Preserve what made the target stable: never replace a
+  { "contains": "..." } form with the exact name displayed today if that name
+  contains data (a number, an amount, a date) — it will change on the next
+  replay. When the targeted line carries #some-id, keep it as
+  "fallback": { "testId": "some-id" }.
+- If several elements match, disambiguate with "within" or "nth".
+- The note will be read by a developer in a review diff. Say what changed in
+  the application — "the button label went from X to Y" — not what you did.`;
 
 export interface ModelHealerOptions {
   driver: Driver;
@@ -52,10 +51,10 @@ function asProposal(output: unknown): Proposal | null {
 
 function describeFailure(request: HealRequest): string {
   if (request.outcome.reason === 'ambiguous') {
-    return `${request.outcome.matches} éléments correspondaient : la cible est ambiguë`;
+    return `${request.outcome.matches} elements matched: the target is ambiguous`;
   }
-  if (request.outcome.reason === 'not-visible') return 'la cible existe mais n\'est pas visible';
-  return 'aucun élément ne correspond plus à cette cible';
+  if (request.outcome.reason === 'not-visible') return 'the target exists but is not visible';
+  return 'no element matches this target anymore';
 }
 
 /**
@@ -86,12 +85,12 @@ export class ModelHealer implements Healer {
           {
             type: 'text',
             text: [
-              `Intention de l'étape : ${request.intent}`,
+              `Step intent: ${request.intent}`,
               '',
-              `Cible qui ne fonctionne plus : ${JSON.stringify(request.target.primary)}`,
-              `Raison : ${describeFailure(request)}`,
+              `Target that no longer works: ${JSON.stringify(request.target.primary)}`,
+              `Reason: ${describeFailure(request)}`,
               '',
-              `Écran courant (${request.snapshot.location}) :`,
+              `Current screen (${request.snapshot.location}):`,
               '',
               renderTree(request.snapshot.root),
             ].join('\n'),
@@ -111,12 +110,12 @@ export class ModelHealer implements Healer {
 
       const proposal = asProposal(response.output);
       if (proposal === null) {
-        rejections.push('réponse mal formée');
+        rejections.push('malformed response');
         conversation.push(
           { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(response.output) }] },
           {
             role: 'user',
-            content: [{ type: 'text', text: 'Réponse mal formée. Rends « target » et « note ».' }],
+            content: [{ type: 'text', text: 'Malformed response. Return "target" and "note".' }],
           },
         );
         continue;
@@ -144,20 +143,20 @@ export class ModelHealer implements Healer {
 
       const reason =
         outcome === null
-          ? (rejections.at(-1) ?? 'cible invalide')
+          ? (rejections.at(-1) ?? 'invalid target')
           : outcome.reason === 'ambiguous'
-            ? `la nouvelle cible est ambiguë : ${outcome.matches} éléments correspondent — précise avec "within" ou "nth"`
+            ? `the new target is ambiguous: ${outcome.matches} elements match — disambiguate with "within" or "nth"`
             : outcome.reason === 'not-visible'
-              ? 'la nouvelle cible existe mais n\'est pas visible'
-              : 'aucun élément ne correspond à la nouvelle cible';
+              ? 'the new target exists but is not visible'
+              : 'no element matches the new target';
 
       rejections.push(reason);
       conversation.push(
         { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(response.output) }] },
-        { role: 'user', content: [{ type: 'text', text: `Rejeté : ${reason}. Corrige.` }] },
+        { role: 'user', content: [{ type: 'text', text: `Rejected: ${reason}. Fix it.` }] },
       );
     }
 
-    return { healed: false, reason: rejections.join(' ; ') };
+    return { healed: false, reason: rejections.join('; ') };
   }
 }

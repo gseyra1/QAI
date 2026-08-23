@@ -50,7 +50,7 @@ describe('evaluateCheck', () => {
     assert.deepEqual(evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '2' }, tree, {}), { ok: true });
     const bad = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '3' }, tree, {});
     assert.equal(bad.ok, false);
-    assert.match(bad.ok === false ? bad.reason : '', /attendu « 3 », observé « 2 »/);
+    assert.match(bad.ok === false ? bad.reason : '', /expected "3", observed "2"/);
   });
 
   it('compare un nombre indépendamment du format', () => {
@@ -88,7 +88,7 @@ describe('evaluateCheck', () => {
   it('distingue présent-mais-invisible d\'absent', () => {
     const invisible = evaluateCheck({ check: 'visible', target: { role: 'button', name: 'Masqué' } }, tree, {});
     assert.equal(invisible.ok, false);
-    assert.match(invisible.ok === false ? invisible.reason : '', /non visible/);
+    assert.match(invisible.ok === false ? invisible.reason : '', /not visible/);
 
     assert.deepEqual(
       evaluateCheck({ check: 'absent', target: { role: 'button', name: 'Masqué' } }, tree, {}),
@@ -99,7 +99,7 @@ describe('evaluateCheck', () => {
   it('échoue clairement quand la cible n\'existe pas', () => {
     const result = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: 'inconnu' }, value: 'x' }, tree, {});
     assert.equal(result.ok, false);
-    assert.match(result.ok === false ? result.reason : '', /aucun élément/);
+    assert.match(result.ok === false ? result.reason : '', /no element/);
   });
 
   it('tolère une valeur numérique venue du schéma de génération', () => {

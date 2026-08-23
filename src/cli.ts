@@ -23,38 +23,38 @@ import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
 import type { StateProvider } from './state/types.ts';
 
-const USAGE = `qai — agent QA
+const USAGE = `qai — QA agent
 
   qai run     <scenarios…> --base-url <url> [--heal --provider <module>]
   qai check   <scenarios…>
   qai resolve <scenarios…> --base-url <url> --provider <module>
 
-<scenarios…> accepte des fichiers, des dossiers ou un motif du shell.
+<scenarios…> accepts files, directories, or a shell pattern.
 
 Options
-  --base-url <url>      racine de l'application testée
-  --states <module>     module exportant par défaut un StateProvider, pour
-                        installer l'état déclaré par « given »
-  --provider <module>   module exportant par défaut un ModelProvider, et
-                        éventuellement une constante « pricing »
-  --workers <n>         parcours en parallèle (défaut : 4)
-  --heal                réparer les cibles périmées et réécrire les résolutions
-  --max-cost <n>        plafond de dépense du modèle
-  --attempts <n>        tentatives par étape à la génération (défaut 3)
-  --assert-timeout <ms> fenêtre de réévaluation d'une assertion encore fausse,
-                        pour un rendu qui se termine après le repos réseau
-                        (défaut 5000)
-  --resolution <path>   forcer le chemin de résolution (un seul scénario)
-  --config <path>       défaut : qai.config.json, cherché en remontant
-  --artifacts <dir>     où ranger les captures d'échec (défaut .qai/artifacts)
-  --format <f>          text (défaut), json ou markdown
-  --out <path>          écrire le rapport dans un fichier
-  --run-url <url>       lien vers l'exécution CI, inséré dans le markdown
-  --json                alias de --format json
-  --strict              une réparation fait échouer la commande
-  --headed              afficher le navigateur
+  --base-url <url>      root of the application under test
+  --states <module>     module default-exporting a StateProvider, used to
+                        install the state declared by "given"
+  --provider <module>   module default-exporting a ModelProvider, and
+                        optionally a "pricing" constant
+  --workers <n>         journeys in parallel (default: 4)
+  --heal                repair stale targets and rewrite the resolutions
+  --max-cost <n>        model spend cap
+  --attempts <n>        attempts per step during generation (default 3)
+  --assert-timeout <ms> re-evaluation window for an assertion still false,
+                        for rendering that finishes after network idle
+                        (default 5000)
+  --resolution <path>   force the resolution path (single scenario only)
+  --config <path>       default: qai.config.json, searched upward
+  --artifacts <dir>     where to store failure captures (default .qai/artifacts)
+  --format <f>          text (default), json or markdown
+  --out <path>          write the report to a file
+  --run-url <url>       link to the CI run, inserted into the markdown
+  --json                alias for --format json
+  --strict              a repair fails the command
+  --headed              show the browser
 
-Codes de sortie : 0 réussi ou réparé, 1 échec ou incohérence.
+Exit codes: 0 passed or healed, 1 failed or inconsistent.
 `;
 
 function resolutionPathFor(scenarioPath: string, scenario: Scenario): string {
@@ -83,7 +83,7 @@ async function loadModule<T>(path: string, kind: string): Promise<{ value: T; pr
   const exported = module['default'];
   const value = (typeof exported === 'function' ? await exported() : exported) as T;
   if (value === undefined || value === null) {
-    throw new Error(`${path} doit exporter par défaut un ${kind}`);
+    throw new Error(`${path} must default-export a ${kind}`);
   }
   const pricing = module['pricing'] as Pricing | undefined;
   return pricing === undefined ? { value } : { value, pricing };
@@ -145,7 +145,7 @@ export async function main(argv: string[]): Promise<number> {
   // « --workers abc » produisait une suite verte à zéro parcours, et
   // « --max-cost abc » désactivait le plafond que l'utilisateur croyait poser.
   const invalide = (flag: string, exige: string): number => {
-    process.stderr.write(`${flag} exige ${exige}\n`);
+    process.stderr.write(`${flag} requires ${exige}\n`);
     return 1;
   };
   // Number('') vaut 0 : une variable de CI non définie (« --assert-timeout
@@ -158,20 +158,20 @@ export async function main(argv: string[]): Promise<number> {
     ['--assert-timeout', values['assert-timeout']],
   ];
   for (const [flag, raw] of bruts) {
-    if (raw !== undefined && raw.trim() === '') return invalide(flag, 'une valeur non vide');
+    if (raw !== undefined && raw.trim() === '') return invalide(flag, 'a non-empty value');
   }
   const { workers, maxCost: plafond, attempts, assertTimeout } = settings;
   if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) {
-    return invalide('--workers', 'un entier ≥ 1');
+    return invalide('--workers', 'an integer ≥ 1');
   }
   if (plafond !== undefined && (!Number.isFinite(plafond) || plafond <= 0)) {
-    return invalide('--max-cost', 'un nombre > 0');
+    return invalide('--max-cost', 'a number > 0');
   }
   if (attempts !== undefined && (!Number.isInteger(attempts) || attempts < 1)) {
-    return invalide('--attempts', 'un entier ≥ 1');
+    return invalide('--attempts', 'an integer ≥ 1');
   }
   if (assertTimeout !== undefined && (!Number.isFinite(assertTimeout) || assertTimeout < 0)) {
-    return invalide('--assert-timeout', 'un nombre de millisecondes ≥ 0');
+    return invalide('--assert-timeout', 'a number of milliseconds ≥ 0');
   }
   if (command === undefined || requested.length === 0) {
     // Une invocation incomplète doit échouer : passer en silence ferait
@@ -182,11 +182,11 @@ export async function main(argv: string[]): Promise<number> {
 
   const paths = await expand(requested);
   if (paths.length === 0) {
-    process.stderr.write('aucun scénario trouvé\n');
+    process.stderr.write('no scenarios found\n');
     return 1;
   }
   if (values.resolution !== undefined && paths.length > 1) {
-    process.stderr.write('--resolution ne vaut que pour un scénario unique\n');
+    process.stderr.write('--resolution only applies to a single scenario\n');
     return 1;
   }
 
@@ -198,11 +198,11 @@ export async function main(argv: string[]): Promise<number> {
   async function modelProvider(path: string): Promise<ModelProvider> {
     const { value, pricing } = await loadModule<ModelProvider>(path, 'ModelProvider');
     if (typeof value.complete !== 'function') {
-      throw new Error(`${path} doit exporter par défaut un ModelProvider`);
+      throw new Error(`${path} must default-export a ModelProvider`);
     }
     if (maxCost === undefined) return value;
     if (pricing === undefined) {
-      throw new Error('--max-cost exige que le module fournisseur exporte « pricing »');
+      throw new Error('--max-cost requires the provider module to export "pricing"');
     }
     return new BudgetedProvider(value, pricing, { maxCost });
   }
@@ -215,7 +215,7 @@ export async function main(argv: string[]): Promise<number> {
   if (command === 'resolve') {
     const baseUrl = settings.baseUrl;
     if (baseUrl === undefined || settings.provider === undefined) {
-      process.stderr.write('--base-url et --provider sont obligatoires\n');
+      process.stderr.write('--base-url and --provider are required\n');
       return 1;
     }
     const provider = await modelProvider(settings.provider);
@@ -232,7 +232,7 @@ export async function main(argv: string[]): Promise<number> {
         if (scenario.given !== undefined) {
           if (states === undefined) {
             process.stderr.write(
-              `${scenario.id} : le scénario déclare « given », --states est requis\n`,
+              `${scenario.id}: the scenario declares "given", --states is required\n`,
             );
             failed = true;
             continue;
@@ -254,26 +254,26 @@ export async function main(argv: string[]): Promise<number> {
           const mark = step.status === 'resolved' ? '✓' : step.status === 'skipped' ? '⊘' : '✖';
           process.stdout.write(`  ${mark} ${step.stepId.padEnd(4)} ${step.intent}\n`);
           for (const rejection of step.rejections) {
-            process.stdout.write(`        essai rejeté : ${rejection}\n`);
+            process.stdout.write(`        attempt rejected: ${rejection}\n`);
           }
         }
 
         if (result.status !== 'complete') {
-          process.stderr.write(`  résolution incomplète : rien n'a été écrit\n`);
+          process.stderr.write(`  incomplete resolution: nothing was written\n`);
           failed = true;
           continue;
         }
 
         const out = values.resolution ?? resolutionPathFor(path, scenario);
         await saveResolution(out, result.resolution);
-        process.stdout.write(`  écrit dans ${out}\n`);
+        process.stdout.write(`  written to ${out}\n`);
       } finally {
         await driver.dispose();
       }
     }
     if (provider instanceof BudgetedProvider) {
       const spend = provider.spend;
-      process.stdout.write(`dépense modèle : ${spend.cost.toFixed(4)} (${spend.calls} appels)\n`);
+      process.stdout.write(`model spend: ${spend.cost.toFixed(4)} (${spend.calls} calls)\n`);
     }
     return failed ? 1 : 0;
   }
@@ -290,7 +290,7 @@ export async function main(argv: string[]): Promise<number> {
 
     if (issues.length > 0) {
       inconsistent = true;
-      process.stderr.write(`${scenario.id} : ${issues.length} incohérence(s)\n`);
+      process.stderr.write(`${scenario.id}: ${issues.length} inconsistency(ies)\n`);
       for (const issue of issues) process.stderr.write(`  • ${formatIssue(issue)}\n`);
       continue;
     }
@@ -298,12 +298,12 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === 'check') {
-    if (!inconsistent) process.stdout.write(`${items.length} parcours cohérents.\n`);
+    if (!inconsistent) process.stdout.write(`${items.length} journey(s) consistent.\n`);
     return inconsistent ? 1 : 0;
   }
 
   if (command !== 'run') {
-    process.stderr.write(`commande inconnue « ${command} »\n\n${USAGE}`);
+    process.stderr.write(`unknown command "${command}"\n\n${USAGE}`);
     return 1;
   }
 
@@ -312,11 +312,11 @@ export async function main(argv: string[]): Promise<number> {
 
   const baseUrl = settings.baseUrl;
   if (baseUrl === undefined) {
-    process.stderr.write('--base-url est obligatoire\n');
+    process.stderr.write('--base-url is required\n');
     return 1;
   }
   if (values.heal === true && settings.provider === undefined) {
-    process.stderr.write('--heal exige --provider\n');
+    process.stderr.write('--heal requires --provider\n');
     return 1;
   }
 
@@ -353,11 +353,11 @@ export async function main(argv: string[]): Promise<number> {
   if (values.out === undefined) process.stdout.write(rendered);
   else {
     await writeFile(values.out, rendered, 'utf8');
-    process.stdout.write(`${formatSuite(report)}\n\nrapport ${format} écrit dans ${values.out}\n`);
+    process.stdout.write(`${formatSuite(report)}\n\n${format} report written to ${values.out}\n`);
   }
   if (provider instanceof BudgetedProvider) {
     const spend = provider.spend;
-    process.stdout.write(`dépense modèle : ${spend.cost.toFixed(4)} (${spend.calls} appels)\n`);
+    process.stdout.write(`model spend: ${spend.cost.toFixed(4)} (${spend.calls} calls)\n`);
   }
 
   for (const entry of report.entries) {

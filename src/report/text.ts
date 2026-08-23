@@ -11,9 +11,9 @@ const MARK: Record<StepStatus, string> = {
 };
 
 const HEADLINE = {
-  passed: 'RÉUSSI',
-  healed: 'RÉPARÉ',
-  failed: 'ÉCHEC',
+  passed: 'PASSED',
+  healed: 'HEALED',
+  failed: 'FAILED',
 } as const;
 
 function seconds(ms: number): string {
@@ -28,7 +28,7 @@ function formatStep(step: StepReport): string[] {
     lines.push(`        ${failure.assertion} → ${failure.reason}`);
   }
   for (const note of step.healNotes ?? []) {
-    lines.push(`        réparé : ${note}`);
+    lines.push(`        healed: ${note}`);
   }
   for (const warning of step.warnings ?? []) {
     lines.push(`        ⚠ ${warning}`);
@@ -48,18 +48,18 @@ export function formatReport(report: ScenarioReport): string {
   lines.push('');
   if (report.healCount > 0) {
     lines.push(
-      `${report.healCount} réparation(s) : relire le diff de résolution avant de fusionner.`,
+      `${report.healCount} repair(s): review the resolution diff before merging.`,
     );
   }
   if (report.status === 'failed') {
-    lines.push('Aucune réparation appliquée : une assertion fausse est une régression.');
+    lines.push('No repair applied: a false assertion is a regression.');
   }
   return lines.join('\n');
 }
 
 export function formatIssues(issues: ConsistencyIssue[]): string {
-  if (issues.length === 0) return 'Scénario et résolution cohérents.';
-  return [`${issues.length} incohérence(s) :`, ...issues.map((issue) => `  • ${formatIssue(issue)}`)].join(
+  if (issues.length === 0) return 'Scenario and resolution consistent.';
+  return [`${issues.length} inconsistency(ies):`, ...issues.map((issue) => `  • ${formatIssue(issue)}`)].join(
     '\n',
   );
 }
@@ -73,14 +73,14 @@ const SCENARIO_MARK = { passed: '✓', healed: '~', failed: '✖' } as const;
  */
 export function formatSuite(report: SuiteReport): string {
   const lines: string[] = [
-    `${report.entries.length} parcours — ${HEADLINE[report.status]}   ${seconds(report.durationMs)}`,
+    `${report.entries.length} journey(s) — ${HEADLINE[report.status]}   ${seconds(report.durationMs)}`,
     '',
   ];
 
   for (const entry of report.entries) {
     if (entry.report === null) {
-      lines.push(`  ✖ ${entry.scenarioId.padEnd(22)} ERREUR`);
-      lines.push(`        ${entry.error ?? 'échec inconnu'}`);
+      lines.push(`  ✖ ${entry.scenarioId.padEnd(22)} ERROR`);
+      lines.push(`        ${entry.error ?? 'unknown failure'}`);
       continue;
     }
 
@@ -102,9 +102,9 @@ export function formatSuite(report: SuiteReport): string {
   const heals = report.entries.reduce((total, entry) => total + (entry.report?.healCount ?? 0), 0);
 
   lines.push('');
-  if (failures > 0) lines.push(`${failures} parcours en échec.`);
-  if (heals > 0) lines.push(`${heals} réparation(s) : relire les diffs de résolution avant de fusionner.`);
-  if (failures === 0 && heals === 0) lines.push('Tout est vert.');
+  if (failures > 0) lines.push(`${failures} journey(s) failed.`);
+  if (heals > 0) lines.push(`${heals} repair(s): review the resolution diffs before merging.`);
+  if (failures === 0 && heals === 0) lines.push('All green.');
 
   return lines.join('\n');
 }

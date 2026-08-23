@@ -17,7 +17,7 @@ const run = promisify(execFile);
  * Ce test rejoue exactement ce scénario. Il a attrapé une version publiée
  * entièrement inerte.
  */
-describe('le binaire empaqueté', () => {
+describe('the packaged binary', () => {
   let dir: string;
   let link: string;
 
@@ -32,18 +32,18 @@ describe('le binaire empaqueté', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('démarre lorsqu\'il est lancé par un lien symbolique', async () => {
+  it('starts when launched through a symlink', async () => {
     const { stdout } = await run('node', [link, '--help']);
-    assert.match(stdout, /qai — agent QA/);
+    assert.match(stdout, /qai — QA agent/);
     assert.match(stdout, /qai run/);
   });
 
-  it('démarre aussi par son vrai chemin', async () => {
+  it('also starts through its real path', async () => {
     const { stdout } = await run('node', [resolve('dist/cli.js'), '--help']);
-    assert.match(stdout, /qai — agent QA/);
+    assert.match(stdout, /qai — QA agent/);
   });
 
-  it('rend le code 1 sans argument, pour ne pas passer un job de CI en silence', async () => {
+  it('returns code 1 without arguments, so a CI job cannot pass silently', async () => {
     await assert.rejects(
       () => run('node', [link]),
       (error: unknown) => (error as { code?: number }).code === 1,

@@ -8,20 +8,19 @@ import type {
 } from '../src/model/types.ts';
 
 /**
- * Fournisseur Claude, prêt à l'emploi.
+ * Claude provider, ready to use.
  *
  *   export ANTHROPIC_API_KEY=…
- *   npm run qai -- resolve qa/parcours.qai.yaml --base-url $URL \
+ *   npm run qai -- resolve qa/journey.qai.yaml --base-url $URL \
  *     --provider ./examples/provider-claude.ts --max-cost 2
  *
- * Ce fichier est un **exemple**, pas une dépendance de QAI : le paquet publié
- * n'embarque aucun SDK de fournisseur. Copiez-le, changez le modèle, ou
- * réécrivez-le pour le vôtre.
+ * This file is an **example**, not a QAI dependency: the published package
+ * ships no provider SDK. Copy it, change the model, or rewrite it for yours.
  */
 
 const MODEL = process.env['QAI_MODEL'] ?? 'claude-sonnet-5';
 
-/** Tarif du modèle choisi, en dollars par million de jetons. */
+/** Price of the chosen model, in dollars per million tokens. */
 const PRICES: Record<string, Pricing> = {
   'claude-opus-5': { inputPerMTok: 5, outputPerMTok: 25 },
   'claude-sonnet-5': { inputPerMTok: 3, outputPerMTok: 15 },
@@ -59,18 +58,17 @@ export default {
       max_tokens: request.maxOutputTokens ?? 4096,
       system: request.system,
       messages: request.messages.map(toAnthropic),
-      // La sortie contrainte par schéma est ce que QAI exige : il ne lit jamais
-      // de prose, donc une réponse hors schéma doit échouer ici, pas six étapes
-      // plus loin.
+      // Schema-constrained output is what QAI demands: it never reads prose,
+      // so an off-schema response must fail here, not six steps later.
       output_config: { format: { type: 'json_schema', schema: request.responseSchema } },
     });
 
     if (response.stop_reason === 'refusal') {
-      throw new Error('le modèle a refusé la requête');
+      throw new Error('the model refused the request');
     }
 
     const text = response.content.find((block) => block.type === 'text');
-    if (text === undefined) throw new Error('réponse sans contenu textuel');
+    if (text === undefined) throw new Error('response has no text content');
 
     const usage: ModelResponse['usage'] = {
       inputTokens: response.usage.input_tokens,

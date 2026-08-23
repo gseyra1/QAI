@@ -92,6 +92,6 @@ describe('sérialisation d\'une résolution', () => {
       '2026-07-29T10:00:00Z',
     );
 
-    assert.match(after.steps['s6']?.healNote ?? '', /repli technique/);
+    assert.match(after.steps['s6']?.healNote ?? '', /technical fallback/);
   });
 });

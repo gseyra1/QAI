@@ -8,17 +8,18 @@
 [![license](https://img.shields.io/npm/l/tilmiqai.svg)](LICENSE)
 
 ```
-1 parcours — ÉCHEC   6.8 s
+1 journey(s) — FAILED   6.8 s
 
-  ✖ checkout-guest         ÉCHEC   6.4 s
+  ✖ checkout-guest         FAILED  6.4 s
     ✖ s8   payer avec la carte de test
-          la commande est confirmée → aucun élément ne correspond à la cible
+          la commande est confirmée → no element matches the target
 
-1 parcours en échec.
+1 journey(s) failed.
 ```
 
 A false assertion is a regression, not a stale test — no repair was applied,
-the pull request goes red.
+the pull request goes red. (Step intents stay in the scenario's own language —
+here French. The tool speaks English.)
 
 ## Features
 
@@ -162,7 +163,7 @@ export const pricing: Pricing = { inputPerMTok: 3, outputPerMTok: 15 };
 
 Two constraints, both load-bearing. The response must be a **structured object**, never prose — that is what makes any model swappable without touching QAI. And `usage` is **mandatory**: without token accounting no spend cap is possible, and cost control is existential for this product.
 
-See [docs/model.md](docs/model.md) and [examples/provider-exemple.ts](examples/provider-exemple.ts).
+See [docs/model.md](docs/model.md) and [examples/provider-example.ts](examples/provider-example.ts).
 
 ## Configuration
 
@@ -216,7 +217,7 @@ npm test
 
 ```bash
 npm run demo          # demo shop on :8899
-npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-exemple.ts
+npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-example.ts
 ```
 
 Issues and pull requests welcome at [github.com/gseyra1/QAI](https://github.com/gseyra1/QAI/issues).

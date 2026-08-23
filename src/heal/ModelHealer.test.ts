@@ -130,7 +130,7 @@ describe('ModelHealer', () => {
 
       const feedback = provider.seen[1]?.messages.at(-1)?.content[0];
       assert.ok(feedback !== undefined && feedback.type === 'text');
-      assert.match(feedback.text, /aucun élément ne correspond/);
+      assert.match(feedback.text, /no element matches/);
     });
 
     it('échoue plutôt que de réparer avec une cible ambiguë', async () => {
@@ -141,13 +141,13 @@ describe('ModelHealer', () => {
 
       assert.equal(report.status, 'failed');
       assert.equal(report.healCount, 0);
-      assert.match(report.steps.find((s) => s.status === 'failed')?.error ?? '', /ambiguë/);
+      assert.match(report.steps.find((s) => s.status === 'failed')?.error ?? '', /ambiguous/);
     });
 
     it('échoue proprement sans réparateur', async () => {
       const { report } = await run('rename-guest', null);
       assert.equal(report.status, 'failed');
-      assert.match(report.steps.find((s) => s.status === 'failed')?.error ?? '', /introuvable/);
+      assert.match(report.steps.find((s) => s.status === 'failed')?.error ?? '', /not found/);
     });
   });
 
@@ -169,8 +169,8 @@ describe('ModelHealer', () => {
 
       assert.equal(report.status, 'passed', 'le parcours fonctionne : ne pas crier au loup');
       const step = report.steps.find((candidate) => candidate.stepId === 's4');
-      assert.match(step?.warnings?.[0] ?? '', /repli technique/);
-      assert.match(step?.warnings?.[0] ?? '', /portage mobile/);
+      assert.match(step?.warnings?.[0] ?? '', /technical fallback/);
+      assert.match(step?.warnings?.[0] ?? '', /mobile port/);
     });
   });
 

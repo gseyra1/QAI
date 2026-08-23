@@ -18,7 +18,7 @@ class SpyHealer implements Healer {
 
   async heal(request: HealRequest): Promise<HealResult> {
     this.calls.push(request);
-    return { healed: false, reason: 'aucun réparateur en étage 1' };
+    return { healed: false, reason: 'no healer in stage 1' };
   }
 }
 

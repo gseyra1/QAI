@@ -33,4 +33,4 @@ jobs:
           scenarios: examples/checkout-guest.qai.yaml
           # The scenario declares « given » : since 0.1.0 the engine refuses to
           # play it without a StateProvider, instead of running it anonymous.
-          states: ./examples/states-exemple.ts
+          states: ./examples/states-example.ts

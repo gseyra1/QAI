@@ -69,14 +69,14 @@ export function checkConsistency(
 export function formatIssue(issue: ConsistencyIssue): string {
   switch (issue.kind) {
     case 'missing-step':
-      return `étape « ${issue.stepId} » : aucune résolution en cache`;
+      return `step "${issue.stepId}": no cached resolution`;
     case 'orphan-step':
-      return `résolution orpheline « ${issue.stepId} » : l'étape n'existe plus dans le scénario`;
+      return `orphan resolution "${issue.stepId}": the step no longer exists in the scenario`;
     case 'missing-assertion':
-      return `étape « ${issue.stepId} » : assertion sans forme machine — « ${issue.detail} »`;
+      return `step "${issue.stepId}": assertion without machine form — "${issue.detail}"`;
     case 'missing-capture':
-      return `étape « ${issue.stepId} » : capture « ${issue.detail} » non résolue`;
+      return `step "${issue.stepId}": capture "${issue.detail}" not resolved`;
     case 'no-actions':
-      return `étape « ${issue.stepId} » : aucune action`;
+      return `step "${issue.stepId}": no actions`;
   }
 }

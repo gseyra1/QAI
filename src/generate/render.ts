@@ -18,11 +18,11 @@ export function renderTree(root: UINode): string {
 }
 
 const STATE_MARKS: ReadonlyArray<[keyof UINode['state'], string]> = [
-  ['disabled', 'désactivé'],
-  ['checked', 'coché'],
-  ['selected', 'sélectionné'],
-  ['expanded', 'déplié'],
-  ['focused', 'focus'],
+  ['disabled', 'disabled'],
+  ['checked', 'checked'],
+  ['selected', 'selected'],
+  ['expanded', 'expanded'],
+  ['focused', 'focused'],
 ];
 
 function walk(node: UINode, depth: number, lines: string[]): void {

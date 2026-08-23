@@ -98,8 +98,7 @@ The check runs **before** each call, against the spend already recorded. A
 call's cost is only known after the fact, so the cap can be exceeded by at
 most one call — refusing to act until the cost is predictable would block the
 product. `provider.spend` exposes the running total at any time, and the CLI
-prints it at the end of the command (« dépense modèle : … ») whenever a cap
-is set.
+prints it at the end of the command ("model spend: …") whenever a cap is set.
 
 ## Choosing a model
 

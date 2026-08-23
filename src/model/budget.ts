@@ -21,7 +21,7 @@ export class BudgetExceededError extends Error {
   readonly limit: keyof Budget;
 
   constructor(limit: keyof Budget, spend: Spend) {
-    super(`budget épuisé (${limit}) — ${spend.calls} appels, coût ${spend.cost.toFixed(4)}`);
+    super(`budget exhausted (${limit}) — ${spend.calls} calls, cost ${spend.cost.toFixed(4)}`);
     this.name = 'BudgetExceededError';
     this.limit = limit;
     this.spend = spend;

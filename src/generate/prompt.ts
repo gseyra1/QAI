@@ -1,51 +1,49 @@
-export const SYSTEM_PROMPT = `Tu traduis une intention d'utilisateur en gestes machine sur une interface.
+export const SYSTEM_PROMPT = `You translate a user's intent into machine gestures on an interface.
 
-On te donne l'arbre de l'écran courant, indenté, où chaque ligne est :
-  <rôle> "<nom accessible>" [état] #identifiant-de-test
+You are given the tree of the current screen, indented, where each line is:
+  <role> "<accessible name>" [state] #test-id
 
-Tu rends les actions qui réalisent l'intention, et le cas échéant les captures
-et les assertions demandées.
+You return the actions that carry out the intent, and where requested the
+captures and assertions.
 
-Règles de ciblage, sans exception :
-- Une cible se décrit par son rôle et son nom accessible, jamais par un
-  sélecteur CSS ni un XPath. C'est ce qui rend le test rejouable sur mobile.
-- Le nom doit correspondre exactement à celui de l'arbre. Si le nom exact est
-  instable (il contient un compteur, une date, un montant), utilise
-  { "contains": "..." } sur la partie stable.
-- Le test sera REJOUÉ sur d'autres données : un nom issu des données de la
-  page — numéro de commande, nom d'article, prix, code généré — changera au
-  prochain rejeu. Cible la structure (rôle, "within", "nth") ou la partie
-  stable du nom avec { "contains": "..." }, jamais la donnée elle-même.
-- « Le premier de la liste » se traduit par la position — "nth": 0 dans le
-  "within" de la liste — pas par le nom de l'élément qui est premier
-  aujourd'hui.
-- Pour ouvrir une page dont le chemin est connu, préfère "navigate" à un clic :
-  moins fragile qu'un lien dont le libellé peut changer.
-- Si plusieurs éléments correspondent, lève l'ambiguïté avec "within"
-  (le conteneur) de préférence, sinon avec "nth". Une cible ambiguë est
-  refusée : le moteur n'a pas le droit de choisir à ta place.
-- Quand la ligne visée porte #identifiant, ajoute "fallback": { "testId":
-  "identifiant" } — c'est le filet si le libellé change. Sinon, pas de
+Targeting rules, no exceptions:
+- A target is described by its role and its accessible name, never by a CSS
+  selector or an XPath. That is what makes the test replayable on mobile.
+- The name must match the one in the tree exactly. If the exact name is
+  unstable (it contains a counter, a date, an amount), use
+  { "contains": "..." } on the stable part.
+- The test will be REPLAYED on other data: a name that comes from the page's
+  data — order number, item name, price, generated code — will change on the
+  next replay. Target the structure (role, "within", "nth") or the stable part
+  of the name with { "contains": "..." }, never the data itself.
+- "The first in the list" translates to a position — "nth": 0 in the list's
+  "within" — not to the name of the element that happens to be first today.
+- To open a page whose path is known, prefer "navigate" to a click: less
+  fragile than a link whose label can change.
+- If several elements match, disambiguate with "within" (the container) by
+  preference, otherwise with "nth". An ambiguous target is refused: the
+  engine is not allowed to choose in your place.
+- When the targeted line carries #id, add "fallback": { "testId":
+  "id" } — that is the safety net if the label changes. Otherwise, no
   fallback.
 
-Règles pour les captures :
-- La cible d'une capture se localise par sa structure, JAMAIS par la valeur
-  qu'elle extrait : cibler « le texte "129,00 €" » pour capturer un prix casse
-  au premier changement de prix.
-- Un montant, un total, une quantité se capturent avec "extract": "number",
-  pas "text" : c'est ce qui permet de les comparer.
+Rules for captures:
+- A capture's target is located by its structure, NEVER by the value it
+  extracts: targeting the text "129,00 €" to capture a price breaks at the
+  first price change.
+- An amount, a total, a quantity are captured with "extract": "number",
+  not "text": that is what makes them comparable.
 
-Règles pour les assertions :
-- La clé est le texte exact de l'assertion, recopié du scénario.
-- L'assertion doit être VRAIE sur l'écran qu'on te montre. On enregistre un
-  état connu comme bon : une assertion fausse ici serait un test faux.
-- Une valeur peut référencer une capture avec {{nom}}, y compris dans le nom
-  d'une cible.
+Rules for assertions:
+- The key is the exact text of the assertion, copied from the scenario.
+- The assertion must be TRUE on the screen you are shown. We record a known
+  good state: a false assertion here would be a false test.
+- A value can reference a capture with {{name}}, including in the name of a
+  target.
 
-Une intention se traduit souvent en plusieurs gestes : « renseigner l'adresse »
-ou « se connecter » sont plusieurs actions, dans l'ordre — mais tous sur
-l'écran qu'on te montre : chaque cible est vérifiée contre cet écran avant
-toute exécution.`;
+An intent often translates into several gestures: "fill in the address" or
+"sign in" are several actions, in order — but all on the screen you are
+shown: every target is verified against this screen before any execution.`;
 
 export interface StepPromptInput {
   intent: string;
@@ -62,23 +60,23 @@ export interface StepPromptInput {
 }
 
 function captureLines(captures: Record<string, string>): string[] {
-  return Object.entries(captures).map(([name, description]) => `- ${name} : ${description}`);
+  return Object.entries(captures).map(([name, description]) => `- ${name}: ${description}`);
 }
 
 export function stepMessage(input: StepPromptInput): string {
-  const parts = [`Écran courant (${input.location}) :`, '', input.tree, '', `Intention : ${input.intent}`];
+  const parts = [`Current screen (${input.location}):`, '', input.tree, '', `Intent: ${input.intent}`];
 
   if (Object.keys(input.captures).length > 0) {
-    parts.push('', 'Captures à produire :', ...captureLines(input.captures));
+    parts.push('', 'Captures to produce:', ...captureLines(input.captures));
   }
   if (input.expectations.length > 0) {
-    parts.push('', 'Assertions à traduire, à recopier telles quelles en clé :');
+    parts.push('', 'Assertions to translate, copy them verbatim as keys:');
     for (const expectation of input.expectations) parts.push(`- ${expectation}`);
   }
 
   const available = Object.entries(input.availableCaptures);
   if (available.length > 0) {
-    parts.push('', 'Captures déjà disponibles, référençables par {{nom}} :');
+    parts.push('', 'Captures already available, referenceable via {{name}}:');
     for (const [name, value] of available) parts.push(`- {{${name}}} = ${value}`);
   }
 
@@ -91,10 +89,10 @@ export function stepMessage(input: StepPromptInput): string {
  * le vocabulaire qu'il vient d'employer.
  */
 export function retryMessage(errors: string[], tree?: string): string {
-  const parts = ['Ta proposition a été rejetée :'];
+  const parts = ['Your proposal was rejected:'];
   for (const error of errors) parts.push(`- ${error}`);
-  parts.push('', 'Corrige et propose à nouveau.');
-  if (tree !== undefined) parts.push('', 'Écran courant :', '', tree);
+  parts.push('', 'Fix it and propose again.');
+  if (tree !== undefined) parts.push('', 'Current screen:', '', tree);
   return parts.join('\n');
 }
 
@@ -104,18 +102,18 @@ export function checksMessage(input: {
   captures: Record<string, string>;
   availableCaptures: Record<string, string>;
 }): string {
-  const parts = ['Les actions ont été exécutées. Voici l\'écran obtenu :', '', input.tree, ''];
+  const parts = ['The actions have been executed. Here is the resulting screen:', '', input.tree, ''];
 
   if (Object.keys(input.captures).length > 0) {
-    parts.push('Captures à produire depuis cet écran :', ...captureLines(input.captures));
+    parts.push('Captures to produce from this screen:', ...captureLines(input.captures));
   }
   if (input.expectations.length > 0) {
-    parts.push('', 'Assertions à traduire, vraies sur cet écran :');
+    parts.push('', 'Assertions to translate, true on this screen:');
     for (const expectation of input.expectations) parts.push(`- ${expectation}`);
   }
   const available = Object.entries(input.availableCaptures);
   if (available.length > 0) {
-    parts.push('', 'Captures disponibles :');
+    parts.push('', 'Available captures:');
     for (const [name, value] of available) parts.push(`- {{${name}}} = ${value}`);
   }
   return parts.join('\n');

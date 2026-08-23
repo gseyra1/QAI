@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { loadConfig } from './config.ts';
 
-describe('fichier de configuration', () => {
+describe('configuration file', () => {
   let dir: string;
 
   before(async () => {
@@ -16,7 +16,7 @@ describe('fichier de configuration', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('résout les chemins relativement au fichier, pas au répertoire courant', async () => {
+  it('resolves paths relative to the file, not the current directory', async () => {
     const path = join(dir, 'qai.config.json');
     await writeFile(
       path,
@@ -30,14 +30,14 @@ describe('fichier de configuration', () => {
     assert.deepEqual(config.scenarios, [resolve(dir, 'qa/')]);
   });
 
-  it('accepte un scénario unique comme chaîne', async () => {
+  it('accepts a single scenario as a string', async () => {
     const path = join(dir, 'un.json');
     await writeFile(path, JSON.stringify({ scenarios: 'qa/login.qai.yaml' }));
     const { config } = await loadConfig(path);
     assert.equal(config.scenarios?.length, 1);
   });
 
-  it('ignore les champs de type inattendu plutôt que de les propager', async () => {
+  it('ignores fields of unexpected type instead of propagating them', async () => {
     const path = join(dir, 'types.json');
     await writeFile(path, JSON.stringify({ workers: 'quatre', baseUrl: 42, strict: true }));
     const { config } = await loadConfig(path);
@@ -51,18 +51,18 @@ describe('fichier de configuration', () => {
    * Un fichier présent mais invalide doit crier. Le passer sous silence ferait
    * tourner la suite avec des réglages que personne n'a voulus.
    */
-  it('refuse un JSON malformé au lieu de l\'ignorer', async () => {
+  it('rejects malformed JSON instead of ignoring it', async () => {
     const path = join(dir, 'casse.json');
     await writeFile(path, '{ ceci nest pas du json');
     await assert.rejects(() => loadConfig(path), /casse\.json/);
   });
 
-  it('rend une configuration vide quand il n\'y a pas de fichier', async () => {
+  it('returns an empty configuration when there is no file', async () => {
     const { config, path } = await loadConfig(join(dir, 'absent.json')).catch(() => ({
       config: null,
       path: null,
     }));
-    assert.equal(config, null, 'un chemin explicite absent doit lever, pas rendre du vide');
+    assert.equal(config, null, 'a missing explicit path must throw, not return an empty config');
     assert.equal(path, null);
   });
 });

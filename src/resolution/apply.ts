@@ -29,7 +29,7 @@ export function applyHeals(
 
     const previous = step.healNote;
     const note = heal.degraded
-      ? `${heal.note} (ciblage sémantique perdu : seul le repli technique fonctionne)`
+      ? `${heal.note} (semantic targeting lost: only the technical fallback works)`
       : heal.note;
 
     steps[heal.stepId] = {

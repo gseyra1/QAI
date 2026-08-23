@@ -19,14 +19,13 @@ the model in the vocabulary it just used.
 Each step goes through two verification phases.
 
 **Phase A — actions, before acting.** Every proposed target goes through
-`driver.resolve()`. Three possible refusals, each with its message (runtime
-messages are in French today):
+`driver.resolve()`. Three possible refusals, each with its message:
 
 | Refusal | What the model gets back |
 |---|---|
-| No match | « aucun élément ne correspond à cette cible » |
-| Multiple matches | « cible ambiguë, N éléments — précise avec `within` ou `nth` » |
-| Only the technical fallback worked | « le ciblage sémantique est faux » |
+| No match | "no element matches this target" |
+| Multiple matches | "ambiguous target, N elements match — disambiguate with `within` or `nth`" |
+| Only the technical fallback worked | "the semantic targeting is wrong" |
 
 The last one matters: a target that only works through its `data-testid` is not
 portable to mobile. It is refused at resolving time rather than discovered in
