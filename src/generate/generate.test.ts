@@ -40,7 +40,7 @@ class ReplayProvider implements ModelProvider {
   }
 
   #stepIdFor(text: string): string | null {
-    const match = /^Intention : (.+)$/m.exec(text);
+    const match = /^Intent: (.+)$/m.exec(text);
     if (match === null) return null;
     const intent = match[1] ?? '';
     const step = this.#scenario.steps.find(
@@ -154,7 +154,7 @@ describe('génération de résolution', () => {
     const rejections = result.steps.flatMap((step) => step.rejections);
     assert.ok(rejections.length >= 9);
     assert.ok(
-      rejections.every((reason) => /aucun élément ne correspond/.test(reason)),
+      rejections.every((reason) => /no element matches/.test(reason)),
       `motifs inattendus : ${rejections.join(' | ')}`,
     );
     assert.ok(result.steps.every((step) => step.attempts >= 2));

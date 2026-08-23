@@ -14,9 +14,9 @@ export interface MarkdownOptions {
 }
 
 const HEADLINE = {
-  passed: '✅ QAI — tout est vert',
-  healed: '🟠 QAI — réparé, à relire',
-  failed: '❌ QAI — régression détectée',
+  passed: '✅ QAI — all green',
+  healed: '🟠 QAI — healed, needs review',
+  failed: '❌ QAI — regression detected',
 } as const;
 
 const MARK = { passed: '✅', healed: '🟠', failed: '❌', skipped: '⊘' } as const;
@@ -32,14 +32,14 @@ function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
   for (const failure of step.failures) {
     lines.push(`  - \`${failure.assertion}\` → ${failure.reason}`);
   }
-  for (const note of step.healNotes ?? []) lines.push(`  - réparé : ${note}`);
+  for (const note of step.healNotes ?? []) lines.push(`  - healed: ${note}`);
   for (const warning of step.warnings ?? []) lines.push(`  - ⚠️ ${warning}`);
 
   if (step.screenshot !== undefined) {
     lines.push(
       options.runUrl === undefined
-        ? `  - capture : \`${step.screenshot}\``
-        : `  - [capture de l'écran au moment de l'échec](${options.runUrl}) (\`${step.screenshot}\`)`,
+        ? `  - screenshot: \`${step.screenshot}\``
+        : `  - [screenshot at the moment of failure](${options.runUrl}) (\`${step.screenshot}\`)`,
     );
   }
   return lines;
@@ -57,25 +57,25 @@ export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {
     COMMENT_MARKER,
     `## ${HEADLINE[report.status]}`,
     '',
-    `${report.entries.length} parcours en ${seconds(report.durationMs)}.`,
+    `${report.entries.length} journey(s) in ${seconds(report.durationMs)}.`,
     '',
-    '| | Parcours | Résultat | Durée |',
+    '| | Journey | Result | Duration |',
     '|:-:|---|---|---:|',
   ];
 
   for (const entry of report.entries) {
     if (entry.report === null) {
-      lines.push(`| ❌ | \`${entry.scenarioId}\` | erreur d'exécution | — |`);
+      lines.push(`| ❌ | \`${entry.scenarioId}\` | execution error | — |`);
       continue;
     }
     const { status, durationMs } = entry.report;
-    const label = status === 'passed' ? 'réussi' : status === 'healed' ? 'réparé' : 'échec';
+    const label = status === 'passed' ? 'passed' : status === 'healed' ? 'healed' : 'failed';
     lines.push(`| ${MARK[status]} | \`${entry.scenarioId}\` | ${label} | ${seconds(durationMs)} |`);
   }
 
   for (const entry of report.entries) {
     if (entry.report === null) {
-      lines.push('', `### \`${entry.scenarioId}\``, '', entry.error ?? 'échec inconnu');
+      lines.push('', `### \`${entry.scenarioId}\``, '', entry.error ?? 'unknown failure');
       continue;
     }
     if (entry.report.status === 'passed') continue;
@@ -92,16 +92,16 @@ export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {
 
   if (report.status === 'failed') {
     lines.push(
-      '> Aucune réparation n\'a été appliquée sur un échec d\'assertion : c\'est une régression de l\'application, pas un test périmé.',
+      '> No repair was applied on an assertion failure: it is an application regression, not a stale test.',
     );
   }
   if (heals > 0) {
     lines.push(
-      `> ${heals} réparation(s) écrite(s) dans \`.qai/resolutions/\` — **relire le diff avant de fusionner**.`,
+      `> ${heals} repair(s) written to \`.qai/resolutions/\` — **review the diff before merging**.`,
     );
   }
   if (options.runUrl !== undefined && options.artifactName !== undefined) {
-    lines.push('', `Captures d'écran : artefact \`${options.artifactName}\` de [l'exécution](${options.runUrl}).`);
+    lines.push('', `Screenshots: artifact \`${options.artifactName}\` from [the run](${options.runUrl}).`);
   }
 
   return `${lines.join('\n')}\n`;

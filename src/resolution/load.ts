@@ -22,32 +22,32 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   try {
     doc = JSON.parse(raw);
   } catch (error) {
-    throw new ResolutionError(error instanceof Error ? error.message : 'JSON illisible', path);
+    throw new ResolutionError(error instanceof Error ? error.message : 'unreadable JSON', path);
   }
 
-  if (!isRecord(doc)) throw new ResolutionError('le document n\'est pas un objet', path);
+  if (!isRecord(doc)) throw new ResolutionError('the document is not an object', path);
 
   const scenario = doc['scenario'];
   const platform = doc['platform'];
   const recordedAt = doc['recordedAt'];
   const steps = doc['steps'];
 
-  if (typeof scenario !== 'string') throw new ResolutionError('champ scenario manquant', path);
-  if (typeof platform !== 'string') throw new ResolutionError('champ platform manquant', path);
+  if (typeof scenario !== 'string') throw new ResolutionError('missing scenario field', path);
+  if (typeof platform !== 'string') throw new ResolutionError('missing platform field', path);
   if (!PLATFORMS.has(platform)) {
     throw new ResolutionError(
-      `plateforme inconnue « ${platform} » (attendu : ${[...PLATFORMS].join(', ')})`,
+      `unknown platform "${platform}" (expected: ${[...PLATFORMS].join(', ')})`,
       path,
     );
   }
-  if (typeof recordedAt !== 'string') throw new ResolutionError('champ recordedAt manquant', path);
-  if (!isRecord(steps)) throw new ResolutionError('champ steps manquant', path);
+  if (typeof recordedAt !== 'string') throw new ResolutionError('missing recordedAt field', path);
+  if (!isRecord(steps)) throw new ResolutionError('missing steps field', path);
 
   const parsed: Record<string, StepResolution> = {};
   for (const [stepId, value] of Object.entries(steps)) {
-    if (!isRecord(value)) throw new ResolutionError(`étape ${stepId} mal formée`, path);
+    if (!isRecord(value)) throw new ResolutionError(`step ${stepId} is malformed`, path);
     if (!Array.isArray(value['actions'])) {
-      throw new ResolutionError(`étape ${stepId} : champ actions manquant`, path);
+      throw new ResolutionError(`step ${stepId}: missing actions field`, path);
     }
     parsed[stepId] = value as unknown as StepResolution;
   }

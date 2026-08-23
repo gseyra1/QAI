@@ -30,7 +30,7 @@ export default {
 npm run qai -- run qa/ --base-url $URL --states ./qa/states.ts
 ```
 
-Start from [examples/states-exemple.ts](../examples/states-exemple.ts).
+Start from [examples/states-example.ts](../examples/states-example.ts).
 
 ## What you can return
 

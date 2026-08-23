@@ -202,7 +202,7 @@ describe('PlaywrightWebDriver', () => {
     assert.equal(driver.capabilities.swipe, false);
     await assert.rejects(
       () => driver.act({ kind: 'swipe', direction: 'up' }),
-      (error: unknown) => error instanceof Error && error.message.includes('glissement'),
+      (error: unknown) => error instanceof Error && error.message.includes('swipe'),
     );
   });
   /**

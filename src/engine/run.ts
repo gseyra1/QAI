@@ -127,15 +127,15 @@ function describeTarget(target: ResolvedTarget): string {
   const { name, role } = target.primary;
   if (typeof name === 'string') return name;
   if (name !== undefined) return name.contains;
-  return role ?? 'la cible';
+  return role ?? 'the target';
 }
 
 function describeOutcome(outcome: Extract<ResolveOutcome, { found: false }>): string {
   if (outcome.reason === 'ambiguous') {
-    return `cible ambiguë : ${outcome.matches} éléments correspondent, le cache doit être régénéré`;
+    return `ambiguous target: ${outcome.matches} elements match, the cache must be regenerated`;
   }
-  if (outcome.reason === 'not-visible') return 'cible trouvée mais non visible';
-  return 'cible introuvable';
+  if (outcome.reason === 'not-visible') return 'target found but not visible';
+  return 'target not found';
 }
 
 type ActionsOutcome =
@@ -158,7 +158,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
 
   for (const [index, original] of actions.entries()) {
     if (!supports(driver, original)) {
-      return { ok: false, error: `action « ${original.kind} » non supportée sur ${driver.platform}` };
+      return { ok: false, error: `action "${original.kind}" not supported on ${driver.platform}` };
     }
 
     let action = original;
@@ -181,7 +181,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         if (context.healCount >= context.healBudget) {
           return {
             ok: false,
-            error: `${failure} — budget de réparation épuisé (${context.healBudget})`,
+            error: `${failure} — heal budget exhausted (${context.healBudget})`,
           };
         }
 
@@ -196,7 +196,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         });
 
         if (!healed.healed) {
-          return { ok: false, error: `${failure} — réparation impossible : ${healed.reason}` };
+          return { ok: false, error: `${failure} — repair impossible: ${healed.reason}` };
         }
 
         action = withTarget(action, healed.target);
@@ -212,7 +212,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         // Trouvé mais inerte : c'est l'application qui est en cause, pas le
         // cache. Aucune réparation n'a de sens, et le message doit le dire
         // plutôt que de laisser remonter un délai d'attente du driver.
-        return { ok: false, error: `« ${describeTarget(target)} » est présent mais désactivé` };
+        return { ok: false, error: `"${describeTarget(target)}" is present but disabled` };
       } else if (outcome.usedFallback) {
         // Le ciblage sémantique est mort, seul le repli technique tient. Le
         // parcours fonctionne, donc échouer serait crier au loup — mais se
@@ -229,7 +229,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
                 outcome: { found: false, reason: 'no-match', matches: 0 },
                 snapshot: await driver.observe({ screenshot: true }),
               })
-            : { healed: false as const, reason: 'aucun réparateur disponible' };
+            : { healed: false as const, reason: 'no healer available' };
 
         if (restored.healed) {
           action = withTarget(action, restored.target);
@@ -243,7 +243,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
           context.healCount += 1;
         } else {
           warnings.push(
-            `« ${label} » n'a été atteint que par son repli technique : l'accessibilité de l'application s'est dégradée et ce ciblage ne survivra pas au portage mobile`,
+            `"${label}" was only reached through its technical fallback: the application's accessibility has degraded and this targeting will not survive the mobile port`,
           );
         }
       }
@@ -324,7 +324,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
 
     const cached = resolution.steps[step.id];
     if (cached === undefined) {
-      await fail('aucune résolution en cache pour cette étape');
+      await fail('no cached resolution for this step');
       continue;
     }
 
@@ -354,18 +354,18 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         try {
           const node = matchOne(root, interpolateLocator(spec.from, bag));
           if (node === null) {
-            captureErrors.push(`capture « ${name} » : cible introuvable ou ambiguë`);
+            captureErrors.push(`capture "${name}": target not found or ambiguous`);
             continue;
           }
           const value = extractValue(node, spec.extract);
           if (value === null) {
-            captureErrors.push(`capture « ${name} » : valeur illisible`);
+            captureErrors.push(`capture "${name}": unreadable value`);
             continue;
           }
           bag[name] = value;
         } catch (error) {
           captureErrors.push(
-            `capture « ${name} » : ${error instanceof Error ? error.message : String(error)}`,
+            `capture "${name}": ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
@@ -376,7 +376,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       for (const assertion of expectationsOf(step)) {
         const check = cached.assertions?.[assertion];
         if (check === undefined) {
-          failures.push({ assertion, reason: 'aucune forme machine en cache' });
+          failures.push({ assertion, reason: 'no machine form in cache' });
           continue;
         }
         try {
@@ -419,7 +419,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       failures,
       durationMs: Date.now() - stepStarted,
     };
-    if (captureErrors.length > 0) report.error = captureErrors.join(' ; ');
+    if (captureErrors.length > 0) report.error = captureErrors.join('; ');
     if (outcome.heals.length > 0) {
       report.healNotes = outcome.heals.map((heal) => heal.note);
       applied.push(...outcome.heals);

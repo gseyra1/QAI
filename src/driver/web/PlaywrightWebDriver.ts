@@ -63,7 +63,7 @@ export class PlaywrightWebDriver implements Driver {
 
   get #activePage(): Page {
     if (this.#page === null) {
-      throw new DriverError('launch() doit être appelé avant toute autre opération', 'not-launched');
+      throw new DriverError('launch() must be called before any other operation', 'not-launched');
     }
     return this.#page;
   }
@@ -138,7 +138,7 @@ export class PlaywrightWebDriver implements Driver {
 
     const root = await page.evaluate((opts: CollectOptions) => {
       const collect = (globalThis as PageGlobals).__qaiCollect;
-      if (collect === undefined) throw new Error('collecteur QAI absent de la page');
+      if (collect === undefined) throw new Error('QAI collector missing from the page');
       return collect(globalThis.document.body, opts);
     }, { interactiveOnly: options.interactiveOnly ?? false });
 
@@ -205,7 +205,7 @@ export class PlaywrightWebDriver implements Driver {
   async #describe(locator: PWLocator): Promise<UINode> {
     return locator.evaluate((el: Element, opts: CollectOptions) => {
       const collect = (globalThis as PageGlobals).__qaiCollect;
-      if (collect === undefined) throw new Error('collecteur QAI absent de la page');
+      if (collect === undefined) throw new Error('QAI collector missing from the page');
       return collect(el, opts);
     }, { interactiveOnly: false, maxDepth: 0 });
   }
@@ -214,7 +214,7 @@ export class PlaywrightWebDriver implements Driver {
     const { locator, matches } = await this.#pick(target);
     if (locator !== null) return locator;
     throw new DriverError(
-      matches > 1 ? `cible ambiguë : ${matches} éléments` : 'cible introuvable, y compris par le repli',
+      matches > 1 ? `ambiguous target: ${matches} elements` : 'target not found, even via the fallback',
       'unresolved',
     );
   }
@@ -230,7 +230,7 @@ export class PlaywrightWebDriver implements Driver {
         await page.keyboard.press(action.key);
         return;
       case 'swipe':
-        throw new DriverError("le glissement n'existe pas sur le driver web", 'unsupported');
+        throw new DriverError('swipe does not exist on the web driver', 'unsupported');
       case 'click':
         await (await this.#locatorFor(action.target)).click();
         return;

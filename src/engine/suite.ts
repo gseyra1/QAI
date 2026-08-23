@@ -52,7 +52,7 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       scenarioId: item.scenario.id,
       resolutionPath: item.resolutionPath,
       report: null,
-      error: 'le scénario déclare « given » : un StateProvider est requis (--states)',
+      error: 'the scenario declares "given": a StateProvider is required (--states)',
     };
   }
 

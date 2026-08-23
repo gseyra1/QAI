@@ -28,7 +28,7 @@ function assertNoBooleanKeys(raw: string, path: string): void {
     const key = match[1];
     if (key !== undefined && YAML_BOOLEAN_KEYS.has(key.toLowerCase())) {
       throw new ScenarioError(
-        `la clé "${key}" est interdite : YAML 1.1 la convertit en booléen. Utiliser per_platform.`,
+        `the key "${key}" is forbidden: YAML 1.1 converts it to a boolean. Use per_platform.`,
         path,
       );
     }
@@ -36,11 +36,11 @@ function assertNoBooleanKeys(raw: string, path: string): void {
 }
 
 function parseStep(value: unknown, index: number, path: string): Step {
-  if (!isRecord(value)) throw new ScenarioError(`l'étape ${index} n'est pas un objet`, path);
+  if (!isRecord(value)) throw new ScenarioError(`step ${index} is not an object`, path);
 
   const id = value['id'];
   if (typeof id !== 'string' || id.length === 0) {
-    throw new ScenarioError(`l'étape ${index} n'a pas d'identifiant`, path);
+    throw new ScenarioError(`step ${index} has no id`, path);
   }
 
   const step: Step = { id };
@@ -56,7 +56,7 @@ function parseStep(value: unknown, index: number, path: string): Step {
   if (isRecord(value['capture'])) step.capture = value['capture'] as Record<string, string>;
 
   if (step.do === undefined && step.per_platform === undefined) {
-    throw new ScenarioError(`l'étape "${id}" n'a ni do ni per_platform`, path);
+    throw new ScenarioError(`step "${id}" has neither do nor per_platform`, path);
   }
 
   return step;
@@ -66,16 +66,16 @@ export function parseScenario(raw: string, path = '<inline>'): Scenario {
   assertNoBooleanKeys(raw, path);
 
   const doc: unknown = parse(raw);
-  if (!isRecord(doc)) throw new ScenarioError('le document est vide ou mal formé', path);
+  if (!isRecord(doc)) throw new ScenarioError('the document is empty or malformed', path);
 
   const id = doc['id'];
   const title = doc['title'];
   const steps = doc['steps'];
 
-  if (typeof id !== 'string') throw new ScenarioError('id manquant', path);
-  if (typeof title !== 'string') throw new ScenarioError('title manquant', path);
+  if (typeof id !== 'string') throw new ScenarioError('missing id', path);
+  if (typeof title !== 'string') throw new ScenarioError('missing title', path);
   if (!Array.isArray(steps) || steps.length === 0) {
-    throw new ScenarioError('steps manquant ou vide', path);
+    throw new ScenarioError('missing or empty steps', path);
   }
 
   const parsed = steps.map((step, index) => parseStep(step, index, path));
@@ -84,7 +84,7 @@ export function parseScenario(raw: string, path = '<inline>'): Scenario {
   for (const step of parsed) {
     if (seen.has(step.id)) {
       throw new ScenarioError(
-        `identifiant d'étape dupliqué "${step.id}" — c'est l'ancre du cache de résolution`,
+        `duplicate step id "${step.id}" — it is the anchor of the resolution cache`,
         path,
       );
     }

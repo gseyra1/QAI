@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qai.dev/schema/scenario.schema.json",
-  "title": "Scénario QAI",
-  "description": "Décrit une intention utilisateur, indépendamment de la plateforme. Ne contient jamais de sélecteur, d'identifiant technique ni de coordonnée : ceux-ci vivent dans le fichier de résolution.",
+  "title": "QAI Scenario",
+  "description": "Describes a user intention, independently of the platform. Never contains a selector, a technical identifier, or a coordinate: those live in the resolution file.",
   "type": "object",
   "required": ["id", "title", "steps"],
   "additionalProperties": false,
@@ -10,36 +10,36 @@
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-      "description": "Identifiant stable du scénario. Ne doit jamais changer une fois attribué."
+      "description": "Stable identifier of the scenario. Must never change once assigned."
     },
     "title": {
       "type": "string",
       "minLength": 1,
-      "description": "Ce que le scénario prouve, formulé du point de vue de l'utilisateur."
+      "description": "What the scenario proves, phrased from the user's point of view."
     },
     "tags": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Sert au filtrage en CI (ex. critical-path pour le lot bloquant de pull request)."
+      "description": "Used for filtering in CI (e.g. critical-path for the blocking pull request batch)."
     },
     "platforms": {
       "type": "array",
       "items": { "$ref": "#/$defs/platform" },
-      "description": "Plateformes ciblées. Absent = toutes celles configurées pour le projet."
+      "description": "Targeted platforms. Absent = all those configured for the project."
     },
     "given": {
       "type": "object",
       "additionalProperties": false,
-      "description": "État de départ requis. Déclaré, jamais construit à coups de clics.",
+      "description": "Required starting state. Declared, never built click by click.",
       "properties": {
         "fixtures": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Jeux de données nommés, définis hors du scénario et résolus par environnement."
+          "description": "Named data sets, defined outside the scenario and resolved per environment."
         },
         "state": {
           "type": "string",
-          "description": "État applicatif nommé (ex. visiteur-anonyme, compte-premium)."
+          "description": "Named application state (e.g. anonymous-visitor, premium-account)."
         }
       }
     },
@@ -66,18 +66,18 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z0-9_-]+$",
-          "description": "Ancre stable à laquelle s'attache la résolution mise en cache. Attribué à la création, jamais modifié — y compris si le texte de l'étape est reformulé."
+          "description": "Stable anchor the cached resolution attaches to. Assigned at creation, never modified — even if the step's text is reworded."
         },
         "do": {
           "type": "string",
           "minLength": 1,
-          "description": "L'intention, en langage naturel, dans la langue de l'équipe. Aucun sélecteur."
+          "description": "The intention, in natural language, in the team's language. No selectors."
         },
         "per_platform": {
           "type": "object",
           "minProperties": 1,
           "additionalProperties": false,
-          "description": "Reformulation de l'intention pour une plateforme donnée, quand le geste diffère réellement. Exception à garder rare et visible. NE PAS renommer en 'on' : YAML 1.1 interprète cette clé comme le booléen true.",
+          "description": "Rewording of the intention for a given platform, when the gesture genuinely differs. An exception to keep rare and visible. Do NOT rename to 'on': YAML 1.1 interprets that key as the boolean true.",
           "properties": {
             "web": { "type": "string" },
             "mobile": { "type": "string" },
@@ -89,10 +89,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/platform" },
           "minItems": 1,
-          "description": "Restreint l'étape à certaines plateformes (ex. un survol n'existe pas sur mobile)."
+          "description": "Restricts the step to certain platforms (e.g. a hover does not exist on mobile)."
         },
         "expect": {
-          "description": "Assertion(s) sémantique(s). L'auto-réparation n'a jamais le droit de les modifier.",
+          "description": "Semantic assertion(s). Self-healing is never allowed to modify them.",
           "oneOf": [
             { "type": "string", "minLength": 1 },
             {
@@ -106,7 +106,7 @@
           "type": "object",
           "minProperties": 1,
           "additionalProperties": { "type": "string" },
-          "description": "Extrait des valeurs de l'écran, réutilisables plus loin via {{nom}}. Évite de figer des données de test dans les assertions.",
+          "description": "Extracts values from the screen, reusable later via {{name}}. Avoids freezing test data into assertions.",
           "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
         }
       }

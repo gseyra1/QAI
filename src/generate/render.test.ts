@@ -44,7 +44,7 @@ describe('messages de génération', () => {
       captures: { prix: 'le prix affiché' },
       availableCaptures: {},
     });
-    assert.match(message, /- prix : le prix affiché/);
+    assert.match(message, /- prix: le prix affiché/);
 
     const checks = checksMessage({
       tree: 'group',
@@ -52,6 +52,6 @@ describe('messages de génération', () => {
       captures: { commande: 'le numéro de commande' },
       availableCaptures: {},
     });
-    assert.match(checks, /- commande : le numéro de commande/);
+    assert.match(checks, /- commande: le numéro de commande/);
   });
 });

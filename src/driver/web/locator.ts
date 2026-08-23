@@ -66,7 +66,7 @@ export function buildLocator(page: Page, loc: Locator, applyNth = true): PWLocat
     // Un locator sans rôle ni nom ne désigne rien d'actionnable. Renvoyer un
     // repli silencieux ferait cliquer sur `body` ; mieux vaut refuser la
     // résolution et forcer la régénération du cache.
-    throw new Error('locator vide : ni rôle ni nom');
+    throw new Error('empty locator: neither role nor name');
   }
 
   if (applyNth && loc.nth !== undefined) built = built.nth(loc.nth);

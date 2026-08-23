@@ -88,14 +88,14 @@ describe('parseScenario', () => {
   it('rejette un identifiant d\'étape dupliqué', () => {
     assert.throws(
       () => parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    do: x\n  - id: s1\n    do: y\n'),
-      (error: unknown) => error instanceof ScenarioError && /dupliqué/.test(error.message),
+      (error: unknown) => error instanceof ScenarioError && /duplicate/.test(error.message),
     );
   });
 
   it('rejette une étape sans intention', () => {
     assert.throws(
       () => parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n'),
-      (error: unknown) => error instanceof ScenarioError && /ni do ni per_platform/.test(error.message),
+      (error: unknown) => error instanceof ScenarioError && /neither do nor per_platform/.test(error.message),
     );
   });
 });

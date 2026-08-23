@@ -6,8 +6,8 @@ import { COMMENT_MARKER, formatMarkdown } from './markdown.ts';
 
 function scenario(partial: Partial<ScenarioReport>): ScenarioReport {
   return {
-    scenarioId: 'parcours',
-    title: 'Un parcours',
+    scenarioId: 'journey',
+    title: 'A journey',
     platform: 'web',
     status: 'passed',
     steps: [],
@@ -24,13 +24,13 @@ function suite(entries: SuiteReport['entries'], status: SuiteReport['status']): 
   return { status, entries, durationMs: 2000 };
 }
 
-describe('rapport markdown', () => {
-  it('commence par le marqueur qui permet de mettre à jour le commentaire', () => {
+describe('markdown report', () => {
+  it('starts with the marker that lets the comment be updated', () => {
     const markdown = formatMarkdown(suite([], 'passed'));
-    assert.ok(markdown.startsWith(COMMENT_MARKER), 'sans marqueur, la CI empilerait un commentaire par exécution');
+    assert.ok(markdown.startsWith(COMMENT_MARKER), 'without the marker, CI would stack one comment per run');
   });
 
-  it('ne déroule pas le détail des parcours verts', () => {
+  it('does not expand the detail of green journeys', () => {
     const markdown = formatMarkdown(
       suite(
         [
@@ -39,7 +39,7 @@ describe('rapport markdown', () => {
             resolutionPath: 'r.json',
             report: scenario({
               steps: [
-                { stepId: 's1', intent: 'ouvrir', status: 'passed', failures: [], durationMs: 10 },
+                { stepId: 's1', intent: 'open', status: 'passed', failures: [], durationMs: 10 },
               ],
             }),
           },
@@ -49,11 +49,11 @@ describe('rapport markdown', () => {
     );
 
     assert.match(markdown, /✅ QAI/);
-    assert.match(markdown, /\| `checkout` \| réussi \|/);
-    assert.doesNotMatch(markdown, /### `checkout`/, 'un vert n\'a pas de section de détail');
+    assert.match(markdown, /\| `checkout` \| passed \|/);
+    assert.doesNotMatch(markdown, /### `checkout`/, 'a green journey has no detail section');
   });
 
-  it('détaille un échec, avec l\'assertion et la capture', () => {
+  it('details a failure, with the assertion and the screenshot', () => {
     const markdown = formatMarkdown(
       suite(
         [
@@ -65,9 +65,9 @@ describe('rapport markdown', () => {
               steps: [
                 {
                   stepId: 's8',
-                  intent: 'payer',
+                  intent: 'pay',
                   status: 'failed',
-                  failures: [{ assertion: 'la commande est confirmée', reason: 'aucun élément' }],
+                  failures: [{ assertion: 'the order is confirmed', reason: 'no element' }],
                   screenshot: 'checkout-s8.png',
                   durationMs: 40,
                 },
@@ -80,14 +80,14 @@ describe('rapport markdown', () => {
       { runUrl: 'https://ci.example/run/7', artifactName: 'qai-captures' },
     );
 
-    assert.match(markdown, /❌ QAI — régression détectée/);
+    assert.match(markdown, /❌ QAI — regression detected/);
     assert.match(markdown, /### `checkout`/);
-    assert.match(markdown, /`la commande est confirmée` → aucun élément/);
-    assert.match(markdown, /\[capture de l'écran[^\]]*\]\(https:\/\/ci\.example\/run\/7\)/);
-    assert.match(markdown, /régression de l'application, pas un test périmé/);
+    assert.match(markdown, /`the order is confirmed` → no element/);
+    assert.match(markdown, /\[screenshot at the moment of failure[^\]]*\]\(https:\/\/ci\.example\/run\/7\)/);
+    assert.match(markdown, /an application regression, not a stale test/);
   });
 
-  it('signale une réparation et invite à relire le diff', () => {
+  it('reports a repair and asks to review the diff', () => {
     const markdown = formatMarkdown(
       suite(
         [
@@ -100,10 +100,10 @@ describe('rapport markdown', () => {
               steps: [
                 {
                   stepId: 's6',
-                  intent: 'commander',
+                  intent: 'order',
                   status: 'healed',
                   failures: [],
-                  healNotes: ['Le libellé du bouton a changé.'],
+                  healNotes: ['The button label changed.'],
                   durationMs: 30,
                 },
               ],
@@ -114,20 +114,20 @@ describe('rapport markdown', () => {
       ),
     );
 
-    assert.match(markdown, /🟠 QAI — réparé/);
-    assert.match(markdown, /réparé : Le libellé du bouton a changé\./);
-    assert.match(markdown, /relire le diff avant de fusionner/);
+    assert.match(markdown, /🟠 QAI — healed/);
+    assert.match(markdown, /healed: The button label changed\./);
+    assert.match(markdown, /review the diff before merging/);
   });
 
-  it('rapporte une erreur d\'exécution sans rapport de parcours', () => {
+  it('reports an execution error without a journey report', () => {
     const markdown = formatMarkdown(
       suite(
-        [{ scenarioId: 'checkout', resolutionPath: 'r.json', report: null, error: 'navigateur injoignable' }],
+        [{ scenarioId: 'checkout', resolutionPath: 'r.json', report: null, error: 'browser unreachable' }],
         'failed',
       ),
     );
 
-    assert.match(markdown, /erreur d'exécution/);
-    assert.match(markdown, /navigateur injoignable/);
+    assert.match(markdown, /execution error/);
+    assert.match(markdown, /browser unreachable/);
   });
 });

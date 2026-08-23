@@ -24,37 +24,37 @@ async function qai(args: string[]): Promise<{ code: number; err: string }> {
   }
 }
 
-describe('validation des réglages numériques', () => {
+describe('numeric flag validation', () => {
   const refuses: [string, string[]][] = [
-    ['--workers non numérique', ['run', 'x.qai.yaml', '--workers', 'abc']],
-    ['--workers zéro', ['run', 'x.qai.yaml', '--workers', '0']],
-    ['--workers fractionnaire', ['run', 'x.qai.yaml', '--workers', '2.5']],
-    ['--max-cost non numérique', ['run', 'x.qai.yaml', '--max-cost', 'abc']],
-    ['--max-cost zéro', ['run', 'x.qai.yaml', '--max-cost', '0']],
-    ['--max-cost négatif', ['run', 'x.qai.yaml', '--max-cost=-1']],
-    ['--attempts zéro', ['resolve', 'x.qai.yaml', '--attempts', '0']],
-    ['--assert-timeout non numérique', ['run', 'x.qai.yaml', '--assert-timeout', 'abc']],
-    ['--assert-timeout négatif', ['run', 'x.qai.yaml', '--assert-timeout=-5']],
+    ['--workers non-numeric', ['run', 'x.qai.yaml', '--workers', 'abc']],
+    ['--workers zero', ['run', 'x.qai.yaml', '--workers', '0']],
+    ['--workers fractional', ['run', 'x.qai.yaml', '--workers', '2.5']],
+    ['--max-cost non-numeric', ['run', 'x.qai.yaml', '--max-cost', 'abc']],
+    ['--max-cost zero', ['run', 'x.qai.yaml', '--max-cost', '0']],
+    ['--max-cost negative', ['run', 'x.qai.yaml', '--max-cost=-1']],
+    ['--attempts zero', ['resolve', 'x.qai.yaml', '--attempts', '0']],
+    ['--assert-timeout non-numeric', ['run', 'x.qai.yaml', '--assert-timeout', 'abc']],
+    ['--assert-timeout negative', ['run', 'x.qai.yaml', '--assert-timeout=-5']],
     // Number('') vaut 0 : une variable de CI non définie désactiverait la
     // fenêtre en silence.
-    ['--assert-timeout vide', ['run', 'x.qai.yaml', '--assert-timeout', '']],
-    ['--workers blanc', ['run', 'x.qai.yaml', '--workers', '  ']],
+    ['--assert-timeout empty', ['run', 'x.qai.yaml', '--assert-timeout', '']],
+    ['--workers blank', ['run', 'x.qai.yaml', '--workers', '  ']],
   ];
 
   for (const [nom, argv] of refuses) {
-    it(`refuse ${nom}`, async () => {
+    it(`rejects ${nom}`, async () => {
       const { code, err } = await qai(argv);
       assert.equal(code, 1);
-      assert.match(err, /exige/, 'le message doit nommer l’exigence');
+      assert.match(err, /requires/, 'the message must name the requirement');
     });
   }
 
-  it('accepte --assert-timeout 0 (fenêtre désactivée)', async () => {
+  it('accepts --assert-timeout 0 (window disabled)', async () => {
     // « schema » ne contient aucun scénario : l'échec attendu est « aucun
     // scénario trouvé », pas un refus de validation.
     const { code, err } = await qai(['run', 'schema', '--assert-timeout', '0']);
     assert.equal(code, 1);
-    assert.doesNotMatch(err, /exige/);
-    assert.match(err, /aucun scénario/);
+    assert.doesNotMatch(err, /requires/);
+    assert.match(err, /no scenarios/);
   });
 });

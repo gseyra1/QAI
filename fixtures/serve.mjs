@@ -19,6 +19,6 @@ createServer((_request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   response.end(page);
 }).listen(Number(values.port), '127.0.0.1', () => {
-  const state = values.bug === undefined ? 'saine' : `avec la régression « ${values.bug} »`;
-  process.stdout.write(`Boutique de démonstration ${state} : http://127.0.0.1:${values.port}/\n`);
+  const state = values.bug === undefined ? 'healthy' : `with regression "${values.bug}"`;
+  process.stdout.write(`Demo shop ${state}: http://127.0.0.1:${values.port}/\n`);
 });
