@@ -204,4 +204,75 @@ describe('evaluateCheck', () => {
 
     assert.deepEqual(evaluateCheck(check, { root: ecran, location: 'http://app.test/', bag: {} }), { ok: true });
   });
+
+  it('ne recopie pas un secret non numérique dans le message de format', () => {
+    // `numberEquals` construisait ses deux messages avec la valeur résolue au
+    // lieu de `shown`. Comparer un secret non numérique le recopiait donc en
+    // clair dans le rapport — c'est-à-dire dans les journaux d'une CI, qui
+    // sont archivés et souvent lisibles par toute l'organisation.
+    process.env['QAI_TEST_SECRET'] = 'hunter2';
+    try {
+      const ecran = node('group', 'page', [node('text', 'gratuit')]);
+      const result = evaluateCheck(
+        { check: 'numberEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      const reason = result.ok === false ? result.reason : '';
+      assert.doesNotMatch(reason, /hunter2/);
+      assert.match(reason, /non-numeric value: "gratuit" vs "\*\*\*"/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('ne le recopie pas non plus par le message d\'inégalité', () => {
+    // Un code à quatre chiffres passe `toNumber` : il ne sort pas par le
+    // message de format mais par l'autre, celui qui compare les deux nombres.
+    // Masquer un seul des deux chemins ne ferme que la moitié de la fuite.
+    process.env['QAI_TEST_SECRET'] = '4242';
+    try {
+      const ecran = node('group', 'page', [node('text', '7')]);
+      const result = evaluateCheck(
+        { check: 'numberEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      const reason = result.ok === false ? result.reason : '';
+      assert.doesNotMatch(reason, /4242/);
+      assert.match(reason, /expected \*\*\*, observed 7/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('masque le secret même quand c\'est la page qui le renvoie', () => {
+    // `shown` ne protège que la valeur attendue. Quand l'application réaffiche
+    // ce qui a été saisi, le secret arrive par `observed`, qu'aucune branche
+    // ne masque : seul le filet posé à la sortie de `evaluateCheck` l'attrape.
+    process.env['QAI_TEST_SECRET'] = 'hunter2';
+    try {
+      const ecran = node('group', 'page', [node('text', 'Mot de passe : hunter2')]);
+      const result = evaluateCheck(
+        { check: 'textEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      assert.doesNotMatch(result.ok === false ? result.reason : '', /hunter2/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('laisse le message intact quand la valeur ne vient pas de l\'environnement', () => {
+    // Le filet ne doit pas dégrader le diagnostic ordinaire : sans secret, le
+    // message garde la valeur attendue, qui est ce qui rend l'échec lisible.
+    const ecran = node('group', 'page', [node('text', '7')]);
+    const result = evaluateCheck(
+      { check: 'numberEquals', target: { role: 'text' }, value: '42' },
+      on(ecran),
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.ok === false ? result.reason : '', /expected 42, observed 7/);
+  });
 });

@@ -182,7 +182,43 @@ function allowed(text: string, patterns: readonly string[] | undefined): boolean
   return patterns?.some((pattern) => text.includes(pattern)) === true;
 }
 
+/**
+ * Les valeurs venues de l'environnement, résolues, pour le filet de sécurité.
+ *
+ * `countAtLeast` porte un nombre et `stateIs` un littéral : seule une valeur
+ * de type chaîne peut contenir un gabarit, d'où le test de type plutôt qu'une
+ * confiance dans la déclaration.
+ */
+function envSecrets(check: Check, bag: Readonly<Record<string, string>>): string[] {
+  const template: unknown = (check as { value?: unknown }).value;
+  if (typeof template !== 'string' || !usesEnv(template)) return [];
+  try {
+    return [interpolate(template, bag)];
+  } catch {
+    // Une variable absente n'a aucune valeur à masquer. L'échec est signalé
+    // ailleurs, par le nom de la variable — qui n'est pas le secret.
+    return [];
+  }
+}
+
+/**
+ * Masque, à l'unique sortie, ce qu'une branche aurait laissé passer.
+ *
+ * Chaque vérification calcule déjà son propre `shown`, mais ce masquage est à
+ * refaire à la main dans chaque nouvelle branche — et `numberEquals` l'avait
+ * oublié dans ses deux messages, ce qui recopiait un secret en clair dans un
+ * rapport, donc dans les journaux d'une CI. Corriger la branche ne corrige que
+ * cette branche ; le filet, lui, retire la classe entière du bug : une
+ * vérification future qui oublie `shown` ne peut plus rien divulguer.
+ */
 export function evaluateCheck(check: Check, context: CheckContext): CheckResult {
+  const result = evaluate(check, context);
+  if (result.ok) return result;
+  const secrets = envSecrets(check, context.bag);
+  return secrets.length === 0 ? result : { ok: false, reason: redact(result.reason, secrets) };
+}
+
+function evaluate(check: Check, context: CheckContext): CheckResult {
   const { root, bag } = context;
 
   /**
@@ -269,7 +305,8 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
   const expected = interpolate(check.value, bag);
   // Ce qui vient de l'environnement est un secret par hypothèse, et un rapport
   // d'échec finit dans les journaux d'une CI.
-  const shown = usesEnv(check.value) ? '***' : expected;
+  const secret = usesEnv(check.value);
+  const shown = secret ? '***' : expected;
 
   if (check.check === 'textContains') {
     return matched.some((node) => textOf(node).includes(expected))
@@ -288,9 +325,12 @@ export function evaluateCheck(check: Check, context: CheckContext): CheckResult 
   const left = toNumber(observed);
   const right = toNumber(expected);
   if (left === null || right === null) {
-    return { ok: false, reason: `non-numeric value: "${observed}" vs "${expected}"` };
+    return { ok: false, reason: `non-numeric value: "${observed}" vs "${shown}"` };
   }
+  // `right` est la valeur attendue reconvertie : la masquer aussi, sans quoi un
+  // secret qui se trouve être numérique — un code, un matricule — ressortirait
+  // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${right}, observed ${left}` };
+    : { ok: false, reason: `expected ${secret ? '***' : right}, observed ${left}` };
 }
