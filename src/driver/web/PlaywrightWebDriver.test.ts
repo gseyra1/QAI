@@ -38,6 +38,7 @@ const FIXTURE = `<!doctype html>
     <button id="casser">Charger la liste</button>
     <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
     <p data-testid="depose">aucun fichier</p>
+    <div id="explication">Le code Massar est requis</div>
   </main>
   <p id="salut"></p>
   <script>
@@ -142,6 +143,21 @@ describe('PlaywrightWebDriver', () => {
     const snapshot = await driver.observe();
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Fantôme').length, 0);
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Bouton masqué').length, 0);
+  });
+
+  /**
+   * Le texte écrit dans un `div` était invisible : `group` n'est pas un rôle
+   * dont accname déduit le nom, donc le nœud sortait avec un nom vide. C'est
+   * le rendu par défaut de la plupart des bibliothèques de composants — antd y
+   * met ses messages de validation, ce qui rendait « le formulaire refuse une
+   * saisie vide » inexprimable.
+   */
+  it('voit le texte porté par un conteneur générique', async () => {
+    const snapshot = await driver.observe();
+    const trouve = findAll(snapshot.root, (n) => n.name === 'Le code Massar est requis');
+
+    assert.equal(trouve.length, 1);
+    assert.equal(trouve[0]?.role, 'text');
   });
 
   it('remonte l\'identifiant de test des éléments qui en portent un', async () => {

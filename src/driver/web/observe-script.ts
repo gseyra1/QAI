@@ -88,6 +88,32 @@ export function collectTree(
     if (tag === 'P' || tag === 'SPAN' || tag === 'LABEL' || tag === 'STRONG' || tag === 'EM') {
       return 'text';
     }
+
+    /**
+     * Un conteneur générique qui ne contient QUE du texte est une feuille de
+     * texte, pas un groupe.
+     *
+     * Sans cette règle, tout texte écrit dans un `div` est invisible :
+     * `group` n'est pas un rôle dont accname déduit le nom, donc le nœud sort
+     * de l'observation avec un nom vide et le texte disparaît de l'arbre. Or
+     * c'est le rendu par défaut d'à peu près toutes les bibliothèques de
+     * composants — antd y met ses messages de validation de formulaire, ce
+     * qui rend « le formulaire refuse une saisie vide » inexprimable.
+     *
+     * La règle est délibérément étroite : uniquement une feuille (aucun enfant
+     * élément), et uniquement sans nom déclaré. Un `div` portant `aria-label`
+     * ou un `role` explicite garde son rôle, donc aucun ciblage existant ne
+     * change de sens.
+     */
+    if (
+      el.children.length === 0 &&
+      !el.hasAttribute('aria-label') &&
+      !el.hasAttribute('aria-labelledby') &&
+      (el.textContent ?? '').trim() !== ''
+    ) {
+      return 'text';
+    }
+
     return 'group';
   }
 
