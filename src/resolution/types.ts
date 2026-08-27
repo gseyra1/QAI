@@ -70,8 +70,16 @@ export interface StepResolution {
  * existantes. Le numéro ne monte que lorsque l'observation change — un arbre
  * enrichi peut rendre un locator enregistré ambigu, et il vaut mieux le dire
  * qu'échouer six étapes plus loin.
+ *
+ * **v2** : les deux commits qui précèdent élargissent les noms observés. Le
+ * texte d'un conteneur générique entre dans l'arbre, et le libellé d'une icône
+ * contribue au nom de son bouton. Une résolution v1 verte peut donc devenir
+ * rouge sans que l'application ait bougé — « Total » qui n'apparaissait qu'une
+ * fois peut désormais apparaître deux, et `button "Élèves"` s'appelle
+ * maintenant `button "team Élèves"`. Le numéro est là pour que ce soit dit,
+ * plutôt que découvert.
  */
-export const RESOLUTION_VERSION = 1;
+export const RESOLUTION_VERSION = 2;
 
 export interface Resolution {
   /** Absent dans les fichiers d'avant l'introduction du champ : vaut 1. */

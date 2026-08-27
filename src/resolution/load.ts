@@ -45,9 +45,12 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   if (!isRecord(steps)) throw new ResolutionError('missing steps field', path);
 
   // Champ absent = 1 : les fichiers écrits avant l'introduction du champ
-  // doivent continuer à se charger tels quels.
+  // doivent continuer à se charger tels quels. Le littéral est délibéré —
+  // prendre `RESOLUTION_VERSION` ferait passer tout ancien fichier pour la
+  // version courante, donc le mécanisme se tairait exactement le jour où le
+  // format change, c'est-à-dire le seul jour où il sert.
   const rawVersion = doc['version'];
-  let version = RESOLUTION_VERSION;
+  let version = 1;
   if (rawVersion !== undefined) {
     if (typeof rawVersion !== 'number' || !Number.isInteger(rawVersion) || rawVersion < 1) {
       throw new ResolutionError('invalid version field (expected an integer ≥ 1)', path);

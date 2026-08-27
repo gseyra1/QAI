@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { after, before, describe, it } from 'node:test';
+import { RESOLUTION_VERSION } from './resolution/types.ts';
 
 const run = promisify(execFile);
 
@@ -95,7 +96,10 @@ describe('the packaged binary', () => {
     for (const name of expected) {
       assert.equal(typeof api[name], 'function', `${name} is not exported as a value`);
     }
-    assert.equal(api['RESOLUTION_VERSION'], 1);
+    // Comparé à la source, pas à un littéral : ce que ce test doit prouver,
+    // c'est que le bundle expose bien la constante — pas sa valeur du jour,
+    // qui obligerait à retoucher ce fichier à chaque changement de format.
+    assert.equal(api['RESOLUTION_VERSION'], RESOLUTION_VERSION);
     assert.equal(typeof api['COMMENT_MARKER'], 'string');
   });
 });
