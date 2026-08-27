@@ -98,6 +98,13 @@ The default is `off` on both. This is not timidity: setting them straight to
 errors. The climb happens in two steps — `warn`, then `fail` once the known
 noise is written into `allow`.
 
+A `warn` does not change the verdict, which is the whole point — so it only
+ever lands on a step that stayed green. Every format shows it there: the text
+report expands that one step and stops printing `All green.`, the pull request
+comment gives the journey a section and titles itself *green, with warnings*,
+and JUnit emits a `<system-err>`. A level nobody can see is a level nobody can
+act on, and the climb would never happen.
+
 `allow` exists for the same reason: a noisy third-party integration must not
 teach the team to switch the watchdog off, which would cost more than never
 having set it.

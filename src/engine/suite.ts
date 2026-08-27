@@ -47,6 +47,24 @@ export interface SuiteReport {
   durationMs: number;
 }
 
+/**
+ * Combien d'avertissements la suite a produits, toutes étapes confondues.
+ *
+ * Un avertissement ne change pas le statut — c'est ce qui distingue `warn` de
+ * `fail` — donc un parcours entièrement vert peut en porter plusieurs. Compter
+ * ici plutôt que dans chaque format évite ce qui vient de se produire : JUnit
+ * les rendait, le texte et le markdown les taisaient, et le niveau `warn`
+ * n'était donc observable que par la moitié des sorties.
+ */
+export function warningCount(report: SuiteReport): number {
+  return report.entries.reduce(
+    (total, entry) =>
+      total +
+      (entry.report?.steps ?? []).reduce((count, step) => count + (step.warnings?.length ?? 0), 0),
+    0,
+  );
+}
+
 async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
   // Rejouer sans l'état déclaré ferait démarrer le parcours anonyme et le
   // verdict ne prouverait rien — vert compris. Le refus doit être explicite,

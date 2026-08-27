@@ -1,4 +1,5 @@
 import type { SuiteReport } from '../engine/suite.ts';
+import { warningCount } from '../engine/suite.ts';
 import type { ScenarioReport, StepReport, StepStatus } from '../engine/run.ts';
 import type { ConsistencyIssue } from '../engine/consistency.ts';
 import { formatIssue } from '../engine/consistency.ts';
@@ -101,7 +102,15 @@ export function formatSuite(report: SuiteReport): string {
     );
 
     for (const step of steps) {
-      if (step.status === 'passed' || step.status === 'skipped') continue;
+      /**
+       * Une étape verte qui porte un avertissement n'entre pas dans « rien à
+       * faire » : c'est tout ce que le niveau `warn` des sentinelles produit,
+       * puisqu'il ne change pas le statut. La taire rendait la montée
+       * `warn` → `fail` impraticable — on ne jauge pas ce qu'on ne voit pas —
+       * et forçait à passer en `--format json` pour lire sa propre CI.
+       */
+      const silencieuse = (step.warnings ?? []).length === 0;
+      if (silencieuse && (step.status === 'passed' || step.status === 'skipped')) continue;
       // Décalées d'un cran : une étape ne doit pas se lire comme un parcours.
       lines.push(...formatStep(step).map((line) => `  ${line}`));
     }
@@ -111,11 +120,18 @@ export function formatSuite(report: SuiteReport): string {
     (entry) => entry.error !== undefined || entry.report?.status === 'failed',
   ).length;
   const heals = report.entries.reduce((total, entry) => total + (entry.report?.healCount ?? 0), 0);
+  const warnings = warningCount(report);
 
   lines.push('');
   if (failures > 0) lines.push(`${failures} journey(s) failed.`);
   if (heals > 0) lines.push(`${heals} repair(s): review the resolution diffs before merging.`);
-  if (failures === 0 && heals === 0) lines.push('All green.');
+  if (warnings > 0) {
+    lines.push(`${warnings} warning(s): a watchdog set to "warn" reports without failing.`);
+  }
+  // « All green » ne doit pas couvrir un avertissement : annoncer le vert
+  // complet sur une exécution qui en porte est précisément ce qui rend le
+  // palier `warn` inutile.
+  if (failures === 0 && heals === 0 && warnings === 0) lines.push('All green.');
 
   return lines.join('\n');
 }
