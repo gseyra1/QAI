@@ -268,6 +268,9 @@ export async function main(argv: string[]): Promise<number> {
           scenario,
           driver,
           provider,
+          // Même base qu'au rejeu, sans quoi un chemin de fixture écrit ici ne
+          // désigne pas le même fichier là-bas.
+          baseDir: dirname(path),
           ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });
 

@@ -554,6 +554,30 @@ describe('runScenario', () => {
     );
   });
 
+  it('arrête l\'étape plutôt que de téléverser un fichier hors du scénario', async () => {
+    // Les actions ne sont pas toutes écrites à la main : elles sortent d'un
+    // modèle qui lit l'écran, et un écran est une entrée non fiable. Un chemin
+    // qui sort du dossier doit donc échouer en le disant, et surtout ne rien
+    // envoyer — le fichier partirait vers l'application testée.
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      baseDir: join('qa', 'fixtures'),
+      scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
+      resolution: resolution({
+        s1: {
+          actions: [
+            { kind: 'upload', target: CLICK, files: ['../../../.ssh/id_rsa'] },
+          ],
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /outside the scenario directory/);
+    assert.deepEqual(driver.acted, [], 'rien ne doit partir vers l\'application');
+  });
+
   /**
    * Une assertion prouve ce que l'écran affiche ; ces vérifications disent ce
    * que l'application a fait pour l'afficher. Un écran vide parce qu'un appel

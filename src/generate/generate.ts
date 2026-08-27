@@ -1,5 +1,6 @@
 import type { Action, Driver, Locator, UINode } from '../driver/types.ts';
 import { evaluateCheck, extractValue, interpolate, interpolateLocator } from '../engine/assert.ts';
+import { resolveUpload } from '../engine/files.ts';
 import { matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
@@ -17,6 +18,15 @@ export interface GenerateInput {
   provider: ModelProvider;
   /** Tentatives par phase avant d'abandonner l'étape. */
   attemptsPerStep?: number;
+  /**
+   * Dossier du scénario, d'où se résolvent les fichiers à téléverser.
+   *
+   * Le rejeu résout depuis là ; la génération, elle, laissait Playwright
+   * résoudre depuis le répertoire courant. Le même chemin ne désignait donc
+   * pas le même fichier selon la commande, et une résolution écrite depuis la
+   * racine du dépôt cassait au premier rejeu.
+   */
+  baseDir?: string;
   appVersion?: string;
 }
 
@@ -220,6 +230,7 @@ function verifyChecks(
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
   const { scenario, driver, provider } = input;
   const attempts = input.attemptsPerStep ?? 3;
+  const baseDir = input.baseDir ?? process.cwd();
   const platform = driver.platform;
 
   const steps: Record<string, StepResolution> = {};
@@ -299,9 +310,17 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       // saisirait « {{env.MOT_DE_PASSE}} » littéralement dans le champ et
       // résoudrait l'étape suivante contre un écran de connexion refusée.
       for (const action of proposal.actions) {
-        const template = valueOf(action);
+        // Même cadrage qu'au rejeu, et au même moment : un chemin refusé doit
+        // l'être pendant qu'on écrit la résolution, pas trois semaines plus
+        // tard en CI. Le refus remonte en rejet, donc le modèle en est informé
+        // et peut proposer autre chose.
+        const staged =
+          action.kind === 'upload'
+            ? { ...action, files: action.files.map((file) => resolveUpload(baseDir, file)) }
+            : action;
+        const template = valueOf(staged);
         await driver.act(
-          template === null ? action : withValue(action, interpolate(template, bag)),
+          template === null ? staged : withValue(staged, interpolate(template, bag)),
         );
       }
     } catch (error) {

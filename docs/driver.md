@@ -48,9 +48,16 @@ match count.
 ```
 
 The paths are **relative to the scenario file**, and it is the engine that makes
-them absolute just before acting. The resolution file is versioned: writing an
-absolute path into it would produce a cache that only replays on the machine
-that wrote it.
+them absolute just before acting — at generation and at replay alike, from the
+same base. The resolution file is versioned: writing an absolute path into it
+would produce a cache that only replays on the machine that wrote it.
+
+**A path that leaves the scenario directory is refused**, absolute paths and
+`..` included, and nothing is sent. Actions are not always written by hand:
+they come from a model reading the screen, and a screen is untrusted input. An
+upload the engine did not frame would let a scenario hand the application under
+test any file on the machine — a private key, a `.env`. The refusal names the
+expected directory so it can be corrected.
 
 The target is the `input[type=file]` itself, almost always hidden behind a
 styled button. `setInputFiles` accepts it where a click would fail. An input

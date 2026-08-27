@@ -1,4 +1,3 @@
-import { resolve as resolvePath } from 'node:path';
 import type {
   Action,
   ConsoleEntry,
@@ -25,6 +24,7 @@ import {
   redact,
   usesEnv,
 } from './assert.ts';
+import { resolveUpload } from './files.ts';
 import { matchOne } from './match.ts';
 import { suggestNearest } from './nearest.ts';
 
@@ -357,10 +357,17 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
      * champ ce qu'on vient de lire à l'écran précédent.
      */
     if (action.kind === 'upload') {
-      action = {
-        ...action,
-        files: action.files.map((file) => resolvePath(context.baseDir, file)),
-      };
+      try {
+        action = {
+          ...action,
+          files: action.files.map((file) => resolveUpload(context.baseDir, file)),
+        };
+      } catch (error) {
+        // Un refus de cadrage est une erreur d'étape, pas une exception qui
+        // remonte : le parcours doit s'arrêter en le disant, comme pour une
+        // variable manquante.
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
 
     const template = valueOf(action);
