@@ -400,7 +400,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
   const pending = context.driver.takePendingDialogs?.() ?? 0;
   if (pending > 0) {
     warnings.push(
-      `${pending} dialogue(s) attendu(s) ne se sont pas présentés : la confirmation native a peut-être disparu de l'application`,
+      `${pending} expected dialog(s) never appeared: the native confirmation may have disappeared from the application`,
     );
   }
 
@@ -453,7 +453,7 @@ function runWatchdogs(
     );
     if (failed.length > 0) {
       const first = failed[0] as NetworkEntry;
-      const message = `${failed.length} requête(s) en échec, dont ${first.method} ${first.url} → ${first.status ?? 'échec réseau'}`;
+      const message = `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`;
       (requests === 'fail' ? failures : warnings).push(message);
     }
   }
@@ -464,7 +464,7 @@ function runWatchdogs(
       (entry) => entry.level === 'error' && !tolerated(entry.text),
     );
     if (errors.length > 0) {
-      const message = `${errors.length} erreur(s) console, dont « ${(errors[0] as ConsoleEntry).text} »`;
+      const message = `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`;
       (console_ === 'fail' ? failures : warnings).push(message);
     }
   }

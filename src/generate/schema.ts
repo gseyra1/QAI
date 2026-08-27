@@ -127,14 +127,14 @@ function assertions(): Record<string, unknown> {
         {
           type: 'object',
           description:
-            "vérification de ce que l'application a FAIT pendant l'étape : appels réseau, console",
+            'check on what the application DID during the step: network calls, console',
           properties: {
             check: { enum: OBSERVATION_CHECKS },
             allow: {
               type: 'array',
               items: { type: 'string' },
               description:
-                "fragments d'URL ou de message tolérés, quand un échec est la réponse attendue",
+                'tolerated URL or message fragments, when a failure is the expected answer',
             },
           },
           required: ['check'],
@@ -189,7 +189,8 @@ export function stepProposalSchema(): Record<string, unknown> {
                   type: 'array',
                   minItems: 1,
                   items: { type: 'string' },
-                  description: "chemins relatifs au fichier scénario ; cible = l'input[type=file], même masqué",
+                  description:
+                    'paths relative to the scenario file; target = the input[type=file], even hidden',
                 },
               },
               ['target', 'files'],

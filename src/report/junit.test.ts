@@ -110,11 +110,11 @@ describe('rapport JUnit', () => {
     ], 'healed');
 
     const souple = formatJUnit(reparee);
-    assert.match(souple, /<system-out>réparé : le libellé du bouton a changé<\/system-out>/);
+    assert.match(souple, /<system-out>healed: le libellé du bouton a changé<\/system-out>/);
     assert.match(souple, /failures="0"/);
 
     const strict = formatJUnit(reparee, { strict: true });
-    assert.match(strict, /<failure message="réparé : le libellé du bouton a changé" type="healed"\/>/);
+    assert.match(strict, /<failure message="healed: le libellé du bouton a changé" type="healed"\/>/);
     assert.match(strict, /<testsuites name="qai" tests="1" failures="1"/);
   });
 

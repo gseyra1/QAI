@@ -51,10 +51,10 @@ function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
    * cesse d'être lu.
    */
   for (const entry of (step.network ?? []).slice(-3)) {
-    lines.push(`  - ↯ \`${entry.method} ${entry.url}\` → ${entry.status ?? 'échec réseau'}`);
+    lines.push(`  - ↯ \`${entry.method} ${entry.url}\` → ${entry.status ?? 'network failure'}`);
   }
   for (const error of (step.consoleErrors ?? []).slice(-3)) {
-    lines.push(`  - ⚡ console : \`${error}\``);
+    lines.push(`  - ⚡ console: \`${error}\``);
   }
   return lines;
 }

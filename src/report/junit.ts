@@ -61,7 +61,7 @@ function stepBody(step: StepReport, strict: boolean): string[] {
       ...(step.error !== undefined ? [step.error] : []),
       ...step.failures.map((failure) => `${failure.assertion} — ${failure.reason}`),
     ];
-    const message = reasons[0] ?? 'échec';
+    const message = reasons[0] ?? 'failure';
     lines.push(`      <failure message="${attribute(message)}" type="assertion">`);
     for (const reason of reasons) lines.push(`        ${escape(clean(reason))}`);
     if (step.screenshot !== undefined) {
@@ -73,7 +73,7 @@ function stepBody(step: StepReport, strict: boolean): string[] {
 
   if (step.status === 'healed') {
     const notes = step.healNotes ?? [];
-    const message = `réparé : ${notes.join(' ; ')}`;
+    const message = `healed: ${notes.join('; ')}`;
     if (strict) {
       lines.push(`      <failure message="${attribute(message)}" type="healed"/>`);
     } else {

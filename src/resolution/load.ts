@@ -50,14 +50,14 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   let version = RESOLUTION_VERSION;
   if (rawVersion !== undefined) {
     if (typeof rawVersion !== 'number' || !Number.isInteger(rawVersion) || rawVersion < 1) {
-      throw new ResolutionError('champ version invalide (entier ≥ 1 attendu)', path);
+      throw new ResolutionError('invalid version field (expected an integer ≥ 1)', path);
     }
     if (rawVersion > RESOLUTION_VERSION) {
       // Lire quand même produirait des verts qui ne prouvent rien : un format
       // plus récent peut décrire une observation que ce moteur ne sait pas
       // reproduire.
       throw new ResolutionError(
-        `résolution en v${rawVersion}, ce QAI lit jusqu'à la v${RESOLUTION_VERSION} — mettre à jour QAI ou régénérer la résolution`,
+        `resolution is v${rawVersion}, this QAI reads up to v${RESOLUTION_VERSION} — upgrade QAI or regenerate the resolution`,
         path,
       );
     }

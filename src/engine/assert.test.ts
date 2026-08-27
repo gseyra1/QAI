@@ -162,7 +162,7 @@ describe('evaluateCheck', () => {
 
     const ko = evaluateCheck({ check: 'urlContains', value: '/tableau-de-bord' }, ici);
     assert.equal(ko.ok, false);
-    assert.match(ko.ok === false ? ko.reason : '', /absent de l'URL/);
+    assert.match(ko.ok === false ? ko.reason : '', /not found in URL/);
   });
 
   /**

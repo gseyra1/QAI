@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qai.dev/schema/resolution.schema.json",
   "title": "Résolution QAI",
-  "description": "Cache machine d'un parcours, propre à une plateforme et régénérable. Écrit par QAI, versionné dans git pour que la CI rejoue sans appel de modèle et pour qu'une auto-réparation apparaisse en diff de revue. Ne pas éditer à la main.",
+  "description": "Machine cache for one journey, specific to a platform and regenerable. Written by QAI, versioned in git so that CI replays without a model call and so that a self-repair shows up as a reviewable diff. Do not edit by hand.",
   "type": "object",
   "required": ["scenario", "platform", "recordedAt", "steps"],
   "additionalProperties": false,
@@ -11,25 +11,25 @@
     "version": {
       "type": "integer",
       "minimum": 1,
-      "description": "Version du format de résolution, pas de l'application. Absent = 1. Ne monte que lorsque l'observation change."
+      "description": "Version of the resolution format, not of the application. Absent means 1. It only goes up when the observation changes."
     },
     "scenario": {
       "type": "string",
-      "description": "Identifiant du scénario dont ce fichier est la résolution."
+      "description": "Id of the scenario this file resolves."
     },
     "platform": { "enum": ["web", "ios", "android"] },
     "recordedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Instant de la génération. Sert à dater une résolution devenue suspecte."
+      "description": "When the resolution was generated. Used to date a resolution that has become suspect."
     },
     "appVersion": {
       "type": "string",
-      "description": "Version de l'application testée au moment de l'enregistrement, si elle est connue."
+      "description": "Version of the application under test at recording time, when it is known."
     },
     "steps": {
       "type": "object",
-      "description": "Une entrée par étape, indexée sur l'id de l'étape du scénario. C'est cette ancre qui permet de reformuler une intention sans invalider son cache.",
+      "description": "One entry per step, keyed on the scenario step id. That anchor is what lets an intent be reworded without invalidating its cache.",
       "additionalProperties": { "$ref": "#/$defs/step" }
     }
   },
@@ -42,16 +42,16 @@
         "cell", "tab", "tablist", "dialog", "menu", "menuitem", "progressbar", "alert",
         "group", "unknown"
       ],
-      "description": "Sous-ensemble de rôles qui existe sur les trois plateformes. Correspondances dans docs/driver.md."
+      "description": "The subset of roles that exists on all three platforms. Mappings in docs/driver.md."
     },
     "locator": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Ciblage sémantique : ce que l'utilisateur voit, jamais un sélecteur.",
+      "description": "Semantic targeting: what the user sees, never a selector.",
       "properties": {
         "role": { "$ref": "#/$defs/role" },
         "name": {
-          "description": "Nom accessible, exact ou partiel. Peut référencer une capture via {{nom}}.",
+          "description": "Accessible name, exact or partial. May reference a capture via {{name}}.",
           "oneOf": [
             { "type": "string" },
             {
@@ -65,7 +65,7 @@
         "nth": {
           "type": "integer",
           "minimum": 0,
-          "description": "Index parmi les correspondances. Sans lui, plusieurs correspondances = refus d'agir."
+          "description": "Index among the matches. Without it, several matches means the engine refuses to act."
         },
         "within": { "$ref": "#/$defs/locator" }
       }
@@ -79,7 +79,7 @@
         "fallback": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Repli technique propre à la plateforme, essayé seulement si primary échoue. Un repli qui sert est un signal : l'accessibilité de l'application s'est dégradée.",
+          "description": "Platform-specific technical fallback, tried only if primary fails. A fallback that gets used is a signal: the application's accessibility has degraded.",
           "properties": {
             "testId": { "type": "string" },
             "selector": { "type": "string" },
@@ -89,7 +89,7 @@
       }
     },
     "action": {
-      "description": "Un geste primitif. Une intention se traduit souvent en plusieurs.",
+      "description": "One primitive gesture. An intent often translates into several.",
       "oneOf": [
         {
           "type": "object",
@@ -112,7 +112,7 @@
             "target": { "$ref": "#/$defs/target" },
             "value": {
               "type": "string",
-              "description": "Template, interpolé au moment d'agir : {{capture}} ou {{env.NOM}} pour une valeur lue dans l'environnement. Un secret ne doit jamais être écrit en clair ici — ce fichier vit dans git."
+              "description": "Template, interpolated at the moment of acting: {{capture}}, or {{env.NAME}} for a value read from the environment. A secret must never be written here in clear text — this file lives in git."
             }
           }
         },
@@ -157,7 +157,7 @@
           "type": "object",
           "required": ["kind", "target", "files"],
           "additionalProperties": false,
-          "description": "Dépose des fichiers dans un input[type=file], même masqué.",
+          "description": "Drops files into an input[type=file], even a hidden one.",
           "properties": {
             "kind": { "const": "upload" },
             "target": { "$ref": "#/$defs/target" },
@@ -165,7 +165,7 @@
               "type": "array",
               "minItems": 1,
               "items": { "type": "string" },
-              "description": "Chemins relatifs au fichier scénario. Un chemin absolu ne rejouerait que sur la machine qui l'a écrit."
+              "description": "Paths relative to the scenario file. An absolute path would only replay on the machine that wrote it, and any path leaving the scenario directory is refused."
             }
           }
         },
@@ -173,17 +173,17 @@
           "type": "object",
           "required": ["kind", "response"],
           "additionalProperties": false,
-          "description": "Arme la réponse au prochain dialogue natif. Se place JUSTE AVANT le geste qui le déclenche : le dialogue bloque la page dès le clic, il n'y a aucun moment après pour répondre.",
+          "description": "Arms the answer to the next native dialog. Goes RIGHT BEFORE the gesture that triggers it: the dialog blocks the page from the click onwards, so there is no moment after it to answer.",
           "properties": {
             "kind": { "const": "expectDialog" },
             "response": { "enum": ["accept", "dismiss"] },
-            "promptText": { "type": "string", "description": "Uniquement pour un prompt()." }
+            "promptText": { "type": "string", "description": "Only for a prompt()." }
           }
         }
       ]
     },
     "check": {
-      "description": "Forme machine d'une assertion. La clé sous laquelle elle est rangée est le texte exact de l'assertion du scénario.",
+      "description": "Machine form of an assertion. The key it is stored under is the exact text of the scenario's assertion.",
       "oneOf": [
         {
           "type": "object",
@@ -204,7 +204,7 @@
           "type": "object",
           "required": ["check", "value"],
           "additionalProperties": false,
-          "description": "Vérification de l'adresse courante. Sans cible : une URL n'est pas un nœud. La comparaison est brute, barre finale et paramètres compris.",
+          "description": "Check on the current address. No target: a URL is not a node. The comparison is raw, trailing slash and query parameters included.",
           "properties": {
             "check": { "enum": ["urlContains", "urlEquals"] },
             "value": { "type": "string" }
@@ -214,13 +214,13 @@
           "type": "object",
           "required": ["check"],
           "additionalProperties": false,
-          "description": "Garde-fou d'étape : porte sur ce que l'application a FAIT, pas sur ce qu'elle affiche. Évalué une seule fois, hors de la fenêtre de réévaluation.",
+          "description": "Step watchdog: bears on what the application DID, not on what it displays. Evaluated once, outside the re-evaluation window.",
           "properties": {
             "check": { "enum": ["noFailedRequests", "noConsoleErrors"] },
             "allow": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Fragments d'URL ou de message tolérés, pour qu'une intégration tierce bruyante n'apprenne pas à l'équipe à désactiver le garde-fou."
+              "description": "Tolerated URL or message fragments, so that a noisy third-party integration does not teach the team to switch the watchdog off."
             }
           }
         }
@@ -234,11 +234,11 @@
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/action" },
-          "description": "Les gestes qui réalisent l'intention, dans l'ordre. Assertions et captures sont évaluées une fois, après le dernier."
+          "description": "The gestures that carry out the intent, in order. Assertions and captures are evaluated once, after the last one."
         },
         "captures": {
           "type": "object",
-          "description": "Valeurs extraites de l'écran, réutilisables plus loin via {{nom}}.",
+          "description": "Values extracted from the screen, reusable further on via {{name}}.",
           "additionalProperties": {
             "type": "object",
             "required": ["from", "extract"],
@@ -251,16 +251,16 @@
         },
         "assertions": {
           "type": "object",
-          "description": "Clé = texte exact de l'assertion du scénario. Le réparateur n'a jamais le droit d'y toucher.",
+          "description": "Key = the exact text of the scenario's assertion. The healer is never allowed to touch these.",
           "additionalProperties": { "$ref": "#/$defs/check" }
         },
         "healedAt": {
           "type": ["string", "null"],
-          "description": "Horodatage de la dernière réparation, null si la résolution est d'origine."
+          "description": "Timestamp of the last repair, null if the resolution is original."
         },
         "healNote": {
           "type": "string",
-          "description": "Ce que le réparateur a compris du changement, pour l'humain qui relit le diff."
+          "description": "What the healer understood of the change, for the human reviewing the diff."
         }
       }
     }

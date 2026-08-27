@@ -678,7 +678,7 @@ describe('runScenario', () => {
         requestFailures: 'fail',
       });
       assert.equal(echoue.status, 'failed');
-      assert.match(echoue.steps[0]?.error ?? '', /requête\(s\) en échec/);
+      assert.match(echoue.steps[0]?.error ?? '', /failed request\(s\)/);
     });
 
     it('n\'attache le diagnostic qu\'aux étapes qui ont cassé', async () => {

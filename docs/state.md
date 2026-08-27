@@ -67,6 +67,24 @@ Both fields are **omitted** from the call when you leave them unset: the browser
 
 **State is reinstalled for every journey.** Each scenario gets a fresh browser, so nothing leaks between them — a test verifies this explicitly.
 
+## Secrets: `{{env.NAME}}`
+
+A prepared state avoids most form logins. But when the form itself is what you want to prove, a password has to be typed — and the resolution file lives in git.
+
+An action's value can therefore reference the environment:
+
+```json
+{ "kind": "fill", "target": { … }, "value": "{{env.QAI_PASS}}" }
+```
+
+The file holds only the **template**. The value is read from `process.env` at the moment of acting, at replay as at generation, and is never written back into a file. A missing variable stops the step and names it — filling a password field with an empty string would fail further on, on a message that says nothing about the cause.
+
+Anything that comes from `env.` is treated as a secret: failure reports replace it with `***`, including when the message comes from the driver, and a final pass over every assertion reason catches what an individual check forgot to mask. A test report ends up in a CI's logs, which are archived and usually readable by the whole organisation.
+
+At generation time, phrase the intent by naming the variable — "sign in with QAI_USER and QAI_PASS" — and the model emits the template rather than an invented value.
+
+The same mechanism makes `{{capture}}` usable in a typed value: writing into a field what an earlier step read on screen.
+
 ## Fixtures
 
 `given.fixtures` is passed as-is to your `prepare`: answer it with a call to your seeding API. QAI does not manage your test data; it only tells you which data the scenario requests.

@@ -238,11 +238,11 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
     if (check.check === 'urlContains') {
       return observed.includes(expected)
         ? { ok: true }
-        : { ok: false, reason: `« ${shown} » absent de l'URL « ${observed} »` };
+        : { ok: false, reason: `"${shown}" not found in URL "${observed}"` };
     }
     return observed === expected
       ? { ok: true }
-      : { ok: false, reason: `attendu l'URL « ${shown} », observé « ${observed} »` };
+      : { ok: false, reason: `expected URL "${shown}", observed "${observed}"` };
   }
 
   /**
@@ -257,7 +257,7 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
     const first = failed[0] as NetworkEntry;
     return {
       ok: false,
-      reason: `${failed.length} requête(s) en échec, dont ${first.method} ${first.url} → ${first.status ?? 'échec réseau'}`,
+      reason: `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`,
     };
   }
 
@@ -268,7 +268,7 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
     if (errors.length === 0) return { ok: true };
     return {
       ok: false,
-      reason: `${errors.length} erreur(s) console, dont « ${(errors[0] as ConsoleEntry).text} »`,
+      reason: `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`,
     };
   }
 

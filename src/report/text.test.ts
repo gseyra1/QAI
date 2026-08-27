@@ -52,14 +52,14 @@ describe('formatSuite', () => {
           steps: [
             step({
               stepId: 's4',
-              warnings: ['2 requête(s) en échec, dont GET /api/reco → 500'],
+              warnings: ['2 failed request(s), including GET /api/reco → 500'],
             }),
           ],
         }),
       ),
     );
 
-    assert.match(output, /⚠ 2 requête\(s\) en échec, dont GET \/api\/reco → 500/);
+    assert.match(output, /⚠ 2 failed request\(s\), including GET \/api\/reco → 500/);
     assert.match(output, /1 warning\(s\)/);
   });
 
@@ -69,7 +69,7 @@ describe('formatSuite', () => {
     // impossible : personne ne va lire plus loin qu'une ligne qui dit que tout
     // va bien.
     const output = formatSuite(
-      suite(scenario({ steps: [step({ stepId: 's4', warnings: ['1 erreur(s) console'] })] })),
+      suite(scenario({ steps: [step({ stepId: 's4', warnings: ['1 console error(s)'] })] })),
     );
 
     assert.doesNotMatch(output, /All green\./);

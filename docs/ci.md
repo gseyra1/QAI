@@ -76,20 +76,23 @@ The CLI produces the markdown; the rest is yours:
 qai run --base-url $URL --format markdown --out report.md
 ```
 
-Ou du JUnit, que GitLab, Jenkins et Azure ingèrent nativement — c'est ce qui
-fait apparaître les parcours dans l'onglet « Tests » plutôt que noyés dans un
-journal :
+Or JUnit, which GitLab, Jenkins and Azure ingest natively — that is what makes
+journeys show up in the "Tests" tab instead of drowning in a log:
 
 ```bash
-qai run --base-url $URL --format junit --out rapport.xml
+qai run --base-url $URL --format junit --out report.xml
 ```
 
-**Une suite JUnit vaut un parcours, un cas vaut une étape.** C'est la
-projection qui conserve l'information utile — quelle étape a lâché, sur quelle
-assertion — là où un cas par parcours réduirait tout à un booléen. Le nom du
-cas porte l'intention, pas seulement l'identifiant : `s4` n'apprend rien à qui
-lit l'onglet « Tests ».
+**One JUnit suite is one journey, one case is one step.** That is the
+projection that keeps the useful information — which step gave way, on which
+assertion — where one case per journey would reduce everything to a boolean.
+The case name carries the intent, not just the id: `s4` teaches nothing to
+whoever reads the "Tests" tab.
 
-Une étape sautée devient `<skipped/>`. Une étape **réparée** reste verte, avec
-la note de réparation en `<system-out>` — sauf sous `--strict`, où elle devient
-un `<failure>` : le rapport doit dire la même chose que le code de sortie.
+A skipped step becomes `<skipped/>`. A **healed** step stays green, with the
+repair note in `<system-out>` — except under `--strict`, where it becomes a
+`<failure>`: the report must say the same thing as the exit code.
+
+A watchdog set to `warn` lands in `<system-err>` on a step that stayed green.
+That is the only place it can land: `warn` does not change the verdict, which
+is the point.

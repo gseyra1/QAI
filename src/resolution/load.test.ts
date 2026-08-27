@@ -47,7 +47,7 @@ describe('version de format d\'une résolution', () => {
     assert.throws(
       () => parseResolution(document({ version: RESOLUTION_VERSION + 1 })),
       (error: unknown) =>
-        error instanceof ResolutionError && /mettre à jour QAI/.test(error.message),
+        error instanceof ResolutionError && /upgrade QAI/.test(error.message),
     );
   });
 
