@@ -46,17 +46,40 @@ function absolutize(config: QaiConfig, base: string): QaiConfig {
 const LEVELS: ReadonlySet<string> = new Set(['off', 'warn', 'fail']);
 
 /**
- * Un niveau inconnu est ignoré plutôt que corrigé au plus strict : une faute
- * de frappe ne doit pas faire tomber une suite entière, ni la rendre verte
- * sans qu'on l'ait demandé.
+ * Un niveau inconnu arrête le chargement.
+ *
+ * L'ignorer retombait sur `off`, donc une faute de frappe sur « fail »
+ * **désarmait** le garde-fou que l'utilisateur croyait armer, et la suite
+ * passait au vert sans qu'il l'ait demandé — exactement le résultat que le
+ * silence prétendait éviter. C'est déjà le traitement réservé à un réglage
+ * numérique illisible : « --workers abc » arrête la commande plutôt que de se
+ * dissoudre. Un garde-fou mérite la même rigueur : sa raison d'être est
+ * d'être armé.
+ *
+ * `allow` est validé pour la même raison : une entrée non textuelle ne se
+ * verrait qu'au moment d'appeler `includes` dessus, six étapes plus loin.
  */
-function parseWatchdogs(raw: Record<string, unknown>): Watchdogs {
+function parseWatchdogs(raw: Record<string, unknown>, path: string): Watchdogs {
   const watchdogs: Watchdogs = {};
+  const attendus = [...LEVELS].map((level) => `"${level}"`).join(', ');
+
   for (const key of ['consoleErrors', 'requestFailures'] as const) {
     const value = raw[key];
-    if (typeof value === 'string' && LEVELS.has(value)) watchdogs[key] = value as WatchdogLevel;
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !LEVELS.has(value)) {
+      throw new Error(`${path}: watchdogs.${key} must be one of ${attendus}`);
+    }
+    watchdogs[key] = value as WatchdogLevel;
   }
-  if (Array.isArray(raw['allow'])) watchdogs.allow = raw['allow'] as string[];
+
+  const allow = raw['allow'];
+  if (allow !== undefined) {
+    if (!Array.isArray(allow) || allow.some((item) => typeof item !== 'string')) {
+      throw new Error(`${path}: watchdogs.allow must be an array of strings`);
+    }
+    watchdogs.allow = allow as string[];
+  }
+
   return watchdogs;
 }
 
@@ -90,7 +113,7 @@ function parse(raw: string, path: string): QaiConfig {
   if (typeof document['strict'] === 'boolean') config.strict = document['strict'];
 
   const watchdogs = document['watchdogs'];
-  if (isRecord(watchdogs)) config.watchdogs = parseWatchdogs(watchdogs);
+  if (isRecord(watchdogs)) config.watchdogs = parseWatchdogs(watchdogs, path);
 
   return absolutize(config, dirname(resolve(path)));
 }

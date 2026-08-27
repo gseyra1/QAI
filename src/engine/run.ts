@@ -88,7 +88,15 @@ export type WatchdogLevel = 'off' | 'warn' | 'fail';
 export interface Watchdogs {
   consoleErrors?: WatchdogLevel;
   requestFailures?: WatchdogLevel;
-  /** Fragments d'URL ou de message tolérés. */
+  /**
+   * Fragments tolérés, **partagés par les deux sentinelles**.
+   *
+   * Un fragment est cherché dans l'URL pour `requestFailures` et dans le texte
+   * pour `consoleErrors` : une seule liste couvre donc les deux, et un
+   * fragment écrit pour l'une taira aussi l'autre s'il s'y retrouve. C'est
+   * voulu — le même tiers bruyant produit d'ordinaire les deux bruits — mais
+   * il faut le savoir pour ne pas élargir la liste plus qu'on ne croit.
+   */
   allow?: string[];
 }
 

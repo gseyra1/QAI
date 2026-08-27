@@ -62,6 +62,16 @@ Setting them straight to `fail` would break whole suites on the day of the
 upgrade, on pre-existing errors — and the team would learn to switch them off,
 which costs more than never having set them.
 
+**`allow` is shared by both watchdogs.** A fragment is looked for in the URL
+for `requestFailures` and in the text for `consoleErrors`, so one list covers
+both — and a fragment written for one will silence the other too if it occurs
+there. That is intended, since the same noisy third party usually produces both
+kinds of noise, but it is worth knowing before widening the list.
+
+**An unknown level stops the command.** Ignoring it fell back to `off`, so a
+typo on `fail` disarmed the very watchdog you meant to arm, and the suite went
+green without anyone asking. Same treatment as an unreadable numeric setting.
+
 Behaviour in detail in [docs/engine.md](engine.md).
 
 ## Rules

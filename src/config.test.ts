@@ -68,6 +68,42 @@ describe('configuration file', () => {
     await assert.rejects(() => loadConfig(path), /casse\.json/);
   });
 
+  /**
+   * Le cas qui compte : une faute de frappe sur « fail » retombait sur `off`,
+   * donc l'utilisateur croyait son garde-fou armé alors qu'il ne l'était pas,
+   * et la suite passait au vert. Un réglage illisible arrête déjà la commande
+   * côté CLI ; un garde-fou dont la raison d'être est d'être armé mérite au
+   * moins autant.
+   */
+  it('rejects an unknown watchdog level instead of falling back to off', async () => {
+    const path = join(dir, 'sentinelle.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { requestFailures: 'fial' } }));
+    await assert.rejects(() => loadConfig(path), /watchdogs\.requestFailures must be one of/);
+  });
+
+  it('rejects an allow list that is not made of strings', async () => {
+    // Une entrée non textuelle ne se verrait qu'au moment d'appeler
+    // `includes` dessus, en plein milieu d'un parcours.
+    const path = join(dir, 'allow.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { allow: ['/analytics', 404] } }));
+    await assert.rejects(() => loadConfig(path), /watchdogs\.allow must be an array of strings/);
+  });
+
+  it('still reads a well-formed watchdog block', async () => {
+    const path = join(dir, 'sentinelle-ok.json');
+    await writeFile(
+      path,
+      JSON.stringify({ watchdogs: { consoleErrors: 'warn', requestFailures: 'fail', allow: ['/analytics'] } }),
+    );
+    const { config } = await loadConfig(path);
+
+    assert.deepEqual(config.watchdogs, {
+      consoleErrors: 'warn',
+      requestFailures: 'fail',
+      allow: ['/analytics'],
+    });
+  });
+
   it('returns an empty configuration when there is no file', async () => {
     const { config, path } = await loadConfig(join(dir, 'absent.json')).catch(() => ({
       config: null,

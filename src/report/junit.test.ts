@@ -148,6 +148,64 @@ describe('rapport JUnit', () => {
     assert.match(xml, /a &lt; b/);
   });
 
+  /**
+   * Les caractères de contrôle sont interdits en XML 1.0 **même échappés** :
+   * les encoder ne suffit pas, il faut les retirer. Une trace de driver en
+   * contient facilement — échappement ANSI d'une sortie colorée, cloche,
+   * octet nul d'une lecture binaire. Et l'échec est silencieux du pire côté :
+   * un document invalide n'est pas ingéré du tout, donc la CI affiche zéro
+   * test, ce qui se lit exactement comme « rien n'a échoué ».
+   */
+  it('retire les caractères de contrôle, qu\'échapper ne suffirait pas à valider', () => {
+    const xml = formatJUnit(
+      suite(
+        [
+          entry(
+            scenario({
+              status: 'failed',
+              steps: [
+                step({
+                  intent: 'lire une sortie colorée',
+                  status: 'failed',
+                  error: '\u001B[31mrouge\u001B[0m\u0007cloche\u0000nul',
+                }),
+              ],
+            }),
+          ),
+        ],
+        'failed',
+      ),
+    );
+
+    assert.doesNotMatch(
+      xml,
+      /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/,
+      'aucun caractère interdit ne doit survivre, échappé ou non',
+    );
+    assert.match(xml, /\[31mrouge \[0m cloche nul/);
+
+    /**
+     * La contrepartie : tabulation, saut de ligne et retour chariot sont les
+     * trois seuls caractères de contrôle **légaux** en XML 1.0. Les retirer
+     * aussi écraserait une trace multi-lignes en une bouillie d'une ligne,
+     * alors que c'est précisément la forme dans laquelle elle se lit.
+     */
+    const trace = formatJUnit(
+      suite(
+        [
+          entry(
+            scenario({
+              status: 'failed',
+              steps: [step({ status: 'failed', error: 'ligne 1\n\tligne 2 indentée' })],
+            }),
+          ),
+        ],
+        'failed',
+      ),
+    );
+    assert.match(trace, /ligne 1\n\tligne 2 indentée/);
+  });
+
   it('fabrique un cas pour un parcours qui n\'a pas pu démarrer', () => {
     const xml = formatJUnit(suite([entry(null, 'le navigateur a refusé de démarrer')], 'failed'));
 
