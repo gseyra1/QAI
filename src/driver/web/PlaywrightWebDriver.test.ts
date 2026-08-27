@@ -39,6 +39,9 @@ const FIXTURE = `<!doctype html>
     <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
     <p data-testid="depose">aucun fichier</p>
     <div id="explication">Le code Massar est requis</div>
+    <button id="eleves"><span role="img" aria-label="team" style="display:inline-flex"></span>Élèves</button>
+    <button id="envoyer">Envo<b>yer</b></button>
+    <button id="decoratif"><img src="data:," alt=""> Exporter</button>
   </main>
   <p id="salut"></p>
   <script>
@@ -158,6 +161,33 @@ describe('PlaywrightWebDriver', () => {
 
     assert.equal(trouve.length, 1);
     assert.equal(trouve[0]?.role, 'text');
+  });
+
+  /**
+   * L'arbre observé sert à formuler la cible ; c'est Playwright qui la
+   * résout, avec le calcul du navigateur. Les deux doivent donc nommer
+   * pareil — sinon le modèle recopie fidèlement un nom que la résolution
+   * rejettera toujours.
+   */
+  it('fait contribuer le libellé d\'une icône au nom de son bouton', async () => {
+    const snapshot = await driver.observe();
+
+    // Ce que le navigateur calcule, et donc ce que Playwright cherchera.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'team Élèves').length, 1);
+  });
+
+  it('n\'insère pas de séparateur autour d\'un descendant en ligne', async () => {
+    const snapshot = await driver.observe();
+
+    // Joindre inconditionnellement donnerait « Envo yer » : un nom que le
+    // navigateur ne calcule jamais, donc une cible impossible à viser.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Envoyer').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Envo yer').length, 0);
+  });
+
+  it('ignore une image décorative, dont l\'alt est vide', async () => {
+    const snapshot = await driver.observe();
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Exporter').length, 1);
   });
 
   it('remonte l\'identifiant de test des éléments qui en portent un', async () => {

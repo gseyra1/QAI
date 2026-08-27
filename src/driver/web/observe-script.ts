@@ -144,6 +144,70 @@ export function collectTree(
   }
 
   /**
+   * Nom déduit du contenu, en suivant accname plutôt que le texte brut.
+   *
+   * `textContent` ne voit que les nœuds de texte. Or un descendant peut porter
+   * son nom ailleurs — une icône est typiquement
+   * `<span role="img" aria-label="team">` sans le moindre texte. La
+   * spécification, elle, fait contribuer à chaque descendant son propre nom
+   * accessible : le navigateur lit donc « team Élèves » là où `textContent` ne
+   * rend que « Élèves ».
+   *
+   * L'écart n'est pas bénin. C'est cet arbre qu'on montre au modèle à la
+   * génération, tandis que la VÉRIFICATION passe par le calcul du navigateur :
+   * les deux doivent nommer les éléments de la même façon. Sinon le modèle
+   * recopie fidèlement un nom que la vérification rejettera toujours, et
+   * `resolve` ne peut converger sur aucune cible porteuse d'icône.
+   */
+  function contentName(el: Element): string {
+    let out = '';
+
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 3) {
+        out += child.textContent ?? '';
+        continue;
+      }
+      if (child.nodeType !== 1) continue;
+
+      const element = child as Element;
+      // accname exclut les sous-arbres masqués aux technologies d'assistance.
+      if (element.getAttribute('aria-hidden') === 'true') continue;
+
+      const part = contributionOf(element);
+      if (part === '') continue;
+
+      /**
+       * Le séparateur dépend du rendu, il n'est pas systématique.
+       *
+       * accname n'insère un espace qu'autour d'un descendant qui n'est pas en
+       * ligne — c'est ce que fait le navigateur, donc ce que voit la
+       * vérification. Joindre inconditionnellement produirait « Envo yer »
+       * pour `<button>Envo<b>yer</b></button>` : un nom que Playwright ne
+       * calculera jamais, donc une cible que `resolve` ne pourra pas viser.
+       */
+      const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+      out += style?.display === 'inline' ? part : ` ${part} `;
+    }
+
+    return collapse(out);
+  }
+
+  /** Ce qu'un descendant apporte au nom de son parent, selon accname. */
+  function contributionOf(el: Element): string {
+    const label = el.getAttribute('aria-label');
+    if (label) return label;
+
+    if (el instanceof HTMLImageElement) {
+      // `alt=""` est une image décorative : elle n'apporte rien, et ce n'est
+      // pas la même chose qu'une image sans `alt` du tout.
+      const alt = el.getAttribute('alt');
+      if (alt !== null) return alt;
+    }
+
+    return contentName(el);
+  }
+
+  /**
    * Approximation pragmatique de la spécification accname : elle couvre les cas
    * qui comptent en pratique sans réimplémenter l'algorithme complet. Playwright
    * applique la vraie spécification côté résolution, donc un écart ici ne peut
@@ -190,7 +254,7 @@ export function collectTree(
     // portant sur son contenu.
     if (!NAME_FROM_CONTENT.has(roleOf(el))) return '';
 
-    const text = ownText(el);
+    const text = contentName(el);
     return text.length <= 120 ? text : '';
   }
 
