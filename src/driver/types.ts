@@ -170,10 +170,19 @@ export interface Capabilities {
   swipe: boolean;
   navigateByUrl: boolean;
   deepLink: boolean;
-  /** Dialogues natifs : alert, confirm, prompt — et leurs équivalents mobiles. */
-  dialogs: boolean;
-  /** Observation passive du réseau et de la console. */
-  network: boolean;
+  /**
+   * Dialogues natifs : alert, confirm, prompt — et leurs équivalents mobiles.
+   *
+   * **Optionnel, et absent vaut non.** Ce contrat est publié : un champ requis
+   * ajouté après coup empêche de compiler tout pilote écrit contre la version
+   * précédente, ce qui n'est pas un ajout mais une rupture.
+   *
+   * Le défaut est le refus, jamais l'inverse. Un pilote incapable de répondre
+   * à un dialogue et qu'on laisserait passer produirait un parcours
+   * « supprimer puis confirmer » vert sans que la suppression ait eu lieu —
+   * précisément le faux vert que `expectDialog` existe pour supprimer.
+   */
+  dialogs?: boolean;
 }
 
 /**
@@ -315,8 +324,11 @@ export interface Driver {
   /**
    * Rend et vide ce qui a été observé depuis le dernier appel.
    *
-   * Optionnelle, et doublée d'une capability : un driver mobile peut ne pas
-   * savoir écouter le réseau, et le moteur doit continuer de fonctionner sans.
+   * Optionnelle : un driver mobile peut ne pas savoir écouter le réseau, et le
+   * moteur doit continuer de fonctionner sans. Son absence est la seule
+   * déclaration nécessaire — un drapeau qui la double serait un second endroit
+   * à tenir à jour, que le moteur n'aurait aucune raison de consulter.
+   *
    * Vider à la lecture est ce qui découpe l'observation par étape sans que le
    * driver ait à connaître la notion d'étape.
    */

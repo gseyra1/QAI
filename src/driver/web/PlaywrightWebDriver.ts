@@ -73,7 +73,6 @@ export class PlaywrightWebDriver implements Driver {
     navigateByUrl: true,
     deepLink: true,
     dialogs: true,
-    network: true,
   };
 
   readonly #launch: () => Promise<Browser>;

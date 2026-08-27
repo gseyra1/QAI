@@ -170,7 +170,10 @@ function supports(driver: Driver, action: Action): boolean {
   if (action.kind === 'hover') return driver.capabilities.hover;
   if (action.kind === 'swipe') return driver.capabilities.swipe;
   if (action.kind === 'navigate') return driver.capabilities.navigateByUrl;
-  if (action.kind === 'expectDialog') return driver.capabilities.dialogs;
+  // Absent vaut non : un pilote antérieur à `expectDialog` ne déclare rien, et
+  // le laisser passer rendrait vert un « supprimer puis confirmer » où rien
+  // n'a été supprimé.
+  if (action.kind === 'expectDialog') return driver.capabilities.dialogs === true;
   return true;
 }
 

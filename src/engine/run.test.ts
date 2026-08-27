@@ -37,7 +37,6 @@ class FakeDriver implements Driver {
     navigateByUrl: true,
     deepLink: true,
     dialogs: true,
-    network: false,
   };
 
   readonly acted: Action[] = [];
@@ -320,6 +319,45 @@ describe('runScenario', () => {
     });
     assert.equal(report.status, 'failed');
     assert.match(report.steps[0]?.error ?? '', /not supported on web/);
+  });
+
+  it('accepte un pilote écrit avant `expectDialog`, et lui refuse le dialogue', async () => {
+    // `Capabilities` est exporté depuis l'index : quelqu'un a pu écrire son
+    // propre pilote contre la version publiée. Un champ requis ajouté après
+    // coup l'empêcherait de compiler — ce n'est alors plus un ajout mais une
+    // rupture. Cette déclaration à quatre champs est la preuve, à la
+    // compilation, que le contrat reste tenable sans `dialogs`.
+    const ANCIEN: Capabilities = {
+      hover: true,
+      swipe: false,
+      navigateByUrl: true,
+      deepLink: true,
+    };
+
+    class PiloteAncien extends FakeDriver {
+      override readonly capabilities = ANCIEN;
+    }
+
+    const driver = new PiloteAncien(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([{ id: 's1', do: 'vider le panier en confirmant' }]),
+      resolution: resolution({
+        s1: {
+          actions: [
+            { kind: 'expectDialog', response: 'accept' },
+            { kind: 'click', target: CLICK },
+          ],
+        },
+      }),
+    });
+
+    // Refuser est le comportement voulu, pas un défaut de tolérance : laisser
+    // passer produirait un « supprimer puis confirmer » vert où la suppression
+    // n'a pas eu lieu, ce que `expectDialog` existe précisément pour empêcher.
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /"expectDialog" not supported on web/);
+    assert.deepEqual(driver.acted, []);
   });
 
   it('ignore une étape restreinte à une autre plateforme', async () => {
