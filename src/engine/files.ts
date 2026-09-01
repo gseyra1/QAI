@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 /**
@@ -40,11 +41,40 @@ export function resolveUpload(baseDir: string, file: string): string {
    */
   const inside = relative(base, full);
   if (inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
-    throw new Error(
-      `upload "${file}": resolves outside the scenario directory (${base}). ` +
-        'Keep the fixture within the scenario directory: a test must not be able to read the machine it runs on.',
-    );
+    throw new Error(outsideMessage(file, base));
+  }
+
+  /**
+   * Le cadrage lexical ne voit pas les liens symboliques : un lien placé DANS
+   * le dossier du scénario mais pointant dehors passe la première garde, et
+   * `readFile` suit le lien. Un dossier de scénarios est un artefact versionné
+   * et partagé — git préserve les liens —, donc un dépôt tiers pourrait
+   * exfiltrer `~/.ssh/id_rsa`. On résout les liens des deux côtés et on refait
+   * le test sur les chemins réels.
+   *
+   * `realpathSync` exige que le fichier existe : c'est le cas, un téléversement
+   * lit un fichier réel. Un chemin inexistant échoue ici plutôt qu'au driver,
+   * ce qui est le bon endroit pour le dire.
+   */
+  let realBase: string;
+  let realFull: string;
+  try {
+    realBase = realpathSync(base);
+    realFull = realpathSync(full);
+  } catch {
+    throw new Error(`upload "${file}": file not found within the scenario directory (${base}).`);
+  }
+  const realInside = relative(realBase, realFull);
+  if (realInside === '' || realInside === '..' || realInside.startsWith(`..${sep}`) || isAbsolute(realInside)) {
+    throw new Error(outsideMessage(file, base));
   }
 
   return full;
+}
+
+function outsideMessage(file: string, base: string): string {
+  return (
+    `upload "${file}": resolves outside the scenario directory (${base}). ` +
+    'Keep the fixture within the scenario directory: a test must not be able to read the machine it runs on.'
+  );
 }

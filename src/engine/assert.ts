@@ -87,6 +87,46 @@ export function redact(text: string, secrets: readonly string[]): string {
 }
 
 /**
+ * Le registre des secrets d'une exécution.
+ *
+ * Le masquage par vérification ne suffit pas, parce qu'un secret est un *flux*,
+ * pas une valeur locale : `{{env.MOT_DE_PASSE}}` saisi à l'étape 1, ré-affiché
+ * par l'application, capturé, puis comparé à l'étape 5 — à ce moment la
+ * vérification ne voit qu'une capture ordinaire, sans marqueur d'origine. Une
+ * URL de requête ou un message de console peuvent porter le même secret sans
+ * qu'aucun `value` ne le déclare.
+ *
+ * On enregistre donc la valeur résolue **à sa source** (la saisie, l'assertion
+ * qui puise dans l'environnement) une fois pour toute l'exécution, et on masque
+ * par sous-chaîne toute sortie visible : raison d'échec, capture rapportée, URL
+ * réseau, texte console. Le registre ne peut masquer que ce que QAI sait être
+ * un secret — une valeur venue de l'environnement ; un jeton que l'application
+ * expose de son propre chef, sans passer par `{{env.X}}`, reste hors de portée.
+ */
+export class SecretRegistry {
+  readonly #values = new Set<string>();
+
+  add(value: string): void {
+    // Un secret d'un seul caractère masquerait la moitié d'un rapport : la
+    // sous-chaîne se retrouverait partout. En pratique un secret utile
+    // (mot de passe, jeton) dépasse largement ce seuil.
+    if (value.length > 2) this.#values.add(value);
+  }
+
+  addAll(values: Iterable<string>): void {
+    for (const value of values) this.add(value);
+  }
+
+  redact(text: string): string {
+    return this.#values.size === 0 ? text : redact(text, [...this.#values]);
+  }
+
+  get size(): number {
+    return this.#values.size;
+  }
+}
+
+/**
  * Substitue les captures jusque dans les noms ciblés.
  *
  * Sans ça, « le panier contient {{article}} » ne serait pas exprimable : le nom
@@ -171,6 +211,13 @@ export interface CheckContext {
   bag: Readonly<Record<string, string>>;
   /** Ce que l'application a fait pendant l'étape. Vide si le driver ne sait pas observer. */
   observations?: Observations;
+  /**
+   * Le registre de l'exécution. Quand il est fourni, la raison d'échec est
+   * masquée contre **tous** les secrets connus — pas seulement ceux que le
+   * `value` de cette vérification déclare — ce qui rattrape un secret arrivé
+   * par une capture ou une observation.
+   */
+  secrets?: SecretRegistry;
 }
 
 /** Une requête est en échec si elle n'a pas abouti, ou si le serveur a refusé. */
@@ -189,7 +236,7 @@ function allowed(text: string, patterns: readonly string[] | undefined): boolean
  * de type chaîne peut contenir un gabarit, d'où le test de type plutôt qu'une
  * confiance dans la déclaration.
  */
-function envSecrets(check: Check, bag: Readonly<Record<string, string>>): string[] {
+export function envSecrets(check: Check, bag: Readonly<Record<string, string>>): string[] {
   const template: unknown = (check as { value?: unknown }).value;
   if (typeof template !== 'string' || !usesEnv(template)) return [];
   try {
@@ -212,10 +259,19 @@ function envSecrets(check: Check, bag: Readonly<Record<string, string>>): string
  * vérification future qui oublie `shown` ne peut plus rien divulguer.
  */
 export function evaluateCheck(check: Check, context: CheckContext): CheckResult {
+  // Ce que cette vérification puise elle-même dans l'environnement rejoint le
+  // registre : une assertion sur `{{env.X}}` enseigne le secret aux étapes
+  // suivantes, qui pourraient sinon le laisser fuir par une capture.
+  const own = envSecrets(check, context.bag);
+  context.secrets?.addAll(own);
+
   const result = evaluate(check, context);
   if (result.ok) return result;
-  const secrets = envSecrets(check, context.bag);
-  return secrets.length === 0 ? result : { ok: false, reason: redact(result.reason, secrets) };
+
+  // Le registre, quand il existe, masque contre tous les secrets connus — pas
+  // seulement `own` — ce qui rattrape la fuite par capture ou par observation.
+  if (context.secrets !== undefined) return { ok: false, reason: context.secrets.redact(result.reason) };
+  return own.length === 0 ? result : { ok: false, reason: redact(result.reason, own) };
 }
 
 function evaluate(check: Check, context: CheckContext): CheckResult {

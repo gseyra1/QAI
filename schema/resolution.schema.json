@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qai.dev/schema/resolution.schema.json",
-  "title": "Résolution QAI",
+  "title": "QAI Resolution",
   "description": "Machine cache for one journey, specific to a platform and regenerable. Written by QAI, versioned in git so that CI replays without a model call and so that a self-repair shows up as a reviewable diff. Do not edit by hand.",
   "type": "object",
   "required": ["scenario", "platform", "recordedAt", "steps"],

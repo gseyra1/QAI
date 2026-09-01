@@ -38,10 +38,13 @@ const FIXTURE = `<!doctype html>
     <button id="casser">Charger la liste</button>
     <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
     <p data-testid="depose">aucun fichier</p>
-    <div id="explication">Le code Massar est requis</div>
-    <button id="eleves"><span role="img" aria-label="team" style="display:inline-flex"></span>Élèves</button>
+    <div id="explication">Le code postal est requis</div>
+    <button id="eleves"><span role="img" aria-label="team" style="display:inline-flex"></span>Membres</button>
     <button id="envoyer">Envo<b>yer</b></button>
     <button id="decoratif"><img src="data:," alt=""> Exporter</button>
+    <button id="cache"><span style="display:none">Masquer</span>Afficher</button>
+    <button id="ghost"><span style="visibility:hidden">Fantome</span>Valider tout</button>
+    <button id="saut">ligne1<br>ligne2</button>
   </main>
   <p id="salut"></p>
   <script>
@@ -157,7 +160,7 @@ describe('PlaywrightWebDriver', () => {
    */
   it('voit le texte porté par un conteneur générique', async () => {
     const snapshot = await driver.observe();
-    const trouve = findAll(snapshot.root, (n) => n.name === 'Le code Massar est requis');
+    const trouve = findAll(snapshot.root, (n) => n.name === 'Le code postal est requis');
 
     assert.equal(trouve.length, 1);
     assert.equal(trouve[0]?.role, 'text');
@@ -173,7 +176,7 @@ describe('PlaywrightWebDriver', () => {
     const snapshot = await driver.observe();
 
     // Ce que le navigateur calcule, et donc ce que Playwright cherchera.
-    assert.equal(findAll(snapshot.root, (n) => n.name === 'team Élèves').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'team Membres').length, 1);
   });
 
   it('n\'insère pas de séparateur autour d\'un descendant en ligne', async () => {
@@ -183,6 +186,37 @@ describe('PlaywrightWebDriver', () => {
     // navigateur ne calcule jamais, donc une cible impossible à viser.
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Envoyer').length, 1);
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Envo yer').length, 0);
+  });
+
+  it('exclut du nom un descendant masqué par le rendu, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    // « display:none » et « visibility:hidden » ne sont pas dans le nom
+    // accessible : les inclure donnait « Masquer Afficher », introuvable.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Afficher').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Masquer Afficher').length, 0);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Valider tout').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Fantome Valider tout').length, 0);
+  });
+
+  it('compte un <br> comme une espace, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'ligne1 ligne2').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'ligne1ligne2').length, 0);
+  });
+
+  /**
+   * La preuve dure : le nom observé et le calcul de Playwright convergent. On
+   * observe le nom, puis on le résout par ce même nom — si l'observation
+   * divergeait, getByRole ne trouverait rien. C'était le défaut central de la
+   * v2, prouvé faux ici pour chaque cas piégeux.
+   */
+  it('résout chaque nom piégeux par le calcul de Playwright', async () => {
+    for (const name of ['team Membres', 'Envoyer', 'Afficher', 'Valider tout', 'ligne1 ligne2']) {
+      const outcome = await driver.resolve({ primary: { role: 'button', name } });
+      assert.equal(outcome.found, true, `getByRole must find "${name}"`);
+    }
   });
 
   it('ignore une image décorative, dont l\'alt est vide', async () => {

@@ -173,6 +173,26 @@ export function collectTree(
       // accname exclut les sous-arbres masqués aux technologies d'assistance.
       if (element.getAttribute('aria-hidden') === 'true') continue;
 
+      /**
+       * `<br>` est un saut de ligne : accname le compte comme une espace, et
+       * le navigateur aussi. L'ignorer collait « ligne1ligne2 » là où la
+       * vérification lit « ligne1 ligne2 ».
+       */
+      if (element.tagName === 'BR') {
+        out += ' ';
+        continue;
+      }
+
+      /**
+       * Un descendant que le rendu masque (`display:none`, `visibility:hidden`)
+       * ne compte pas dans le nom accessible : le navigateur l'exclut, donc la
+       * vérification aussi. L'inclure produisait « Masquer Afficher » pour un
+       * `<span style="display:none">Masquer</span>Afficher` — un nom que
+       * Playwright ne calcule jamais, donc une cible introuvable.
+       */
+      const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) continue;
+
       const part = contributionOf(element);
       if (part === '') continue;
 
@@ -185,7 +205,6 @@ export function collectTree(
        * pour `<button>Envo<b>yer</b></button>` : un nom que Playwright ne
        * calculera jamais, donc une cible que `resolve` ne pourra pas viser.
        */
-      const style = element.ownerDocument.defaultView?.getComputedStyle(element);
       out += style?.display === 'inline' ? part : ` ${part} `;
     }
 

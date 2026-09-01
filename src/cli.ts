@@ -19,6 +19,7 @@ import { formatMarkdown } from './report/markdown.ts';
 import { formatSuite } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
+import { RESOLUTION_VERSION } from './resolution/types.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
@@ -328,9 +329,22 @@ export async function main(argv: string[]): Promise<number> {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       inconsistent = true;
       process.stderr.write(
-        `${scenario.id} : aucune résolution — lancer « qai resolve » sur ce parcours (${resolutionPath})\n`,
+        `${scenario.id}: no resolution — run "qai resolve" on this journey (${resolutionPath})\n`,
       );
       continue;
+    }
+
+    // Une résolution écrite sous une observation plus ancienne se recharge,
+    // mais ses cibles ont pu être calculées sur des noms accessibles que ce
+    // moteur ne produit plus à l'identique : le rejeu peut passer au rouge sans
+    // qu'aucune régression n'existe. On le dit clairement plutôt que de laisser
+    // deviner — régénérer avec « qai resolve » réaligne le cache.
+    const version = resolution.version ?? 1;
+    if (version < RESOLUTION_VERSION) {
+      process.stderr.write(
+        `${scenario.id}: resolution is v${version}, this QAI observes v${RESOLUTION_VERSION} — ` +
+          `regenerate with "qai resolve" if assertions fail unexpectedly (${resolutionPath})\n`,
+      );
     }
 
     const issues = checkConsistency(scenario, resolution, 'web');

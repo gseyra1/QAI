@@ -21,7 +21,7 @@ import {
   isFailed,
   InterpolationError,
   interpolateLocator,
-  redact,
+  SecretRegistry,
   usesEnv,
 } from './assert.ts';
 import { resolveUpload } from './files.ts';
@@ -227,14 +227,14 @@ interface ActionsContext {
   stepId: string;
   intent: string;
   bag: Readonly<Record<string, string>>;
+  /** Le registre de secrets de l'exécution, partagé par toutes les étapes. */
+  secrets: SecretRegistry;
 }
 
 async function performActions(actions: Action[], context: ActionsContext): Promise<ActionsOutcome> {
-  const { driver, healer } = context;
+  const { driver, healer, secrets } = context;
   const heals: AppliedHeal[] = [];
   const warnings: string[] = [];
-  /** Valeurs résolues depuis l'environnement, à effacer de tout message. */
-  const secrets: string[] = [];
 
   for (const [index, original] of actions.entries()) {
     if (!supports(driver, original)) {
@@ -299,7 +299,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         });
 
         if (!healed.healed) {
-          return { ok: false, error: `${failure} — repair impossible: ${healed.reason}` };
+          return { ok: false, error: `${failure} — could not repair: ${healed.reason}` };
         }
 
         action = withTarget(action, healed.target);
@@ -382,7 +382,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
     if (template !== null) {
       try {
         const resolved = interpolate(template, context.bag);
-        if (usesEnv(template)) secrets.push(resolved);
+        if (usesEnv(template)) secrets.add(resolved);
         action = withValue(action, resolved);
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -395,7 +395,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
       // Un message de driver peut recopier ce qui a été saisi ; un rapport
       // d'échec, lui, finit dans les journaux d'une CI.
       const message = error instanceof Error ? error.message : String(error);
-      return { ok: false, error: redact(message, secrets) };
+      return { ok: false, error: secrets.redact(message) };
     }
   }
 
@@ -424,15 +424,24 @@ const NO_OBSERVATIONS: Observations = { network: [], console: [] };
  * cinquante parcours illisible et lourd ; les requêtes en échec et les erreurs
  * console sont ce qu'on relit vraiment à côté de la capture d'écran.
  */
-function attachObservations(report: StepReport, observations: Observations | undefined): void {
+function attachObservations(
+  report: StepReport,
+  observations: Observations | undefined,
+  secrets: SecretRegistry,
+): void {
   if (observations === undefined) return;
 
-  const failed = observations.network.filter(isFailed);
+  // Une URL de requête porte sa query string, un message de console recopie ce
+  // que l'application a logué : l'un comme l'autre peut contenir un secret déjà
+  // connu du registre. On masque avant que ça n'entre dans le rapport.
+  const failed = observations.network
+    .filter(isFailed)
+    .map((entry) => ({ ...entry, url: secrets.redact(entry.url) }));
   if (failed.length > 0) report.network = failed;
 
   const errors = observations.console
     .filter((entry) => entry.level === 'error')
-    .map((entry) => entry.text);
+    .map((entry) => secrets.redact(entry.text));
   if (errors.length > 0) report.consoleErrors = errors;
 }
 
@@ -446,6 +455,7 @@ function attachObservations(report: StepReport, observations: Observations | und
 function runWatchdogs(
   watchdogs: Watchdogs | undefined,
   observations: Observations,
+  secrets: SecretRegistry,
 ): { failures: string[]; warnings: string[] } {
   const failures: string[] = [];
   const warnings: string[] = [];
@@ -461,7 +471,9 @@ function runWatchdogs(
     );
     if (failed.length > 0) {
       const first = failed[0] as NetworkEntry;
-      const message = `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`;
+      const message = secrets.redact(
+        `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`,
+      );
       (requests === 'fail' ? failures : warnings).push(message);
     }
   }
@@ -472,7 +484,9 @@ function runWatchdogs(
       (entry) => entry.level === 'error' && !tolerated(entry.text),
     );
     if (errors.length > 0) {
-      const message = `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`;
+      const message = secrets.redact(
+        `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`,
+      );
       (console_ === 'fail' ? failures : warnings).push(message);
     }
   }
@@ -490,6 +504,9 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const bag: Record<string, string> = {};
   const steps: StepReport[] = [];
   const applied: AppliedHeal[] = [];
+  // Un seul registre pour toute l'exécution : un secret saisi tôt reste masqué
+  // dans les rapports des étapes suivantes, où il pourrait revenir par capture.
+  const secrets = new SecretRegistry();
   const context: ActionsContext = {
     driver,
     baseDir: input.baseDir ?? process.cwd(),
@@ -499,6 +516,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     stepId: '',
     intent: '',
     bag,
+    secrets,
   };
   let aborted = false;
 
@@ -539,7 +557,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       };
       // Une action qui échoue est précisément le moment où le réseau explique
       // souvent tout : la cible n'est pas apparue parce que l'appel a rendu 500.
-      attachObservations(report, driver.drainObservations?.());
+      attachObservations(report, driver.drainObservations?.(), secrets);
       steps.push(report);
       aborted = true;
     };
@@ -595,7 +613,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
           bag[name] = value;
         } catch (error) {
           captureErrors.push(
-            `capture "${name}": ${error instanceof Error ? error.message : String(error)}`,
+            secrets.redact(`capture "${name}": ${error instanceof Error ? error.message : String(error)}`),
           );
         }
       }
@@ -615,12 +633,14 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         // pendant tout le délai d'assertion.
         if (isObservationCheck(check)) continue;
         try {
-          const result = evaluateCheck(check, { root, location, bag });
+          const result = evaluateCheck(check, { root, location, bag, secrets });
           if (!result.ok) failures.push({ assertion, reason: result.reason });
         } catch (error) {
           failures.push({
             assertion,
-            reason: error instanceof InterpolationError ? error.message : String(error),
+            reason: secrets.redact(
+              error instanceof InterpolationError ? error.message : String(error),
+            ),
           });
         }
       }
@@ -665,11 +685,12 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         location: snapshot.location,
         bag,
         observations,
+        secrets,
       });
       if (!result.ok) failures.push({ assertion, reason: result.reason });
     }
 
-    const watch = runWatchdogs(input.watchdogs, observations);
+    const watch = runWatchdogs(input.watchdogs, observations, secrets);
     const warnings = [...outcome.warnings, ...watch.warnings];
 
     const broken = failures.length > 0 || captureErrors.length > 0 || watch.failures.length > 0;
@@ -683,17 +704,17 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     const errors = [...captureErrors, ...watch.failures];
     if (errors.length > 0) report.error = errors.join('; ');
     if (outcome.heals.length > 0) {
-      report.healNotes = outcome.heals.map((heal) => heal.note);
+      report.healNotes = outcome.heals.map((heal) => secrets.redact(heal.note));
       applied.push(...outcome.heals);
     }
-    if (warnings.length > 0) report.warnings = warnings;
+    if (warnings.length > 0) report.warnings = warnings.map((warning) => secrets.redact(warning));
     if (broken) {
       const screenshot = await shoot();
       if (screenshot !== undefined) report.screenshot = screenshot;
     }
     // Le diagnostic n'accompagne que ce qui a cassé, ou ce qu'un garde-fou a
     // relevé : partout ailleurs il gonflerait le rapport sans rien apprendre.
-    if (broken || warnings.length > 0) attachObservations(report, observations);
+    if (broken || warnings.length > 0) attachObservations(report, observations, secrets);
     steps.push(report);
 
     if (broken) aborted = true;
@@ -702,13 +723,19 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const failed = steps.some((step) => step.status === 'failed');
   const healed = steps.some((step) => step.status === 'healed');
 
+  // `bag` garde les valeurs brutes tant que l'exécution tourne — un secret
+  // capturé doit pouvoir être saisi tel quel à l'étape suivante. Mais le
+  // rapport, lui, part dans les journaux : on n'y publie qu'une copie masquée.
+  const captures: Record<string, string> = {};
+  for (const [name, value] of Object.entries(bag)) captures[name] = secrets.redact(value);
+
   return {
     scenarioId: scenario.id,
     title: scenario.title,
     platform,
     status: failed ? 'failed' : healed ? 'healed' : 'passed',
     steps,
-    captures: bag,
+    captures,
     heals: applied,
     healCount: context.healCount,
     startedAt,

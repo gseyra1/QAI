@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import type {
   Action,
   Capabilities,
@@ -535,11 +537,19 @@ describe('runScenario', () => {
    * chemin reste donc relatif au scénario, et c'est le moteur qui l'absolutise
    * juste avant d'agir.
    */
+  // Le cadrage résout les liens symboliques : un vrai fichier est nécessaire.
+  let fixtures: string;
+  before(() => {
+    fixtures = mkdtempSync(join(tmpdir(), 'qai-run-upload-'));
+    writeFileSync(join(fixtures, 'releve.csv'), 'a,b\n1,2\n');
+  });
+  after(() => rmSync(fixtures, { recursive: true, force: true }));
+
   it('résout les chemins d\'un téléversement depuis le dossier du scénario', async () => {
     const driver = new FakeDriver(TREE);
     const report = await runScenario({
       driver,
-      baseDir: join('qa', 'fixtures'),
+      baseDir: fixtures,
       scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
       resolution: resolution({
         s1: { actions: [{ kind: 'upload', target: CLICK, files: ['releve.csv'] }] },
@@ -550,7 +560,7 @@ describe('runScenario', () => {
     const depose = driver.acted[0];
     assert.deepEqual(
       depose?.kind === 'upload' ? depose.files : null,
-      [resolve('qa', 'fixtures', 'releve.csv')],
+      [resolve(fixtures, 'releve.csv')],
     );
   });
 
@@ -562,7 +572,7 @@ describe('runScenario', () => {
     const driver = new FakeDriver(TREE);
     const report = await runScenario({
       driver,
-      baseDir: join('qa', 'fixtures'),
+      baseDir: fixtures,
       scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
       resolution: resolution({
         s1: {

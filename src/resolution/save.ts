@@ -68,10 +68,13 @@ function print(value: unknown, depth: number): string {
 export function serializeResolution(resolution: Resolution): string {
   const document: Record<string, unknown> = {
     $comment: HEADER,
-    // Toujours écrit, même sur une résolution chargée sans le champ : une
-    // sauvegarde est un fichier neuf, et laisser la version implicite
-    // reporterait le problème sur le prochain changement de format.
-    version: resolution.version ?? RESOLUTION_VERSION,
+    // Toujours la version courante, jamais celle du fichier d'origine : on
+    // n'écrit une résolution qu'après avoir résolu ou réparé ses cibles contre
+    // l'observation d'AUJOURD'HUI. Conserver un `version: 1` sur un fichier
+    // dont les cibles viennent d'être recalculées sous l'observation v2
+    // mentirait sur ce qu'il contient — et rendrait muet, sur ce fichier même,
+    // l'avertissement de version périmée.
+    version: RESOLUTION_VERSION,
     scenario: resolution.scenario,
     platform: resolution.platform,
     recordedAt: resolution.recordedAt,

@@ -65,7 +65,7 @@ function stepBody(step: StepReport, strict: boolean): string[] {
     lines.push(`      <failure message="${attribute(message)}" type="assertion">`);
     for (const reason of reasons) lines.push(`        ${escape(clean(reason))}`);
     if (step.screenshot !== undefined) {
-      lines.push(`        capture : ${escape(clean(step.screenshot))}`);
+      lines.push(`        screenshot: ${escape(clean(step.screenshot))}`);
     }
     lines.push('      </failure>');
     return lines;
@@ -103,7 +103,7 @@ function testsuite(entry: SuiteEntry, strict: boolean): string[] {
     return [
       `  <testsuite name="${name}" tests="1" failures="1" skipped="0" time="0.000">`,
       `    <testcase name="${name}" classname="${name}" time="0.000">`,
-      `      <failure message="${attribute(entry.error ?? 'le parcours n\'a pas pu être exécuté')}" type="error"/>`,
+      `      <failure message="${attribute(entry.error ?? 'the journey could not be run')}" type="error"/>`,
       '    </testcase>',
       '  </testsuite>',
     ];

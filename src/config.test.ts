@@ -89,6 +89,21 @@ describe('configuration file', () => {
     await assert.rejects(() => loadConfig(path), /watchdogs\.allow must be an array of strings/);
   });
 
+  it('rejects a misspelled watchdog key instead of silently disarming it', async () => {
+    // « requestFailure » sans « s » retombait sur off : le garde-fou que
+    // l'utilisateur croyait armer restait muet, exactement le silence que le
+    // module refuse pour une valeur illisible.
+    const path = join(dir, 'typo.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { requestFailure: 'fail' } }));
+    await assert.rejects(() => loadConfig(path), /unknown watchdogs key "requestFailure"/);
+  });
+
+  it('rejects a non-object watchdogs block instead of ignoring it', async () => {
+    const path = join(dir, 'scalar.json');
+    await writeFile(path, JSON.stringify({ watchdogs: 'fail' }));
+    await assert.rejects(() => loadConfig(path), /watchdogs must be an object/);
+  });
+
   it('still reads a well-formed watchdog block', async () => {
     const path = join(dir, 'sentinelle-ok.json');
     await writeFile(

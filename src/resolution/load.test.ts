@@ -33,9 +33,11 @@ describe('version de format d\'une résolution', () => {
     assert.equal(parseResolution(document()).version, 1);
   });
 
-  it('lit les résolutions du dépôt, écrites avant l\'introduction du champ', async () => {
+  it('les résolutions d\'exemple du dépôt sont à la version courante', async () => {
+    // Régénérées avec l'outil : livrer un exemple périmé déclencherait
+    // l'avertissement de version chez quiconque le copie comme point de départ.
     for (const path of EXAMPLES) {
-      assert.equal((await loadResolution(path)).version, 1, path);
+      assert.equal((await loadResolution(path)).version, RESOLUTION_VERSION, path);
     }
   });
 
@@ -57,8 +59,14 @@ describe('version de format d\'une résolution', () => {
     assert.throws(() => parseResolution(document({ version: 1.5 })), ResolutionError);
   });
 
-  it('écrit la version sur une résolution chargée sans elle', () => {
-    assert.match(serializeResolution(parseResolution(document())), /"version": 1/);
+  it('estampille toujours la version courante, même sur un fichier chargé sans elle', () => {
+    // On n'écrit qu'après avoir résolu ou réparé les cibles contre
+    // l'observation d'aujourd'hui : conserver « version: 1 » mentirait sur ce
+    // que le fichier contient, et se tairait sur lui-même le jour du changement.
+    assert.match(
+      serializeResolution(parseResolution(document())),
+      new RegExp(`"version": ${RESOLUTION_VERSION}`),
+    );
   });
 });
 

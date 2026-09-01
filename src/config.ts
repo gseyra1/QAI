@@ -59,9 +59,23 @@ const LEVELS: ReadonlySet<string> = new Set(['off', 'warn', 'fail']);
  * `allow` est validé pour la même raison : une entrée non textuelle ne se
  * verrait qu'au moment d'appeler `includes` dessus, six étapes plus loin.
  */
+const WATCHDOG_KEYS: ReadonlySet<string> = new Set(['consoleErrors', 'requestFailures', 'allow']);
+
 function parseWatchdogs(raw: Record<string, unknown>, path: string): Watchdogs {
   const watchdogs: Watchdogs = {};
   const attendus = [...LEVELS].map((level) => `"${level}"`).join(', ');
+
+  // Une clé inconnue est presque toujours une faute de frappe sur une clé
+  // connue — « requestFailure » sans « s » — et l'ignorer désarme le garde-fou
+  // que l'utilisateur croit armer, exactement le silence que ce module refuse
+  // pour une valeur illisible.
+  for (const key of Object.keys(raw)) {
+    if (!WATCHDOG_KEYS.has(key)) {
+      throw new Error(
+        `${path}: unknown watchdogs key "${key}" (expected: ${[...WATCHDOG_KEYS].join(', ')})`,
+      );
+    }
+  }
 
   for (const key of ['consoleErrors', 'requestFailures'] as const) {
     const value = raw[key];
@@ -113,7 +127,12 @@ function parse(raw: string, path: string): QaiConfig {
   if (typeof document['strict'] === 'boolean') config.strict = document['strict'];
 
   const watchdogs = document['watchdogs'];
-  if (isRecord(watchdogs)) config.watchdogs = parseWatchdogs(watchdogs, path);
+  if (watchdogs !== undefined) {
+    // Présent mais pas un objet — « watchdogs: "fail" » — est une erreur, pas
+    // un no-op : le laisser passer désarmerait le garde-fou en silence.
+    if (!isRecord(watchdogs)) throw new Error(`${path}: watchdogs must be an object`);
+    config.watchdogs = parseWatchdogs(watchdogs, path);
+  }
 
   return absolutize(config, dirname(resolve(path)));
 }

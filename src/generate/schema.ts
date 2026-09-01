@@ -199,7 +199,7 @@ export function stepProposalSchema(): Record<string, unknown> {
               'expectDialog',
               {
                 response: { enum: ['accept', 'dismiss'] },
-                promptText: { type: 'string', description: 'uniquement pour un prompt()' },
+                promptText: { type: 'string', description: 'only for a prompt()' },
               },
               ['response'],
             ),
