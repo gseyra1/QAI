@@ -577,7 +577,9 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     context.intent = intent;
     const outcome = await performActions(cached.actions, context);
     if (!outcome.ok) {
-      await fail(outcome.error);
+      // Le message peut porter un nom d'écran (suggestNearest) ou une note de
+      // réparation venue du modèle : un secret déjà connu y est masqué.
+      await fail(secrets.redact(outcome.error));
       continue;
     }
 

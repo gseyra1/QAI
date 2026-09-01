@@ -45,6 +45,8 @@ const FIXTURE = `<!doctype html>
     <button id="cache"><span style="display:none">Masquer</span>Afficher</button>
     <button id="ghost"><span style="visibility:hidden">Fantome</span>Valider tout</button>
     <button id="saut">ligne1<br>ligne2</button>
+    <button id="entre">Enregistrer<span style="display:none">X</span>le brouillon</button>
+    <button id="icone"><i title="Fermer"></i>Panneau</button>
   </main>
   <p id="salut"></p>
   <script>
@@ -206,6 +208,23 @@ describe('PlaywrightWebDriver', () => {
     assert.equal(findAll(snapshot.root, (n) => n.name === 'ligne1ligne2').length, 0);
   });
 
+  it('traite display:none comme une espace entre deux textes, contrairement à visibility:hidden', async () => {
+    const snapshot = await driver.observe();
+
+    // display:none retire l'élément du flux → le navigateur garde une espace.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Enregistrer le brouillon').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Enregistrerle brouillon').length, 0);
+    // visibility:hidden colle les voisins → pas d'espace.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Valider tout').length, 1);
+  });
+
+  it('fait contribuer le title d\'une icône sans texte au nom, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'FermerPanneau').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Panneau').length, 0);
+  });
+
   /**
    * La preuve dure : le nom observé et le calcul de Playwright convergent. On
    * observe le nom, puis on le résout par ce même nom — si l'observation
@@ -213,7 +232,16 @@ describe('PlaywrightWebDriver', () => {
    * v2, prouvé faux ici pour chaque cas piégeux.
    */
   it('résout chaque nom piégeux par le calcul de Playwright', async () => {
-    for (const name of ['team Membres', 'Envoyer', 'Afficher', 'Valider tout', 'ligne1 ligne2']) {
+    const noms = [
+      'team Membres',
+      'Envoyer',
+      'Afficher',
+      'Valider tout',
+      'ligne1 ligne2',
+      'Enregistrer le brouillon',
+      'FermerPanneau',
+    ];
+    for (const name of noms) {
       const outcome = await driver.resolve({ primary: { role: 'button', name } });
       assert.equal(outcome.found, true, `getByRole must find "${name}"`);
     }

@@ -1,5 +1,12 @@
 import type { Action, Driver, Locator, UINode } from '../driver/types.ts';
-import { evaluateCheck, extractValue, interpolate, interpolateLocator } from '../engine/assert.ts';
+import {
+  evaluateCheck,
+  extractValue,
+  interpolate,
+  interpolateLocator,
+  SecretRegistry,
+  usesEnv,
+} from '../engine/assert.ts';
 import { resolveUpload } from '../engine/files.ts';
 import { matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
@@ -162,6 +169,7 @@ function verifyChecks(
   bag: Readonly<Record<string, string>>,
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
+  secrets: SecretRegistry,
 ): CheckOutcome {
   const errors: string[] = [];
   const produced: Record<string, string> = {};
@@ -207,7 +215,7 @@ function verifyChecks(
       continue;
     }
     try {
-      const result = evaluateCheck(check, { root, location, bag: merged });
+      const result = evaluateCheck(check, { root, location, bag: merged, secrets });
       if (!result.ok) {
         errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
       }
@@ -224,7 +232,10 @@ function verifyChecks(
     }
   }
 
-  return { errors, produced };
+  // Un dernier passage : les erreurs de capture recopient un message de driver,
+  // et un secret d'une étape antérieure a pu s'y glisser. Les raisons
+  // d'assertion sont déjà masquées par evaluateCheck ; ceci couvre le reste.
+  return { errors: errors.map((error) => secrets.redact(error)), produced };
 }
 
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
@@ -236,6 +247,10 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   const steps: Record<string, StepResolution> = {};
   const reports: GenerateStepReport[] = [];
   const bag: Record<string, string> = {};
+  // Comme au rejeu : un secret saisi via {{env.X}} ne doit fuir ni dans les
+  // rejets rapportés, ni — surtout — dans les messages renvoyés au fournisseur
+  // de modèle, qui est un tiers.
+  const secrets = new SecretRegistry();
   let aborted = false;
 
   for (const step of scenario.steps) {
@@ -282,10 +297,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       });
 
       const candidate = asProposal(response.output);
-      const errors =
+      const raw =
         candidate === null
           ? ['malformed response: "actions" must be a non-empty list of known gestures']
           : await verifyActions(driver, candidate.actions);
+      // Masqué avant de rejoindre le rapport ET la conversation : un rejet peut
+      // recopier un nom d'écran, et un secret d'une étape antérieure y figure.
+      const errors = raw.map((error) => secrets.redact(error));
 
       if (errors.length === 0 && candidate !== null) {
         proposal = candidate;
@@ -319,12 +337,16 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
             ? { ...action, files: action.files.map((file) => resolveUpload(baseDir, file)) }
             : action;
         const template = valueOf(staged);
-        await driver.act(
-          template === null ? staged : withValue(staged, interpolate(template, bag)),
-        );
+        if (template === null) {
+          await driver.act(staged);
+        } else {
+          const resolved = interpolate(template, bag);
+          if (usesEnv(template)) secrets.add(resolved);
+          await driver.act(withValue(staged, resolved));
+        }
       }
     } catch (error) {
-      rejections.push(error instanceof Error ? error.message : String(error));
+      rejections.push(secrets.redact(error instanceof Error ? error.message : String(error)));
       reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections });
       aborted = true;
       continue;
@@ -333,7 +355,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     await driver.settle();
     let after = await driver.observe({ interactiveOnly: true });
     let checks: Pick<Proposal, 'captures' | 'assertions'> = proposal;
-    let outcome = verifyChecks(after.root, after.location, bag, checks, step);
+    let outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets);
 
     const checksConversation: ModelMessage[] = [];
     while (outcome.errors.length > 0 && used < attempts) {
@@ -382,7 +404,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       after = await driver.observe({ interactiveOnly: true });
       checks = candidate;
-      outcome = verifyChecks(after.root, after.location, bag, checks, step);
+      outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets);
     }
 
     if (outcome.errors.length > 0) {

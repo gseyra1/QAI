@@ -170,7 +170,8 @@ export function collectTree(
       if (child.nodeType !== 1) continue;
 
       const element = child as Element;
-      // accname exclut les sous-arbres masqués aux technologies d'assistance.
+      // `aria-hidden` et `visibility:hidden` sont exclus SANS espace : le
+      // navigateur colle les textes voisins (« SaveDraft »).
       if (element.getAttribute('aria-hidden') === 'true') continue;
 
       /**
@@ -183,15 +184,22 @@ export function collectTree(
         continue;
       }
 
-      /**
-       * Un descendant que le rendu masque (`display:none`, `visibility:hidden`)
-       * ne compte pas dans le nom accessible : le navigateur l'exclut, donc la
-       * vérification aussi. L'inclure produisait « Masquer Afficher » pour un
-       * `<span style="display:none">Masquer</span>Afficher` — un nom que
-       * Playwright ne calcule jamais, donc une cible introuvable.
-       */
       const style = element.ownerDocument.defaultView?.getComputedStyle(element);
-      if (style && (style.display === 'none' || style.visibility === 'hidden')) continue;
+
+      /**
+       * `display:none` retire l'élément du flux : le navigateur traite le trou
+       * comme une espace (« Save<span style=display:none>x</span>Draft » →
+       * « Save Draft »), alors que `visibility:hidden` colle les voisins
+       * (« SaveDraft »). Reproduire exactement ces deux comportements est ce
+       * qui rend le nom observé résoluble par `getByRole` — un espace en trop
+       * ou en moins, et la cible devient introuvable. Les bords sont ensuite
+       * rognés par `collapse`.
+       */
+      if (style?.display === 'none') {
+        out += ' ';
+        continue;
+      }
+      if (style?.visibility === 'hidden') continue;
 
       const part = contributionOf(element);
       if (part === '') continue;
@@ -223,7 +231,14 @@ export function collectTree(
       if (alt !== null) return alt;
     }
 
-    return contentName(el);
+    const content = contentName(el);
+    if (content !== '') return content;
+
+    // Dernier recours de la spécification : `title`. Une icône sans texte —
+    // `<i title="Fermer"></i>` — apporte « Fermer » au nom de son bouton, que
+    // le navigateur calcule (« FermerLabel ») et que la vérification cherchera.
+    // L'ignorer produisait « Label », un nom que `getByRole` ne trouve jamais.
+    return el.getAttribute('title') ?? '';
   }
 
   /**
