@@ -13,12 +13,12 @@
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
-    "@types/node": "^22.10.2",
+    "@anthropic-ai/sdk": "^0.122.0",
+    "@types/node": "^26.4.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.28.1",
-    "typescript": "^5.7.2"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "playwright": "^1.62.0",
