@@ -14,13 +14,16 @@ import { BudgetedProvider } from './model/budget.ts';
 import type { ModelProvider, Pricing } from './model/types.ts';
 import { loadConfig } from './config.ts';
 import { artifactWriter } from './report/artifacts.ts';
+import { formatJUnit } from './report/junit.ts';
 import { formatMarkdown } from './report/markdown.ts';
 import { formatSuite } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
+import { RESOLUTION_VERSION } from './resolution/types.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
+import { matchesTags, parseTags } from './scenario/types.ts';
 import type { StateProvider } from './state/types.ts';
 
 const USAGE = `qai — QA agent
@@ -37,6 +40,7 @@ Options
                         install the state declared by "given"
   --provider <module>   module default-exporting a ModelProvider, and
                         optionally a "pricing" constant
+  --tags <a,b>          run only the journeys carrying one of these tags
   --workers <n>         journeys in parallel (default: 4)
   --heal                repair stale targets and rewrite the resolutions
   --max-cost <n>        model spend cap
@@ -47,7 +51,7 @@ Options
   --resolution <path>   force the resolution path (single scenario only)
   --config <path>       default: qai.config.json, searched upward
   --artifacts <dir>     where to store failure captures (default .qai/artifacts)
-  --format <f>          text (default), json or markdown
+  --format <f>          text (default), json, markdown or junit
   --out <path>          write the report to a file
   --run-url <url>       link to the CI run, inserted into the markdown
   --json                alias for --format json
@@ -98,6 +102,7 @@ export async function main(argv: string[]): Promise<number> {
       resolution: { type: 'string' },
       states: { type: 'string' },
       provider: { type: 'string' },
+      tags: { type: 'string' },
       workers: { type: 'string' },
       'max-cost': { type: 'string' },
       attempts: { type: 'string' },
@@ -130,6 +135,7 @@ export async function main(argv: string[]): Promise<number> {
       values['assert-timeout'] !== undefined
         ? Number(values['assert-timeout'])
         : config.assertTimeout,
+    tags: parseTags(values.tags ?? config.tags),
     artifacts: values.artifacts ?? config.artifacts ?? '.qai/artifacts',
     strict: values.strict === true || config.strict === true,
   };
@@ -185,7 +191,25 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write('no scenarios found\n');
     return 1;
   }
-  if (values.resolution !== undefined && paths.length > 1) {
+
+  /**
+   * Les scénarios sont chargés une fois, puis filtrés, pour les trois
+   * commandes. Filtrer après chargement est ce qui permet de sélectionner par
+   * tag : le tag vit dans le fichier, pas dans son nom.
+   */
+  const loaded: { path: string; scenario: Scenario }[] = [];
+  for (const path of paths) loaded.push({ path, scenario: await loadScenario(path) });
+
+  const selected = loaded.filter((item) => matchesTags(item.scenario, settings.tags));
+  if (selected.length === 0) {
+    // Sortir en 0 ferait qu'un tag mal orthographié rende un job de CI vert
+    // sans avoir rien joué — exactement le mode de panne que l'outil existe
+    // pour éviter.
+    process.stderr.write(`no scenario carries the requested tags (${settings.tags.join(', ')})
+`);
+    return 1;
+  }
+  if (values.resolution !== undefined && selected.length > 1) {
     process.stderr.write('--resolution only applies to a single scenario\n');
     return 1;
   }
@@ -221,8 +245,7 @@ export async function main(argv: string[]): Promise<number> {
     const provider = await modelProvider(settings.provider);
     let failed = false;
 
-    for (const path of paths) {
-      const scenario = await loadScenario(path);
+    for (const { path, scenario } of selected) {
       const driver = createDriver();
       try {
         await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
@@ -246,6 +269,9 @@ export async function main(argv: string[]): Promise<number> {
           scenario,
           driver,
           provider,
+          // Même base qu'au rejeu, sans quoi un chemin de fixture écrit ici ne
+          // désigne pas le même fichier là-bas.
+          baseDir: dirname(path),
           ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });
 
@@ -282,10 +308,45 @@ export async function main(argv: string[]): Promise<number> {
   const items: SuiteItem[] = [];
   let inconsistent = false;
 
-  for (const path of paths) {
-    const scenario = await loadScenario(path);
+  for (const { path, scenario } of selected) {
     const resolutionPath = values.resolution ?? resolutionPathFor(path, scenario);
-    const resolution = await loadResolution(resolutionPath);
+
+    /**
+     * Un scénario sans résolution est un cas NORMAL d'une suite en cours
+     * d'écriture, pas une panne d'outil.
+     *
+     * Laisser l'erreur de lecture remonter arrêtait la commande entière sur le
+     * premier fichier manquant, en affichant un ENOENT brut : une suite où dix
+     * parcours sur cinquante restent à résoudre devenait invérifiable dans son
+     * ensemble, alors que c'est précisément là qu'on a besoin de savoir où on
+     * en est. On le compte comme une incohérence de plus — la commande échoue
+     * toujours, mais après avoir tout dit.
+     */
+    let resolution;
+    try {
+      resolution = await loadResolution(resolutionPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      inconsistent = true;
+      process.stderr.write(
+        `${scenario.id}: no resolution — run "qai resolve" on this journey (${resolutionPath})\n`,
+      );
+      continue;
+    }
+
+    // Une résolution écrite sous une observation plus ancienne se recharge,
+    // mais ses cibles ont pu être calculées sur des noms accessibles que ce
+    // moteur ne produit plus à l'identique : le rejeu peut passer au rouge sans
+    // qu'aucune régression n'existe. On le dit clairement plutôt que de laisser
+    // deviner — régénérer avec « qai resolve » réaligne le cache.
+    const version = resolution.version ?? 1;
+    if (version < RESOLUTION_VERSION) {
+      process.stderr.write(
+        `${scenario.id}: resolution is v${version}, this QAI observes v${RESOLUTION_VERSION} — ` +
+          `regenerate with "qai resolve" if assertions fail unexpectedly (${resolutionPath})\n`,
+      );
+    }
+
     const issues = checkConsistency(scenario, resolution, 'web');
 
     if (issues.length > 0) {
@@ -294,7 +355,9 @@ export async function main(argv: string[]): Promise<number> {
       for (const issue of issues) process.stderr.write(`  • ${formatIssue(issue)}\n`);
       continue;
     }
-    items.push({ scenario, resolution, resolutionPath });
+    // Les chemins d'un téléversement sont relatifs au fichier scénario, pas au
+    // répertoire d'où la commande est lancée.
+    items.push({ scenario, resolution, resolutionPath, baseDir: dirname(path) });
   }
 
   if (command === 'check') {
@@ -336,6 +399,7 @@ export async function main(argv: string[]): Promise<number> {
       : {}),
     ...(settings.workers !== undefined ? { workers: settings.workers } : {}),
     ...(settings.assertTimeout !== undefined ? { assertTimeoutMs: settings.assertTimeout } : {}),
+    ...(config.watchdogs !== undefined ? { watchdogs: config.watchdogs } : {}),
     captureArtifact: artifactWriter(settings.artifacts),
   });
 
@@ -348,7 +412,9 @@ export async function main(argv: string[]): Promise<number> {
             ...(values['run-url'] !== undefined ? { runUrl: values['run-url'] } : {}),
             artifactName: 'qai-captures',
           })
-        : `${formatSuite(report)}\n`;
+        : format === 'junit'
+          ? formatJUnit(report, { strict: settings.strict })
+          : `${formatSuite(report)}\n`;
 
   if (values.out === undefined) process.stdout.write(rendered);
   else {

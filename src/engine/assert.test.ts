@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { evaluateCheck, InterpolationError, interpolate, toNumber } from './assert.ts';
+import type { UINode } from '../driver/types.ts';
+import { evaluateCheck, InterpolationError, interpolate, redact, toNumber, usesEnv } from './assert.ts';
 import { node } from './fixtures.ts';
+
+/** Contexte d'évaluation minimal : la plupart des vérifications ignorent l'URL. */
+function on(root: UINode, bag: Record<string, string> = {}, location = 'http://app.test/') {
+  return { root, location, bag };
+}
 
 describe('toNumber', () => {
   it('lit les formats français et anglais', () => {
@@ -35,6 +41,53 @@ describe('interpolate', () => {
       (error: unknown) => error instanceof InterpolationError && error.missing.includes('absent'),
     );
   });
+
+  /**
+   * Le fichier de résolution vit dans git : un mot de passe recopié dedans y
+   * reste pour toujours. Le template y va, la valeur est lue à l'exécution.
+   */
+  it('résout une variable d\'environnement à l\'exécution', () => {
+    process.env['QAI_TEST_SECRET'] = 'ouvre-toi';
+    try {
+      assert.equal(interpolate('{{env.QAI_TEST_SECRET}}', {}), 'ouvre-toi');
+      assert.equal(usesEnv('{{env.QAI_TEST_SECRET}}'), true);
+      assert.equal(usesEnv('{{prix}}'), false);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  /**
+   * Une variable absente doit crier. Remplir un champ mot de passe avec du
+   * vide échouerait six étapes plus loin, sur un message muet sur la cause.
+   */
+  it('nomme la variable d\'environnement manquante', () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    assert.throws(
+      () => interpolate('{{env.QAI_TEST_ABSENT}}', {}),
+      (error: unknown) =>
+        error instanceof InterpolationError &&
+        error.missing.includes('env.QAI_TEST_ABSENT') &&
+        /undefined environment variable\(s\): QAI_TEST_ABSENT/.test(error.message),
+    );
+  });
+
+  it('distingue capture manquante et variable manquante dans le même message', () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    assert.throws(
+      () => interpolate('{{inconnu}}/{{env.QAI_TEST_ABSENT}}', {}),
+      (error: unknown) =>
+        error instanceof InterpolationError &&
+        /unknown capture\(s\): inconnu/.test(error.message) &&
+        /undefined environment variable/.test(error.message),
+    );
+  });
+
+  it('efface les valeurs secrètes d\'un message de rapport', () => {
+    assert.equal(redact('saisie « hunter2 » refusée', ['hunter2']), 'saisie « *** » refusée');
+    assert.equal(redact('rien à cacher', []), 'rien à cacher');
+    assert.equal(redact('rien à cacher', ['']), 'rien à cacher');
+  });
 });
 
 describe('evaluateCheck', () => {
@@ -47,8 +100,8 @@ describe('evaluateCheck', () => {
   ]);
 
   it('compare un texte', () => {
-    assert.deepEqual(evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '2' }, tree, {}), { ok: true });
-    const bad = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '3' }, tree, {});
+    assert.deepEqual(evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '2' }, on(tree)), { ok: true });
+    const bad = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: '2' }, value: '3' }, on(tree));
     assert.equal(bad.ok, false);
     assert.match(bad.ok === false ? bad.reason : '', /expected "3", observed "2"/);
   });
@@ -56,8 +109,7 @@ describe('evaluateCheck', () => {
   it('compare un nombre indépendamment du format', () => {
     const result = evaluateCheck(
       { check: 'numberEquals', target: { role: 'text', name: '129,00 €' }, value: '{{prix}}' },
-      tree,
-      { prix: '129.00' },
+      on(tree, { prix: '129.00' }),
     );
     assert.deepEqual(result, { ok: true });
   });
@@ -65,39 +117,76 @@ describe('evaluateCheck', () => {
   it('compte les éléments', () => {
     const ok = evaluateCheck(
       { check: 'countAtLeast', target: { role: 'listitem', within: { role: 'list', name: 'Résultats' } }, value: 2 },
-      tree,
-      {},
+      on(tree),
     );
     assert.deepEqual(ok, { ok: true });
 
     const ko = evaluateCheck(
       { check: 'countAtLeast', target: { role: 'listitem', within: { role: 'list', name: 'Résultats' } }, value: 5 },
-      tree,
-      {},
+      on(tree),
     );
     assert.equal(ko.ok, false);
   });
 
   it('vérifie un état', () => {
     assert.deepEqual(
-      evaluateCheck({ check: 'stateIs', target: { role: 'checkbox' }, value: 'checked' }, tree, {}),
+      evaluateCheck({ check: 'stateIs', target: { role: 'checkbox' }, value: 'checked' }, on(tree)),
       { ok: true },
     );
   });
 
   it('distingue présent-mais-invisible d\'absent', () => {
-    const invisible = evaluateCheck({ check: 'visible', target: { role: 'button', name: 'Masqué' } }, tree, {});
+    const invisible = evaluateCheck({ check: 'visible', target: { role: 'button', name: 'Masqué' } }, on(tree));
     assert.equal(invisible.ok, false);
     assert.match(invisible.ok === false ? invisible.reason : '', /not visible/);
 
     assert.deepEqual(
-      evaluateCheck({ check: 'absent', target: { role: 'button', name: 'Masqué' } }, tree, {}),
+      evaluateCheck({ check: 'absent', target: { role: 'button', name: 'Masqué' } }, on(tree)),
       { ok: true },
     );
   });
 
+  /**
+   * Le seul cas où une assertion ne regarde pas l'arbre. C'est ce qui rend
+   * exprimable « l'utilisateur est redirigé vers la connexion », donc toute la
+   * famille des parcours de droits d'accès.
+   */
+  it('vérifie l\'adresse courante sans cible', () => {
+    const ici = on(tree, {}, 'http://app.test/connexion?next=/admin');
+
+    assert.deepEqual(evaluateCheck({ check: 'urlContains', value: '/connexion' }, ici), { ok: true });
+    assert.deepEqual(
+      evaluateCheck({ check: 'urlEquals', value: 'http://app.test/connexion?next=/admin' }, ici),
+      { ok: true },
+    );
+
+    const ko = evaluateCheck({ check: 'urlContains', value: '/tableau-de-bord' }, ici);
+    assert.equal(ko.ok, false);
+    assert.match(ko.ok === false ? ko.reason : '', /not found in URL/);
+  });
+
+  /**
+   * Barre finale, paramètres et fragment font partie de ce qui est affirmé :
+   * les normaliser ferait passer une redirection vers « /connexion?next=/admin »
+   * pour une redirection vers « /connexion ».
+   */
+  it('compare l\'URL telle quelle, sans normaliser', () => {
+    const ici = on(tree, {}, 'http://app.test/panier/');
+    assert.equal(evaluateCheck({ check: 'urlEquals', value: 'http://app.test/panier' }, ici).ok, false);
+  });
+
+  it('interpole une capture dans l\'URL attendue', () => {
+    const ici = on(tree, { id: '42' }, 'http://app.test/eleves/42');
+    assert.deepEqual(evaluateCheck({ check: 'urlContains', value: '/eleves/{{id}}' }, ici), { ok: true });
+
+    assert.throws(
+      () => evaluateCheck({ check: 'urlContains', value: '/eleves/{{absent}}' }, ici),
+      InterpolationError,
+    );
+  });
+
   it('échoue clairement quand la cible n\'existe pas', () => {
-    const result = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: 'inconnu' }, value: 'x' }, tree, {});
+    const result = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: 'inconnu' }, value: 'x' }, on(tree));
     assert.equal(result.ok, false);
     assert.match(result.ok === false ? result.reason : '', /no element/);
   });
@@ -113,6 +202,77 @@ describe('evaluateCheck', () => {
       value: 129 as unknown as string,
     } as const;
 
-    assert.deepEqual(evaluateCheck(check, ecran, {}), { ok: true });
+    assert.deepEqual(evaluateCheck(check, { root: ecran, location: 'http://app.test/', bag: {} }), { ok: true });
+  });
+
+  it('ne recopie pas un secret non numérique dans le message de format', () => {
+    // `numberEquals` construisait ses deux messages avec la valeur résolue au
+    // lieu de `shown`. Comparer un secret non numérique le recopiait donc en
+    // clair dans le rapport — c'est-à-dire dans les journaux d'une CI, qui
+    // sont archivés et souvent lisibles par toute l'organisation.
+    process.env['QAI_TEST_SECRET'] = 'hunter2';
+    try {
+      const ecran = node('group', 'page', [node('text', 'gratuit')]);
+      const result = evaluateCheck(
+        { check: 'numberEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      const reason = result.ok === false ? result.reason : '';
+      assert.doesNotMatch(reason, /hunter2/);
+      assert.match(reason, /non-numeric value: "gratuit" vs "\*\*\*"/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('ne le recopie pas non plus par le message d\'inégalité', () => {
+    // Un code à quatre chiffres passe `toNumber` : il ne sort pas par le
+    // message de format mais par l'autre, celui qui compare les deux nombres.
+    // Masquer un seul des deux chemins ne ferme que la moitié de la fuite.
+    process.env['QAI_TEST_SECRET'] = '4242';
+    try {
+      const ecran = node('group', 'page', [node('text', '7')]);
+      const result = evaluateCheck(
+        { check: 'numberEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      const reason = result.ok === false ? result.reason : '';
+      assert.doesNotMatch(reason, /4242/);
+      assert.match(reason, /expected \*\*\*, observed 7/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('masque le secret même quand c\'est la page qui le renvoie', () => {
+    // `shown` ne protège que la valeur attendue. Quand l'application réaffiche
+    // ce qui a été saisi, le secret arrive par `observed`, qu'aucune branche
+    // ne masque : seul le filet posé à la sortie de `evaluateCheck` l'attrape.
+    process.env['QAI_TEST_SECRET'] = 'hunter2';
+    try {
+      const ecran = node('group', 'page', [node('text', 'Mot de passe : hunter2')]);
+      const result = evaluateCheck(
+        { check: 'textEquals', target: { role: 'text' }, value: '{{env.QAI_TEST_SECRET}}' },
+        on(ecran),
+      );
+      assert.equal(result.ok, false);
+      assert.doesNotMatch(result.ok === false ? result.reason : '', /hunter2/);
+    } finally {
+      delete process.env['QAI_TEST_SECRET'];
+    }
+  });
+
+  it('laisse le message intact quand la valeur ne vient pas de l\'environnement', () => {
+    // Le filet ne doit pas dégrader le diagnostic ordinaire : sans secret, le
+    // message garde la valeur attendue, qui est ce qui rend l'échec lisible.
+    const ecran = node('group', 'page', [node('text', '7')]);
+    const result = evaluateCheck(
+      { check: 'numberEquals', target: { role: 'text' }, value: '42' },
+      on(ecran),
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.ok === false ? result.reason : '', /expected 42, observed 7/);
   });
 });

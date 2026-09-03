@@ -88,6 +88,32 @@ export function collectTree(
     if (tag === 'P' || tag === 'SPAN' || tag === 'LABEL' || tag === 'STRONG' || tag === 'EM') {
       return 'text';
     }
+
+    /**
+     * Un conteneur générique qui ne contient QUE du texte est une feuille de
+     * texte, pas un groupe.
+     *
+     * Sans cette règle, tout texte écrit dans un `div` est invisible :
+     * `group` n'est pas un rôle dont accname déduit le nom, donc le nœud sort
+     * de l'observation avec un nom vide et le texte disparaît de l'arbre. Or
+     * c'est le rendu par défaut d'à peu près toutes les bibliothèques de
+     * composants — antd y met ses messages de validation de formulaire, ce
+     * qui rend « le formulaire refuse une saisie vide » inexprimable.
+     *
+     * La règle est délibérément étroite : uniquement une feuille (aucun enfant
+     * élément), et uniquement sans nom déclaré. Un `div` portant `aria-label`
+     * ou un `role` explicite garde son rôle, donc aucun ciblage existant ne
+     * change de sens.
+     */
+    if (
+      el.children.length === 0 &&
+      !el.hasAttribute('aria-label') &&
+      !el.hasAttribute('aria-labelledby') &&
+      (el.textContent ?? '').trim() !== ''
+    ) {
+      return 'text';
+    }
+
     return 'group';
   }
 
@@ -115,6 +141,104 @@ export function collectTree(
 
   function ownText(el: Element): string {
     return collapse(el.textContent ?? '');
+  }
+
+  /**
+   * Nom déduit du contenu, en suivant accname plutôt que le texte brut.
+   *
+   * `textContent` ne voit que les nœuds de texte. Or un descendant peut porter
+   * son nom ailleurs — une icône est typiquement
+   * `<span role="img" aria-label="team">` sans le moindre texte. La
+   * spécification, elle, fait contribuer à chaque descendant son propre nom
+   * accessible : le navigateur lit donc « team Élèves » là où `textContent` ne
+   * rend que « Élèves ».
+   *
+   * L'écart n'est pas bénin. C'est cet arbre qu'on montre au modèle à la
+   * génération, tandis que la VÉRIFICATION passe par le calcul du navigateur :
+   * les deux doivent nommer les éléments de la même façon. Sinon le modèle
+   * recopie fidèlement un nom que la vérification rejettera toujours, et
+   * `resolve` ne peut converger sur aucune cible porteuse d'icône.
+   */
+  function contentName(el: Element): string {
+    let out = '';
+
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === 3) {
+        out += child.textContent ?? '';
+        continue;
+      }
+      if (child.nodeType !== 1) continue;
+
+      const element = child as Element;
+      // `aria-hidden` et `visibility:hidden` sont exclus SANS espace : le
+      // navigateur colle les textes voisins (« SaveDraft »).
+      if (element.getAttribute('aria-hidden') === 'true') continue;
+
+      /**
+       * `<br>` est un saut de ligne : accname le compte comme une espace, et
+       * le navigateur aussi. L'ignorer collait « ligne1ligne2 » là où la
+       * vérification lit « ligne1 ligne2 ».
+       */
+      if (element.tagName === 'BR') {
+        out += ' ';
+        continue;
+      }
+
+      const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+
+      /**
+       * `display:none` retire l'élément du flux : le navigateur traite le trou
+       * comme une espace (« Save<span style=display:none>x</span>Draft » →
+       * « Save Draft »), alors que `visibility:hidden` colle les voisins
+       * (« SaveDraft »). Reproduire exactement ces deux comportements est ce
+       * qui rend le nom observé résoluble par `getByRole` — un espace en trop
+       * ou en moins, et la cible devient introuvable. Les bords sont ensuite
+       * rognés par `collapse`.
+       */
+      if (style?.display === 'none') {
+        out += ' ';
+        continue;
+      }
+      if (style?.visibility === 'hidden') continue;
+
+      const part = contributionOf(element);
+      if (part === '') continue;
+
+      /**
+       * Le séparateur dépend du rendu, il n'est pas systématique.
+       *
+       * accname n'insère un espace qu'autour d'un descendant qui n'est pas en
+       * ligne — c'est ce que fait le navigateur, donc ce que voit la
+       * vérification. Joindre inconditionnellement produirait « Envo yer »
+       * pour `<button>Envo<b>yer</b></button>` : un nom que Playwright ne
+       * calculera jamais, donc une cible que `resolve` ne pourra pas viser.
+       */
+      out += style?.display === 'inline' ? part : ` ${part} `;
+    }
+
+    return collapse(out);
+  }
+
+  /** Ce qu'un descendant apporte au nom de son parent, selon accname. */
+  function contributionOf(el: Element): string {
+    const label = el.getAttribute('aria-label');
+    if (label) return label;
+
+    if (el instanceof HTMLImageElement) {
+      // `alt=""` est une image décorative : elle n'apporte rien, et ce n'est
+      // pas la même chose qu'une image sans `alt` du tout.
+      const alt = el.getAttribute('alt');
+      if (alt !== null) return alt;
+    }
+
+    const content = contentName(el);
+    if (content !== '') return content;
+
+    // Dernier recours de la spécification : `title`. Une icône sans texte —
+    // `<i title="Fermer"></i>` — apporte « Fermer » au nom de son bouton, que
+    // le navigateur calcule (« FermerLabel ») et que la vérification cherchera.
+    // L'ignorer produisait « Label », un nom que `getByRole` ne trouve jamais.
+    return el.getAttribute('title') ?? '';
   }
 
   /**
@@ -164,7 +288,7 @@ export function collectTree(
     // portant sur son contenu.
     if (!NAME_FROM_CONTENT.has(roleOf(el))) return '';
 
-    const text = ownText(el);
+    const text = contentName(el);
     return text.length <= 120 ? text : '';
   }
 

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Resolution, StepResolution } from './types.ts';
+import { RESOLUTION_VERSION } from './types.ts';
 
 export class ResolutionError extends Error {
   readonly path: string;
@@ -43,6 +44,29 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   if (typeof recordedAt !== 'string') throw new ResolutionError('missing recordedAt field', path);
   if (!isRecord(steps)) throw new ResolutionError('missing steps field', path);
 
+  // Champ absent = 1 : les fichiers écrits avant l'introduction du champ
+  // doivent continuer à se charger tels quels. Le littéral est délibéré —
+  // prendre `RESOLUTION_VERSION` ferait passer tout ancien fichier pour la
+  // version courante, donc le mécanisme se tairait exactement le jour où le
+  // format change, c'est-à-dire le seul jour où il sert.
+  const rawVersion = doc['version'];
+  let version = 1;
+  if (rawVersion !== undefined) {
+    if (typeof rawVersion !== 'number' || !Number.isInteger(rawVersion) || rawVersion < 1) {
+      throw new ResolutionError('invalid version field (expected an integer ≥ 1)', path);
+    }
+    if (rawVersion > RESOLUTION_VERSION) {
+      // Lire quand même produirait des verts qui ne prouvent rien : un format
+      // plus récent peut décrire une observation que ce moteur ne sait pas
+      // reproduire.
+      throw new ResolutionError(
+        `resolution is v${rawVersion}, this QAI reads up to v${RESOLUTION_VERSION} — upgrade QAI or regenerate the resolution`,
+        path,
+      );
+    }
+    version = rawVersion;
+  }
+
   const parsed: Record<string, StepResolution> = {};
   for (const [stepId, value] of Object.entries(steps)) {
     if (!isRecord(value)) throw new ResolutionError(`step ${stepId} is malformed`, path);
@@ -53,6 +77,7 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
   }
 
   const resolution: Resolution = {
+    version,
     scenario,
     platform: platform as Resolution['platform'],
     recordedAt,

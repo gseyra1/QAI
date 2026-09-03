@@ -37,6 +37,17 @@ describe('configuration file', () => {
     assert.equal(config.scenarios?.length, 1);
   });
 
+  /** Un tag n'est pas un chemin : il ne doit pas passer par l'absolutisation. */
+  it('reads tags, as a list or as a single string', async () => {
+    const liste = join(dir, 'tags.json');
+    await writeFile(liste, JSON.stringify({ tags: ['critical-path', 'billing'] }));
+    assert.deepEqual((await loadConfig(liste)).config.tags, ['critical-path', 'billing']);
+
+    const unique = join(dir, 'tag.json');
+    await writeFile(unique, JSON.stringify({ tags: 'critical-path' }));
+    assert.deepEqual((await loadConfig(unique)).config.tags, ['critical-path']);
+  });
+
   it('ignores fields of unexpected type instead of propagating them', async () => {
     const path = join(dir, 'types.json');
     await writeFile(path, JSON.stringify({ workers: 'quatre', baseUrl: 42, strict: true }));
@@ -55,6 +66,57 @@ describe('configuration file', () => {
     const path = join(dir, 'casse.json');
     await writeFile(path, '{ ceci nest pas du json');
     await assert.rejects(() => loadConfig(path), /casse\.json/);
+  });
+
+  /**
+   * Le cas qui compte : une faute de frappe sur « fail » retombait sur `off`,
+   * donc l'utilisateur croyait son garde-fou armé alors qu'il ne l'était pas,
+   * et la suite passait au vert. Un réglage illisible arrête déjà la commande
+   * côté CLI ; un garde-fou dont la raison d'être est d'être armé mérite au
+   * moins autant.
+   */
+  it('rejects an unknown watchdog level instead of falling back to off', async () => {
+    const path = join(dir, 'sentinelle.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { requestFailures: 'fial' } }));
+    await assert.rejects(() => loadConfig(path), /watchdogs\.requestFailures must be one of/);
+  });
+
+  it('rejects an allow list that is not made of strings', async () => {
+    // Une entrée non textuelle ne se verrait qu'au moment d'appeler
+    // `includes` dessus, en plein milieu d'un parcours.
+    const path = join(dir, 'allow.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { allow: ['/analytics', 404] } }));
+    await assert.rejects(() => loadConfig(path), /watchdogs\.allow must be an array of strings/);
+  });
+
+  it('rejects a misspelled watchdog key instead of silently disarming it', async () => {
+    // « requestFailure » sans « s » retombait sur off : le garde-fou que
+    // l'utilisateur croyait armer restait muet, exactement le silence que le
+    // module refuse pour une valeur illisible.
+    const path = join(dir, 'typo.json');
+    await writeFile(path, JSON.stringify({ watchdogs: { requestFailure: 'fail' } }));
+    await assert.rejects(() => loadConfig(path), /unknown watchdogs key "requestFailure"/);
+  });
+
+  it('rejects a non-object watchdogs block instead of ignoring it', async () => {
+    const path = join(dir, 'scalar.json');
+    await writeFile(path, JSON.stringify({ watchdogs: 'fail' }));
+    await assert.rejects(() => loadConfig(path), /watchdogs must be an object/);
+  });
+
+  it('still reads a well-formed watchdog block', async () => {
+    const path = join(dir, 'sentinelle-ok.json');
+    await writeFile(
+      path,
+      JSON.stringify({ watchdogs: { consoleErrors: 'warn', requestFailures: 'fail', allow: ['/analytics'] } }),
+    );
+    const { config } = await loadConfig(path);
+
+    assert.deepEqual(config.watchdogs, {
+      consoleErrors: 'warn',
+      requestFailures: 'fail',
+      allow: ['/analytics'],
+    });
   });
 
   it('returns an empty configuration when there is no file', async () => {

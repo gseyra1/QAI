@@ -41,6 +41,69 @@ a second "Valider" button, a test that "passes" by silently clicking the wrong
 one is worse than no test at all. The driver refuses to choose and reports the
 match count.
 
+## Uploading a file
+
+```json
+{ "kind": "upload", "target": { … }, "files": ["fixtures/statement.csv"] }
+```
+
+The paths are **relative to the scenario file**, and it is the engine that makes
+them absolute just before acting — at generation and at replay alike, from the
+same base. The resolution file is versioned: writing an absolute path into it
+would produce a cache that only replays on the machine that wrote it.
+
+**A path that leaves the scenario directory is refused**, absolute paths and
+`..` included, and nothing is sent. Actions are not always written by hand:
+they come from a model reading the screen, and a screen is untrusted input. An
+upload the engine did not frame would let a scenario hand the application under
+test any file on the machine — a private key, a `.env`. The refusal names the
+expected directory so it can be corrected.
+
+The target is the `input[type=file]` itself, almost always hidden behind a
+styled button. `setInputFiles` accepts it where a click would fail. An input
+with no accessible name has nothing to target semantically: the resolution will
+go through its technical fallback, and this is the case where that fallback is
+legitimate rather than a sign of degradation.
+
+## Native dialogs are declared before the gesture
+
+Playwright **auto-dismisses** `confirm()`, `alert()` and `prompt()` as long as
+nobody is listening. A "delete then confirm" journey therefore ran without any
+error and without deleting anything: the worst case, a green that proves
+nothing.
+
+`expectDialog` arms the answer to the **next** dialog, once only:
+
+```json
+[
+  { "kind": "expectDialog", "response": "accept" },
+  { "kind": "click", "target": { "primary": { "role": "button", "name": "Delete" } } }
+]
+```
+
+The order is not negotiable. The dialog blocks the page from the click onwards:
+there is no instant *after* the gesture where one could still answer.
+
+With no policy armed, the driver dismisses — the previous behaviour, so that
+existing resolutions do not change meaning. A policy armed that nobody consumed
+becomes a step **warning**: the click succeeded but the expected dialog never
+appeared, which almost always means the confirmation disappeared from the
+application.
+
+## `select` targets the label, not the value
+
+Playwright's `selectOption("std")` matches the option's **value** — a technical
+detail the user never sees. An intent-based tool must target what is displayed:
+the driver therefore tries the label first ("Standard delivery"), and falls back
+to the value if no label matches.
+
+The options are read in one go before choosing, rather than trying and catching
+the error: a failed `selectOption` burns a full timeout — thirty seconds per
+`select` on resolutions written by value.
+
+A mobile driver will apply the same rule to its own native picker: what is
+targeted is the label read on screen.
+
 ## Role mapping
 
 This table decides whether portability is real. QAI's vocabulary is the

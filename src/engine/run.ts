@@ -1,6 +1,9 @@
 import type {
   Action,
+  ConsoleEntry,
   Driver,
+  NetworkEntry,
+  Observations,
   Platform,
   ResolvedTarget,
   ResolveOutcome,
@@ -8,11 +11,22 @@ import type {
   UISnapshot,
 } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
-import { targetOf, withTarget } from '../resolution/types.ts';
+import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
-import { evaluateCheck, extractValue, InterpolationError, interpolateLocator } from './assert.ts';
+import {
+  evaluateCheck,
+  extractValue,
+  interpolate,
+  isFailed,
+  InterpolationError,
+  interpolateLocator,
+  SecretRegistry,
+  usesEnv,
+} from './assert.ts';
+import { resolveUpload } from './files.ts';
 import { matchOne } from './match.ts';
+import { suggestNearest } from './nearest.ts';
 
 export interface AssertionFailure {
   assertion: string;
@@ -46,7 +60,44 @@ export interface StepReport {
   warnings?: string[];
   /** Identifiant rendu par `captureArtifact`, pour l'échec de cette étape. */
   screenshot?: string;
+  /**
+   * Requêtes en échec et erreurs console de l'étape.
+   *
+   * Attachées **uniquement quand l'étape échoue ou qu'un garde-fou se
+   * déclenche** : le rapport d'une suite de cinquante parcours deviendrait
+   * sinon illisible, et le diagnostic n'a d'intérêt que là où quelque chose a
+   * cassé.
+   */
+  network?: NetworkEntry[];
+  consoleErrors?: string[];
   durationMs: number;
+}
+
+/** Ce qu'un garde-fou fait de ce qu'il voit. `off` par défaut. */
+export type WatchdogLevel = 'off' | 'warn' | 'fail';
+
+/**
+ * Garde-fous de suite : ce qu'aucune assertion ne déclare mais que personne
+ * n'accepte vraiment.
+ *
+ * Le défaut est `off` sur les deux, et ce n'est pas de la timidité : les
+ * poser d'emblée en `fail` ferait échouer des suites entières le jour de la
+ * mise à jour, sur des erreurs préexistantes. La montée se fait en deux temps,
+ * `warn` puis `fail`, une fois le bruit connu inscrit dans `allow`.
+ */
+export interface Watchdogs {
+  consoleErrors?: WatchdogLevel;
+  requestFailures?: WatchdogLevel;
+  /**
+   * Fragments tolérés, **partagés par les deux sentinelles**.
+   *
+   * Un fragment est cherché dans l'URL pour `requestFailures` et dans le texte
+   * pour `consoleErrors` : une seule liste couvre donc les deux, et un
+   * fragment écrit pour l'une taira aussi l'autre s'il s'y retrouve. C'est
+   * voulu — le même tiers bruyant produit d'ordinaire les deux bruits — mais
+   * il faut le savoir pour ne pas élargir la liste plus qu'on ne croit.
+   */
+  allow?: string[];
 }
 
 /** Trois états, pas deux : « réparé » n'est pas un succès silencieux. */
@@ -111,17 +162,42 @@ export interface RunInput {
    * rendraient une suite de cinquante parcours ingérable.
    */
   captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
+  /**
+   * Dossier de référence des chemins relatifs — celui du fichier scénario.
+   *
+   * Seul `upload` s'en sert aujourd'hui. Les chemins restent relatifs dans le
+   * fichier de résolution, qui est versionné : les absolutiser à l'écriture
+   * produirait un cache qui ne rejoue que sur la machine qui l'a écrit.
+   */
+  baseDir?: string;
+  /** Garde-fous réseau et console. Tout à `off` par défaut. */
+  watchdogs?: Watchdogs;
 }
 
 function supports(driver: Driver, action: Action): boolean {
   if (action.kind === 'hover') return driver.capabilities.hover;
   if (action.kind === 'swipe') return driver.capabilities.swipe;
   if (action.kind === 'navigate') return driver.capabilities.navigateByUrl;
+  // Absent vaut non : un pilote antérieur à `expectDialog` ne déclare rien, et
+  // le laisser passer rendrait vert un « supprimer puis confirmer » où rien
+  // n'a été supprimé.
+  if (action.kind === 'expectDialog') return driver.capabilities.dialogs === true;
   return true;
 }
 
 /** Agir sur un élément désactivé n'a pas de sens ; le survol et le défilement, si. */
 const NEEDS_ENABLED = new Set(['click', 'fill', 'select']);
+
+/**
+ * Le seul geste qui vise légitimement un élément invisible.
+ *
+ * Un `input[type=file]` est presque toujours masqué derrière un bouton stylé —
+ * c'est le rendu par défaut de toutes les bibliothèques de composants. Le
+ * dépôt de fichier ne passe pas par un clic : il écrit directement dans le
+ * champ, ce que le navigateur autorise sur un élément masqué. Exiger la
+ * visibilité ici rendrait `upload` inutilisable partout où il sert.
+ */
+const ALLOWS_INVISIBLE = new Set(['upload']);
 
 function describeTarget(target: ResolvedTarget): string {
   const { name, role } = target.primary;
@@ -144,15 +220,19 @@ type ActionsOutcome =
 
 interface ActionsContext {
   driver: Driver;
+  baseDir: string;
   healer: Healer | undefined;
   healBudget: number;
   healCount: number;
   stepId: string;
   intent: string;
+  bag: Readonly<Record<string, string>>;
+  /** Le registre de secrets de l'exécution, partagé par toutes les étapes. */
+  secrets: SecretRegistry;
 }
 
 async function performActions(actions: Action[], context: ActionsContext): Promise<ActionsOutcome> {
-  const { driver, healer } = context;
+  const { driver, healer, secrets } = context;
   const heals: AppliedHeal[] = [];
   const warnings: string[] = [];
 
@@ -174,29 +254,52 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
         outcome = await driver.resolve(target);
       }
 
-      if (!outcome.found) {
-        const failure = describeOutcome(outcome);
+      // Cible trouvée mais masquée, et le geste l'accepte : on continue. Le
+      // pilote sait agir dessus, seule la porte de visibilité s'y opposait.
+      const masqueMaisAcceptable =
+        !outcome.found && outcome.reason === 'not-visible' && ALLOWS_INVISIBLE.has(action.kind);
+
+      if (!outcome.found && !masqueMaisAcceptable) {
+        const repairable = healer !== undefined && context.healCount < context.healBudget;
+
+        /**
+         * Un seul instantané sert les deux usages : suggérer les libellés
+         * proches, et alimenter le réparateur. Observer deux fois doublerait le
+         * coût du chemin d'échec sans rien apprendre de plus.
+         *
+         * Sur une cible ambiguë, il n'y a rien à suggérer : le nom correspond
+         * déjà, trop bien même.
+         */
+        const snapshot =
+          outcome.reason === 'no-match' || repairable
+            ? await driver.observe({ screenshot: repairable })
+            : null;
+
+        const failure =
+          describeOutcome(outcome) +
+          (snapshot !== null && outcome.reason === 'no-match'
+            ? suggestNearest(snapshot.root, target.primary)
+            : '');
 
         if (healer === undefined) return { ok: false, error: failure };
-        if (context.healCount >= context.healBudget) {
+        if (!repairable) {
           return {
             ok: false,
             error: `${failure} — heal budget exhausted (${context.healBudget})`,
           };
         }
 
-        const snapshot = await driver.observe({ screenshot: true });
         const healed = await healer.heal({
           stepId: context.stepId,
           actionIndex: index,
           intent: context.intent,
           target,
           outcome,
-          snapshot,
+          snapshot: snapshot ?? (await driver.observe({ screenshot: true })),
         });
 
         if (!healed.healed) {
-          return { ok: false, error: `${failure} — repair impossible: ${healed.reason}` };
+          return { ok: false, error: `${failure} — could not repair: ${healed.reason}` };
         }
 
         action = withTarget(action, healed.target);
@@ -208,6 +311,9 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
           degraded: healed.degraded === true,
         });
         context.healCount += 1;
+      } else if (!outcome.found) {
+        // Masqué mais accepté par le geste : rien à vérifier de plus, le
+        // pilote agira directement sur le champ.
       } else if (NEEDS_ENABLED.has(action.kind) && outcome.node.state.disabled === true) {
         // Trouvé mais inerte : c'est l'application qui est en cause, pas le
         // cache. Aucune réparation n'a de sens, et le message doit le dire
@@ -249,14 +355,143 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
       }
     }
 
+    /**
+     * La valeur est interpolée juste avant d'agir, jamais à l'écriture.
+     *
+     * C'est ce qui permet à `{{env.MOT_DE_PASSE}}` de ne jamais exister
+     * ailleurs que dans la mémoire du processus : le fichier de résolution vit
+     * dans git, et un secret recopié dedans y resterait pour toujours. Le même
+     * mécanisme rend `{{capture}}` utilisable dans une saisie — saisir dans un
+     * champ ce qu'on vient de lire à l'écran précédent.
+     */
+    if (action.kind === 'upload') {
+      try {
+        action = {
+          ...action,
+          files: action.files.map((file) => resolveUpload(context.baseDir, file)),
+        };
+      } catch (error) {
+        // Un refus de cadrage est une erreur d'étape, pas une exception qui
+        // remonte : le parcours doit s'arrêter en le disant, comme pour une
+        // variable manquante.
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+
+    const template = valueOf(action);
+    if (template !== null) {
+      try {
+        const resolved = interpolate(template, context.bag);
+        if (usesEnv(template)) secrets.add(resolved);
+        action = withValue(action, resolved);
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+
     try {
       await driver.act(action);
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      // Un message de driver peut recopier ce qui a été saisi ; un rapport
+      // d'échec, lui, finit dans les journaux d'une CI.
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: secrets.redact(message) };
     }
   }
 
+  /**
+   * Une politique armée que personne n'a consommée signale presque toujours
+   * que le bouton de confirmation a disparu de l'application : le clic a
+   * réussi, mais sans le dialogue attendu. Le parcours ne prouve alors plus ce
+   * qu'il croit prouver, et se taire laisserait passer la régression.
+   */
+  const pending = context.driver.takePendingDialogs?.() ?? 0;
+  if (pending > 0) {
+    warnings.push(
+      `${pending} expected dialog(s) never appeared: the native confirmation may have disappeared from the application`,
+    );
+  }
+
   return { ok: true, heals, warnings };
+}
+
+const NO_OBSERVATIONS: Observations = { network: [], console: [] };
+
+/**
+ * N'attache au rapport que ce qui explique quelque chose.
+ *
+ * Recopier toutes les requêtes d'une étape rendrait le rapport d'une suite de
+ * cinquante parcours illisible et lourd ; les requêtes en échec et les erreurs
+ * console sont ce qu'on relit vraiment à côté de la capture d'écran.
+ */
+function attachObservations(
+  report: StepReport,
+  observations: Observations | undefined,
+  secrets: SecretRegistry,
+): void {
+  if (observations === undefined) return;
+
+  // Une URL de requête porte sa query string, un message de console recopie ce
+  // que l'application a logué : l'un comme l'autre peut contenir un secret déjà
+  // connu du registre. On masque avant que ça n'entre dans le rapport.
+  const failed = observations.network
+    .filter(isFailed)
+    .map((entry) => ({ ...entry, url: secrets.redact(entry.url) }));
+  if (failed.length > 0) report.network = failed;
+
+  const errors = observations.console
+    .filter((entry) => entry.level === 'error')
+    .map((entry) => secrets.redact(entry.text));
+  if (errors.length > 0) report.consoleErrors = errors;
+}
+
+/**
+ * Les garde-fous de suite, évalués une seule fois par étape.
+ *
+ * Ils ne rejoignent pas la fenêtre de réévaluation : une erreur console ne
+ * devient pas fausse en attendant, et l'y mettre ferait patienter chaque étape
+ * bruyante pendant tout le délai d'assertion.
+ */
+function runWatchdogs(
+  watchdogs: Watchdogs | undefined,
+  observations: Observations,
+  secrets: SecretRegistry,
+): { failures: string[]; warnings: string[] } {
+  const failures: string[] = [];
+  const warnings: string[] = [];
+  if (watchdogs === undefined) return { failures, warnings };
+
+  const tolerated = (text: string): boolean =>
+    watchdogs.allow?.some((pattern) => text.includes(pattern)) === true;
+
+  const requests = watchdogs.requestFailures ?? 'off';
+  if (requests !== 'off') {
+    const failed = observations.network.filter(
+      (entry) => isFailed(entry) && !tolerated(entry.url),
+    );
+    if (failed.length > 0) {
+      const first = failed[0] as NetworkEntry;
+      const message = secrets.redact(
+        `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`,
+      );
+      (requests === 'fail' ? failures : warnings).push(message);
+    }
+  }
+
+  const console_ = watchdogs.consoleErrors ?? 'off';
+  if (console_ !== 'off') {
+    const errors = observations.console.filter(
+      (entry) => entry.level === 'error' && !tolerated(entry.text),
+    );
+    if (errors.length > 0) {
+      const message = secrets.redact(
+        `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`,
+      );
+      (console_ === 'fail' ? failures : warnings).push(message);
+    }
+  }
+
+  return { failures, warnings };
 }
 
 export async function runScenario(input: RunInput): Promise<ScenarioReport> {
@@ -269,13 +504,19 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const bag: Record<string, string> = {};
   const steps: StepReport[] = [];
   const applied: AppliedHeal[] = [];
+  // Un seul registre pour toute l'exécution : un secret saisi tôt reste masqué
+  // dans les rapports des étapes suivantes, où il pourrait revenir par capture.
+  const secrets = new SecretRegistry();
   const context: ActionsContext = {
     driver,
+    baseDir: input.baseDir ?? process.cwd(),
     healer,
     healBudget,
     healCount: 0,
     stepId: '',
     intent: '',
+    bag,
+    secrets,
   };
   let aborted = false;
 
@@ -305,7 +546,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
 
     const fail = async (error: string): Promise<void> => {
       const screenshot = await shoot();
-      steps.push({
+      const report: StepReport = {
         stepId: step.id,
         intent,
         status: 'failed',
@@ -313,7 +554,11 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         error,
         ...(screenshot !== undefined ? { screenshot } : {}),
         durationMs: Date.now() - stepStarted,
-      });
+      };
+      // Une action qui échoue est précisément le moment où le réseau explique
+      // souvent tout : la cible n'est pas apparue parce que l'appel a rendu 500.
+      attachObservations(report, driver.drainObservations?.(), secrets);
+      steps.push(report);
       aborted = true;
     };
 
@@ -332,7 +577,9 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     context.intent = intent;
     const outcome = await performActions(cached.actions, context);
     if (!outcome.ok) {
-      await fail(outcome.error);
+      // Le message peut porter un nom d'écran (suggestNearest) ou une note de
+      // réparation venue du modèle : un secret déjà connu y est masqué.
+      await fail(secrets.redact(outcome.error));
       continue;
     }
 
@@ -345,7 +592,10 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
      * une capture : les relire ensemble garantit qu'elles parlent du même
      * instant, ce qui serait faux si on rejouait les unes sans les autres.
      */
-    const evaluate = (root: UINode): { captureErrors: string[]; failures: AssertionFailure[] } => {
+    const evaluate = (
+      root: UINode,
+      location: string,
+    ): { captureErrors: string[]; failures: AssertionFailure[] } => {
       // Une capture qui échoue n'interrompt pas l'étape : c'est le plus souvent
       // le symptôme d'une assertion fausse, et masquer celle-ci priverait le
       // rapport de son information la plus utile.
@@ -365,7 +615,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
           bag[name] = value;
         } catch (error) {
           captureErrors.push(
-            `capture "${name}": ${error instanceof Error ? error.message : String(error)}`,
+            secrets.redact(`capture "${name}": ${error instanceof Error ? error.message : String(error)}`),
           );
         }
       }
@@ -379,13 +629,20 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
           failures.push({ assertion, reason: 'no machine form in cache' });
           continue;
         }
+        // Les vérifications d'observation sortent de la fenêtre de
+        // réévaluation : une erreur console ne devient pas fausse en
+        // attendant, et les y laisser ferait patienter chaque étape bruyante
+        // pendant tout le délai d'assertion.
+        if (isObservationCheck(check)) continue;
         try {
-          const result = evaluateCheck(check, root, bag);
+          const result = evaluateCheck(check, { root, location, bag, secrets });
           if (!result.ok) failures.push({ assertion, reason: result.reason });
         } catch (error) {
           failures.push({
             assertion,
-            reason: error instanceof InterpolationError ? error.message : String(error),
+            reason: secrets.redact(
+              error instanceof InterpolationError ? error.message : String(error),
+            ),
           });
         }
       }
@@ -402,16 +659,43 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
      * scène 3D, un module chargé à la demande — serait indémontrable.
      */
     let snapshot = await driver.observe();
-    let { captureErrors, failures } = evaluate(snapshot.root);
+    let { captureErrors, failures } = evaluate(snapshot.root, snapshot.location);
     const deadline = Date.now() + (input.assertTimeoutMs ?? 5000);
 
     while ((captureErrors.length > 0 || failures.length > 0) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
+      // Ré-observer rend aussi l'URL courante : une redirection qui arrive
+      // après le repos réseau est ainsi vue par les vérifications d'URL.
       snapshot = await driver.observe();
-      ({ captureErrors, failures } = evaluate(snapshot.root));
+      ({ captureErrors, failures } = evaluate(snapshot.root, snapshot.location));
     }
 
-    const broken = failures.length > 0 || captureErrors.length > 0;
+    /**
+     * Les observations sont relevées une seule fois, la fenêtre close.
+     *
+     * Ce qui s'est passé pendant l'étape ne changera plus : les remettre dans
+     * la boucle ne ferait qu'attendre pour rien, et vider le tampon à chaque
+     * tour perdrait ce qu'on veut justement rapporter.
+     */
+    const observations = driver.drainObservations?.() ?? NO_OBSERVATIONS;
+
+    for (const assertion of expectationsOf(step)) {
+      const check = cached.assertions?.[assertion];
+      if (check === undefined || !isObservationCheck(check)) continue;
+      const result = evaluateCheck(check, {
+        root: snapshot.root,
+        location: snapshot.location,
+        bag,
+        observations,
+        secrets,
+      });
+      if (!result.ok) failures.push({ assertion, reason: result.reason });
+    }
+
+    const watch = runWatchdogs(input.watchdogs, observations, secrets);
+    const warnings = [...outcome.warnings, ...watch.warnings];
+
+    const broken = failures.length > 0 || captureErrors.length > 0 || watch.failures.length > 0;
     const report: StepReport = {
       stepId: step.id,
       intent,
@@ -419,16 +703,20 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       failures,
       durationMs: Date.now() - stepStarted,
     };
-    if (captureErrors.length > 0) report.error = captureErrors.join('; ');
+    const errors = [...captureErrors, ...watch.failures];
+    if (errors.length > 0) report.error = errors.join('; ');
     if (outcome.heals.length > 0) {
-      report.healNotes = outcome.heals.map((heal) => heal.note);
+      report.healNotes = outcome.heals.map((heal) => secrets.redact(heal.note));
       applied.push(...outcome.heals);
     }
-    if (outcome.warnings.length > 0) report.warnings = outcome.warnings;
+    if (warnings.length > 0) report.warnings = warnings.map((warning) => secrets.redact(warning));
     if (broken) {
       const screenshot = await shoot();
       if (screenshot !== undefined) report.screenshot = screenshot;
     }
+    // Le diagnostic n'accompagne que ce qui a cassé, ou ce qu'un garde-fou a
+    // relevé : partout ailleurs il gonflerait le rapport sans rien apprendre.
+    if (broken || warnings.length > 0) attachObservations(report, observations, secrets);
     steps.push(report);
 
     if (broken) aborted = true;
@@ -437,13 +725,19 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const failed = steps.some((step) => step.status === 'failed');
   const healed = steps.some((step) => step.status === 'healed');
 
+  // `bag` garde les valeurs brutes tant que l'exécution tourne — un secret
+  // capturé doit pouvoir être saisi tel quel à l'étape suivante. Mais le
+  // rapport, lui, part dans les journaux : on n'y publie qu'une copie masquée.
+  const captures: Record<string, string> = {};
+  for (const [name, value] of Object.entries(bag)) captures[name] = secrets.redact(value);
+
   return {
     scenarioId: scenario.id,
     title: scenario.title,
     platform,
     status: failed ? 'failed' : healed ? 'healed' : 'passed',
     steps,
-    captures: bag,
+    captures,
     heals: applied,
     healCount: context.healCount,
     startedAt,

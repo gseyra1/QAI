@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { after, before, describe, it } from 'node:test';
 import type {
   Action,
   Capabilities,
   Driver,
+  Observations,
   Platform,
   ResolvedTarget,
   ResolveOutcome,
@@ -34,6 +38,7 @@ class FakeDriver implements Driver {
     swipe: false,
     navigateByUrl: true,
     deepLink: true,
+    dialogs: true,
   };
 
   readonly acted: Action[] = [];
@@ -318,6 +323,45 @@ describe('runScenario', () => {
     assert.match(report.steps[0]?.error ?? '', /not supported on web/);
   });
 
+  it('accepte un pilote écrit avant `expectDialog`, et lui refuse le dialogue', async () => {
+    // `Capabilities` est exporté depuis l'index : quelqu'un a pu écrire son
+    // propre pilote contre la version publiée. Un champ requis ajouté après
+    // coup l'empêcherait de compiler — ce n'est alors plus un ajout mais une
+    // rupture. Cette déclaration à quatre champs est la preuve, à la
+    // compilation, que le contrat reste tenable sans `dialogs`.
+    const ANCIEN: Capabilities = {
+      hover: true,
+      swipe: false,
+      navigateByUrl: true,
+      deepLink: true,
+    };
+
+    class PiloteAncien extends FakeDriver {
+      override readonly capabilities = ANCIEN;
+    }
+
+    const driver = new PiloteAncien(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([{ id: 's1', do: 'vider le panier en confirmant' }]),
+      resolution: resolution({
+        s1: {
+          actions: [
+            { kind: 'expectDialog', response: 'accept' },
+            { kind: 'click', target: CLICK },
+          ],
+        },
+      }),
+    });
+
+    // Refuser est le comportement voulu, pas un défaut de tolérance : laisser
+    // passer produirait un « supprimer puis confirmer » vert où la suppression
+    // n'a pas eu lieu, ce que `expectDialog` existe précisément pour empêcher.
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /"expectDialog" not supported on web/);
+    assert.deepEqual(driver.acted, []);
+  });
+
   it('ignore une étape restreinte à une autre plateforme', async () => {
     const driver = new FakeDriver(TREE);
     const report = await runScenario({
@@ -386,5 +430,302 @@ describe('runScenario', () => {
 
     assert.equal(report.status, 'failed');
     assert.equal(report.steps[0]?.failures.length, 1);
+  });
+
+  /**
+   * Sans réparateur, « cible introuvable » laissait le lecteur ouvrir un
+   * navigateur pour chercher lui-même ce qui avait bougé. La suggestion est
+   * calculée sans appel de modèle : elle vaut donc aussi sans --provider.
+   */
+  it('propose les libellés proches quand la cible a disparu', async () => {
+    const page = node('group', 'page', [node('button', 'Ajouter au panier ⚡')]);
+    const report = await runScenario({
+      driver: new FakeDriver(page, () => MISSING),
+      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /target not found — closest: button "Ajouter au panier ⚡"/);
+  });
+
+  it('ne suggère rien sur une cible ambiguë : le nom correspond déjà', async () => {
+    const report = await runScenario({
+      driver: new FakeDriver(TREE, () => AMBIGUOUS),
+      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.doesNotMatch(report.steps[0]?.error ?? '', /closest/);
+  });
+
+  /**
+   * Sans interpolation au rejeu, la résolution devrait contenir le mot de
+   * passe en clair pour qu'un parcours de connexion fonctionne — c'est-à-dire
+   * qu'aucune application authentifiée ne serait testable sans verser un
+   * secret dans git.
+   */
+  it('résout la valeur d\'une saisie au moment d\'agir, jamais dans le fichier', async () => {
+    process.env['QAI_TEST_PASS'] = 'hunter2';
+    try {
+      const driver = new FakeDriver(TREE);
+      const report = await runScenario({
+        driver,
+        scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+        resolution: resolution({
+          s1: {
+            actions: [
+              { kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_PASS}}' },
+              { kind: 'select', target: CLICK, option: '{{env.QAI_TEST_PASS}}' },
+            ],
+          },
+        }),
+      });
+
+      assert.equal(report.status, 'passed');
+      const [rempli, choisi] = driver.acted;
+      assert.equal(rempli?.kind === 'fill' ? rempli.value : null, 'hunter2');
+      assert.equal(choisi?.kind === 'select' ? choisi.option : null, 'hunter2');
+    } finally {
+      delete process.env['QAI_TEST_PASS'];
+    }
+  });
+
+  it('saisit ce qu\'une étape précédente a capturé', async () => {
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([
+        { id: 's1', do: 'lire le prix', capture: { prix: 'le prix affiché' } },
+        { id: 's2', do: 'recopier le prix' },
+      ]),
+      resolution: resolution({
+        s1: { actions: [], captures: { prix: { from: { role: 'text', name: '129,00 €' }, extract: 'text' } } },
+        s2: { actions: [{ kind: 'fill', target: CLICK, value: '{{prix}}' }] },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    const rempli = driver.acted.at(-1);
+    assert.equal(rempli?.kind === 'fill' ? rempli.value : null, '129,00 €');
+  });
+
+  /**
+   * Une variable absente doit arrêter l'étape en la nommant : un champ mot de
+   * passe rempli avec du vide échouerait plus loin, sur un message muet.
+   */
+  it('échoue en nommant la variable d\'environnement manquante', async () => {
+    delete process.env['QAI_TEST_ABSENT'];
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+      resolution: resolution({
+        s1: { actions: [{ kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_ABSENT}}' }] },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /QAI_TEST_ABSENT/);
+    assert.equal(driver.acted.length, 0, 'rien ne doit être saisi');
+  });
+
+  /**
+   * Le fichier de résolution est versionné : y écrire un chemin absolu
+   * produirait un cache qui ne rejoue que sur la machine qui l'a écrit. Le
+   * chemin reste donc relatif au scénario, et c'est le moteur qui l'absolutise
+   * juste avant d'agir.
+   */
+  // Le cadrage résout les liens symboliques : un vrai fichier est nécessaire.
+  let fixtures: string;
+  before(() => {
+    fixtures = mkdtempSync(join(tmpdir(), 'qai-run-upload-'));
+    writeFileSync(join(fixtures, 'releve.csv'), 'a,b\n1,2\n');
+  });
+  after(() => rmSync(fixtures, { recursive: true, force: true }));
+
+  it('résout les chemins d\'un téléversement depuis le dossier du scénario', async () => {
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      baseDir: fixtures,
+      scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
+      resolution: resolution({
+        s1: { actions: [{ kind: 'upload', target: CLICK, files: ['releve.csv'] }] },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    const depose = driver.acted[0];
+    assert.deepEqual(
+      depose?.kind === 'upload' ? depose.files : null,
+      [resolve(fixtures, 'releve.csv')],
+    );
+  });
+
+  it('arrête l\'étape plutôt que de téléverser un fichier hors du scénario', async () => {
+    // Les actions ne sont pas toutes écrites à la main : elles sortent d'un
+    // modèle qui lit l'écran, et un écran est une entrée non fiable. Un chemin
+    // qui sort du dossier doit donc échouer en le disant, et surtout ne rien
+    // envoyer — le fichier partirait vers l'application testée.
+    const driver = new FakeDriver(TREE);
+    const report = await runScenario({
+      driver,
+      baseDir: fixtures,
+      scenario: scenario([{ id: 's1', do: 'importer le relevé' }]),
+      resolution: resolution({
+        s1: {
+          actions: [
+            { kind: 'upload', target: CLICK, files: ['../../../.ssh/id_rsa'] },
+          ],
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.error ?? '', /outside the scenario directory/);
+    assert.deepEqual(driver.acted, [], 'rien ne doit partir vers l\'application');
+  });
+
+  /**
+   * Une assertion prouve ce que l'écran affiche ; ces vérifications disent ce
+   * que l'application a fait pour l'afficher. Un écran vide parce qu'un appel
+   * a rendu 500 et un écran vide parce qu'il n'y a rien à montrer se
+   * ressemblent exactement.
+   */
+  describe('observations réseau et console', () => {
+    class ObservingDriver extends FakeDriver {
+      observations: Observations;
+
+      constructor(root: UINode, observations: Observations) {
+        super(root);
+        this.observations = observations;
+      }
+
+      drainObservations(): Observations {
+        const drained = this.observations;
+        this.observations = { network: [], console: [] };
+        return drained;
+      }
+    }
+
+    const CASSE: Observations = {
+      network: [
+        { method: 'GET', url: '/api/eleves', status: 500, durationMs: 12, at: '2026-08-01T10:00:00Z' },
+        { method: 'GET', url: '/api/ok', status: 200, durationMs: 4, at: '2026-08-01T10:00:00Z' },
+      ],
+      console: [{ level: 'error', text: 'TypeError: x is not a function', at: '2026-08-01T10:00:00Z' }],
+    };
+
+    const parcours = (
+      driver: Driver,
+      assertions: Resolution['steps'][string]['assertions'],
+      watchdogs?: Parameters<typeof runScenario>[0]['watchdogs'],
+    ) =>
+      runScenario({
+        driver,
+        ...(watchdogs !== undefined ? { watchdogs } : {}),
+        assertTimeoutMs: 200,
+        scenario: scenario([
+          { id: 's1', do: 'ouvrir la liste', ...(assertions ? { expect: Object.keys(assertions) } : {}) },
+        ]),
+        resolution: resolution({ s1: { actions: [], ...(assertions ? { assertions } : {}) } }),
+      });
+
+    it('fait échouer l\'étape sur une requête en échec, en la nommant', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'aucun appel ne casse': { check: 'noFailedRequests' },
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.match(report.steps[0]?.failures[0]?.reason ?? '', /GET \/api\/eleves → 500/);
+    });
+
+    it('tolère ce que « allow » autorise', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'aucun appel ne casse': { check: 'noFailedRequests', allow: ['/api/eleves'] },
+      });
+
+      assert.equal(report.status, 'passed');
+    });
+
+    it('relève une erreur console', async () => {
+      const report = await parcours(new ObservingDriver(TREE, CASSE), {
+        'la console reste propre': { check: 'noConsoleErrors' },
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.match(report.steps[0]?.failures[0]?.reason ?? '', /TypeError/);
+    });
+
+    /**
+     * Une erreur console ne devient pas fausse en attendant. La laisser dans
+     * la fenêtre de réévaluation ferait patienter chaque étape bruyante
+     * pendant tout le délai d'assertion.
+     */
+    it('n\'attend pas la fenêtre de réévaluation pour conclure', async () => {
+      const driver = new ObservingDriver(TREE, CASSE);
+      const debut = Date.now();
+      await parcours(driver, { 'la console reste propre': { check: 'noConsoleErrors' } });
+
+      assert.ok(Date.now() - debut < 200, 'la fenêtre de 200 ms ne doit pas être consommée');
+    });
+
+    it('reste silencieux par défaut, avertit en warn, échoue en fail', async () => {
+      const muet = await parcours(new ObservingDriver(TREE, CASSE), undefined);
+      assert.equal(muet.status, 'passed', 'les garde-fous sont off par défaut');
+      assert.equal(muet.steps[0]?.warnings, undefined);
+
+      const avertit = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        consoleErrors: 'warn',
+        requestFailures: 'warn',
+      });
+      assert.equal(avertit.status, 'passed');
+      assert.equal(avertit.steps[0]?.warnings?.length, 2);
+
+      const echoue = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        requestFailures: 'fail',
+      });
+      assert.equal(echoue.status, 'failed');
+      assert.match(echoue.steps[0]?.error ?? '', /failed request\(s\)/);
+    });
+
+    it('n\'attache le diagnostic qu\'aux étapes qui ont cassé', async () => {
+      const propre = await parcours(new ObservingDriver(TREE, { network: [], console: [] }), undefined);
+      assert.equal(propre.steps[0]?.network, undefined);
+
+      const cassee = await parcours(new ObservingDriver(TREE, CASSE), undefined, {
+        requestFailures: 'fail',
+      });
+      // Seules les requêtes en échec sont recopiées : /api/ok n'apprend rien.
+      assert.equal(cassee.steps[0]?.network?.length, 1);
+      assert.equal(cassee.steps[0]?.consoleErrors?.length, 1);
+    });
+  });
+
+  it('efface le secret du message quand le pilote échoue', async () => {
+    process.env['QAI_TEST_PASS'] = 'hunter2';
+    try {
+      class LeakyDriver extends FakeDriver {
+        override async act(action: Action): Promise<void> {
+          throw new Error(`impossible de saisir « ${action.kind === 'fill' ? action.value : ''} »`);
+        }
+      }
+
+      const report = await runScenario({
+        driver: new LeakyDriver(TREE),
+        scenario: scenario([{ id: 's1', do: 'se connecter' }]),
+        resolution: resolution({
+          s1: { actions: [{ kind: 'fill', target: CLICK, value: '{{env.QAI_TEST_PASS}}' }] },
+        }),
+      });
+
+      assert.equal(report.status, 'failed');
+      assert.doesNotMatch(report.steps[0]?.error ?? '', /hunter2/);
+      assert.match(report.steps[0]?.error ?? '', /\*\*\*/);
+    } finally {
+      delete process.env['QAI_TEST_PASS'];
+    }
   });
 });

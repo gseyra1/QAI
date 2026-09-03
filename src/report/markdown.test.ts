@@ -53,6 +53,42 @@ describe('markdown report', () => {
     assert.doesNotMatch(markdown, /### `checkout`/, 'a green journey has no detail section');
   });
 
+  it('surfaces a warning carried by a green journey', () => {
+    // A watchdog set to "warn" reports without failing, so the step stays
+    // green and the journey stays green. Skipping green detail therefore hid
+    // every warning the level can produce, and the documented warn → fail
+    // ramp could not be walked from the pull request comment at all.
+    const markdown = formatMarkdown(
+      suite(
+        [
+          {
+            scenarioId: 'checkout',
+            resolutionPath: 'r.json',
+            report: scenario({
+              steps: [
+                {
+                  stepId: 's4',
+                  intent: 'open the cart',
+                  status: 'passed',
+                  failures: [],
+                  warnings: ['2 failed request(s), including GET /api/reco → 500'],
+                  durationMs: 12,
+                },
+              ],
+            }),
+          },
+        ],
+        'passed',
+      ),
+    );
+
+    assert.match(markdown, /⚠️ QAI — green, with warnings/, 'the title is what most reviewers read');
+    assert.match(markdown, /### `checkout`/);
+    assert.match(markdown, /⚠️ 2 failed request\(s\), including GET \/api\/reco → 500/);
+    assert.match(markdown, /1 warning\(s\) from watchdogs set to `warn`/);
+    assert.match(markdown, /Raise them to `fail` once the list is empty/);
+  });
+
   it('details a failure, with the assertion and the screenshot', () => {
     const markdown = formatMarkdown(
       suite(

@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qai.dev/schema/resolution.schema.json",
+  "title": "QAI Resolution",
+  "description": "Machine cache for one journey, specific to a platform and regenerable. Written by QAI, versioned in git so that CI replays without a model call and so that a self-repair shows up as a reviewable diff. Do not edit by hand.",
+  "type": "object",
+  "required": ["scenario", "platform", "recordedAt", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of the resolution format, not of the application. Absent means 1. It only goes up when the observation changes."
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Id of the scenario this file resolves."
+    },
+    "platform": { "enum": ["web", "ios", "android"] },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the resolution was generated. Used to date a resolution that has become suspect."
+    },
+    "appVersion": {
+      "type": "string",
+      "description": "Version of the application under test at recording time, when it is known."
+    },
+    "steps": {
+      "type": "object",
+      "description": "One entry per step, keyed on the scenario step id. That anchor is what lets an intent be reworded without invalidating its cache.",
+      "additionalProperties": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "button", "link", "text", "heading", "image", "textbox", "searchbox", "combobox",
+        "checkbox", "radio", "switch", "slider", "list", "listitem", "table", "row",
+        "cell", "tab", "tablist", "dialog", "menu", "menuitem", "progressbar", "alert",
+        "group", "unknown"
+      ],
+      "description": "The subset of roles that exists on all three platforms. Mappings in docs/driver.md."
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Semantic targeting: what the user sees, never a selector.",
+      "properties": {
+        "role": { "$ref": "#/$defs/role" },
+        "name": {
+          "description": "Accessible name, exact or partial. May reference a capture via {{name}}.",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "required": ["contains"],
+              "additionalProperties": false,
+              "properties": { "contains": { "type": "string" } }
+            }
+          ]
+        },
+        "nth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index among the matches. Without it, several matches means the engine refuses to act."
+        },
+        "within": { "$ref": "#/$defs/locator" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["primary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "$ref": "#/$defs/locator" },
+        "fallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Platform-specific technical fallback, tried only if primary fails. A fallback that gets used is a signal: the application's accessibility has degraded.",
+          "properties": {
+            "testId": { "type": "string" },
+            "selector": { "type": "string" },
+            "accessibilityId": { "type": "string" }
+          }
+        }
+      }
+    },
+    "action": {
+      "description": "One primitive gesture. An intent often translates into several.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "to"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "navigate" }, "to": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "click" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "fill" },
+            "target": { "$ref": "#/$defs/target" },
+            "value": {
+              "type": "string",
+              "description": "Template, interpolated at the moment of acting: {{capture}}, or {{env.NAME}} for a value read from the environment. A secret must never be written here in clear text — this file lives in git."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "option"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "select" },
+            "target": { "$ref": "#/$defs/target" },
+            "option": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "key"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "press" }, "key": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "scrollTo" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "hover" }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "direction"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "swipe" },
+            "direction": { "enum": ["up", "down", "left", "right"] }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "files"],
+          "additionalProperties": false,
+          "description": "Drops files into an input[type=file], even a hidden one.",
+          "properties": {
+            "kind": { "const": "upload" },
+            "target": { "$ref": "#/$defs/target" },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" },
+              "description": "Paths relative to the scenario file. An absolute path would only replay on the machine that wrote it, and any path leaving the scenario directory is refused."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "response"],
+          "additionalProperties": false,
+          "description": "Arms the answer to the next native dialog. Goes RIGHT BEFORE the gesture that triggers it: the dialog blocks the page from the click onwards, so there is no moment after it to answer.",
+          "properties": {
+            "kind": { "const": "expectDialog" },
+            "response": { "enum": ["accept", "dismiss"] },
+            "promptText": { "type": "string", "description": "Only for a prompt()." }
+          }
+        }
+      ]
+    },
+    "check": {
+      "description": "Machine form of an assertion. The key it is stored under is the exact text of the scenario's assertion.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["check", "target"],
+          "additionalProperties": false,
+          "properties": {
+            "check": {
+              "enum": [
+                "visible", "absent", "textEquals", "textContains", "countAtLeast",
+                "numberEquals", "stateIs"
+              ]
+            },
+            "target": { "$ref": "#/$defs/locator" },
+            "value": { "type": ["string", "number"] }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["check", "value"],
+          "additionalProperties": false,
+          "description": "Check on the current address. No target: a URL is not a node. The comparison is raw, trailing slash and query parameters included.",
+          "properties": {
+            "check": { "enum": ["urlContains", "urlEquals"] },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["check"],
+          "additionalProperties": false,
+          "description": "Step watchdog: bears on what the application DID, not on what it displays. Evaluated once, outside the re-evaluation window.",
+          "properties": {
+            "check": { "enum": ["noFailedRequests", "noConsoleErrors"] },
+            "allow": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Tolerated URL or message fragments, so that a noisy third-party integration does not teach the team to switch the watchdog off."
+            }
+          }
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": ["actions"],
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/action" },
+          "description": "The gestures that carry out the intent, in order. Assertions and captures are evaluated once, after the last one."
+        },
+        "captures": {
+          "type": "object",
+          "description": "Values extracted from the screen, reusable further on via {{name}}.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["from", "extract"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "$ref": "#/$defs/locator" },
+              "extract": { "enum": ["text", "value", "number"] }
+            }
+          }
+        },
+        "assertions": {
+          "type": "object",
+          "description": "Key = the exact text of the scenario's assertion. The healer is never allowed to touch these.",
+          "additionalProperties": { "$ref": "#/$defs/check" }
+        },
+        "healedAt": {
+          "type": ["string", "null"],
+          "description": "Timestamp of the last repair, null if the resolution is original."
+        },
+        "healNote": {
+          "type": "string",
+          "description": "What the healer understood of the change, for the human reviewing the diff."
+        }
+      }
+    }
+  }
+}

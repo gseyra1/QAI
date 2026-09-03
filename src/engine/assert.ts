@@ -1,25 +1,72 @@
-import type { Locator, UINode } from '../driver/types.ts';
+import type { ConsoleEntry, Locator, NetworkEntry, Observations, UINode } from '../driver/types.ts';
 import type { Check, ExtractKind } from '../resolution/types.ts';
 import { matchNodes } from './match.ts';
 
 export class InterpolationError extends Error {
+  /** Les noms non résolus, préfixe `env.` compris. */
   readonly missing: string[];
 
   constructor(missing: string[]) {
-    super(`unknown capture(s): ${missing.join(', ')}`);
+    const captures = missing.filter((name) => !name.startsWith(ENV_PREFIX));
+    const variables = missing
+      .filter((name) => name.startsWith(ENV_PREFIX))
+      .map((name) => name.slice(ENV_PREFIX.length));
+
+    const parts: string[] = [];
+    if (captures.length > 0) parts.push(`unknown capture(s): ${captures.join(', ')}`);
+    if (variables.length > 0) {
+      parts.push(`undefined environment variable(s): ${variables.join(', ')}`);
+    }
+
+    super(parts.join(' ; '));
     this.name = 'InterpolationError';
     this.missing = missing;
   }
 }
 
+const ENV_PREFIX = 'env.';
+const PLACEHOLDER = /\{\{(env\.[A-Za-z_][A-Za-z0-9_]*|\w+)\}\}/g;
+
+/**
+ * Un template puise-t-il dans l'environnement ?
+ *
+ * Sert au masquage : ce qui vient de `env.` est un secret par hypothèse, et un
+ * rapport de test finit dans les journaux d'une CI, c'est-à-dire à peu près
+ * partout.
+ */
+export function usesEnv(template: string): boolean {
+  // Même garde que `interpolate` : le schéma de sortie autorise une valeur
+  // numérique (countAtLeast l'exige), donc ce qui arrive ici n'est pas
+  // toujours une chaîne malgré le type.
+  PLACEHOLDER.lastIndex = 0;
+  for (const match of String(template).matchAll(PLACEHOLDER)) {
+    if ((match[1] as string).startsWith(ENV_PREFIX)) return true;
+  }
+  return false;
+}
+
+/**
+ * Substitue les captures et les variables d'environnement.
+ *
+ * `{{env.NOM}}` est résolu **à l'exécution**, jamais à l'écriture : le fichier
+ * de résolution vit dans git, et un mot de passe recopié dedans y resterait
+ * pour toujours. C'est ce qui rend un parcours de connexion écrivable — sans
+ * quoi aucune application authentifiée n'est testable de bout en bout.
+ *
+ * Une variable absente lève, elle ne produit pas une chaîne vide : un champ
+ * mot de passe rempli avec du vide échouerait six étapes plus loin, sur un
+ * message qui ne dirait rien de la cause.
+ */
 export function interpolate(template: string, bag: Readonly<Record<string, string>>): string {
   const missing: string[] = [];
   // Une résolution vient d'un fichier ou d'un modèle : le schéma de sortie
   // autorise une valeur numérique (countAtLeast l'exige), donc ce qui arrive
   // ici n'est pas toujours une chaîne malgré le type. Planter sur .replace
   // transformerait une valeur légitime en TypeError cryptique.
-  const out = String(template).replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
-    const value = bag[name];
+  const out = String(template).replace(PLACEHOLDER, (_match, name: string) => {
+    const value = name.startsWith(ENV_PREFIX)
+      ? process.env[name.slice(ENV_PREFIX.length)]
+      : bag[name];
     if (value === undefined) {
       missing.push(name);
       return '';
@@ -28,6 +75,55 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
   });
   if (missing.length > 0) throw new InterpolationError(missing);
   return out;
+}
+
+/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
+export function redact(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (secret !== '') out = out.split(secret).join('***');
+  }
+  return out;
+}
+
+/**
+ * Le registre des secrets d'une exécution.
+ *
+ * Le masquage par vérification ne suffit pas, parce qu'un secret est un *flux*,
+ * pas une valeur locale : `{{env.MOT_DE_PASSE}}` saisi à l'étape 1, ré-affiché
+ * par l'application, capturé, puis comparé à l'étape 5 — à ce moment la
+ * vérification ne voit qu'une capture ordinaire, sans marqueur d'origine. Une
+ * URL de requête ou un message de console peuvent porter le même secret sans
+ * qu'aucun `value` ne le déclare.
+ *
+ * On enregistre donc la valeur résolue **à sa source** (la saisie, l'assertion
+ * qui puise dans l'environnement) une fois pour toute l'exécution, et on masque
+ * par sous-chaîne toute sortie visible : raison d'échec, capture rapportée, URL
+ * réseau, texte console. Le registre ne peut masquer que ce que QAI sait être
+ * un secret — une valeur venue de l'environnement ; un jeton que l'application
+ * expose de son propre chef, sans passer par `{{env.X}}`, reste hors de portée.
+ */
+export class SecretRegistry {
+  readonly #values = new Set<string>();
+
+  add(value: string): void {
+    // Un secret d'un seul caractère masquerait la moitié d'un rapport : la
+    // sous-chaîne se retrouverait partout. En pratique un secret utile
+    // (mot de passe, jeton) dépasse largement ce seuil.
+    if (value.length > 2) this.#values.add(value);
+  }
+
+  addAll(values: Iterable<string>): void {
+    for (const value of values) this.add(value);
+  }
+
+  redact(text: string): string {
+    return this.#values.size === 0 ? text : redact(text, [...this.#values]);
+  }
+
+  get size(): number {
+    return this.#values.size;
+  }
 }
 
 /**
@@ -100,11 +196,138 @@ export type CheckResult = { ok: true } | { ok: false; reason: string };
 
 const STATE_LABEL = { checked: 'checked', disabled: 'disabled', selected: 'selected' } as const;
 
-export function evaluateCheck(
-  check: Check,
-  root: UINode,
-  bag: Readonly<Record<string, string>>,
-): CheckResult {
+/**
+ * Tout ce sur quoi une assertion peut porter, à un instant donné.
+ *
+ * Un objet plutôt que des paramètres : ce contexte s'élargira — le réseau et
+ * la console observés pendant l'étape doivent pouvoir devenir assertables sans
+ * changer la signature à chaque fois, ni obliger chaque appelant à réordonner
+ * ses arguments.
+ */
+export interface CheckContext {
+  root: UINode;
+  /** URL sur le web, identifiant d'écran ou d'activité sur mobile. */
+  location: string;
+  bag: Readonly<Record<string, string>>;
+  /** Ce que l'application a fait pendant l'étape. Vide si le driver ne sait pas observer. */
+  observations?: Observations;
+  /**
+   * Le registre de l'exécution. Quand il est fourni, la raison d'échec est
+   * masquée contre **tous** les secrets connus — pas seulement ceux que le
+   * `value` de cette vérification déclare — ce qui rattrape un secret arrivé
+   * par une capture ou une observation.
+   */
+  secrets?: SecretRegistry;
+}
+
+/** Une requête est en échec si elle n'a pas abouti, ou si le serveur a refusé. */
+export function isFailed(entry: NetworkEntry): boolean {
+  return entry.status === null || entry.status >= 400;
+}
+
+function allowed(text: string, patterns: readonly string[] | undefined): boolean {
+  return patterns?.some((pattern) => text.includes(pattern)) === true;
+}
+
+/**
+ * Les valeurs venues de l'environnement, résolues, pour le filet de sécurité.
+ *
+ * `countAtLeast` porte un nombre et `stateIs` un littéral : seule une valeur
+ * de type chaîne peut contenir un gabarit, d'où le test de type plutôt qu'une
+ * confiance dans la déclaration.
+ */
+export function envSecrets(check: Check, bag: Readonly<Record<string, string>>): string[] {
+  const template: unknown = (check as { value?: unknown }).value;
+  if (typeof template !== 'string' || !usesEnv(template)) return [];
+  try {
+    return [interpolate(template, bag)];
+  } catch {
+    // Une variable absente n'a aucune valeur à masquer. L'échec est signalé
+    // ailleurs, par le nom de la variable — qui n'est pas le secret.
+    return [];
+  }
+}
+
+/**
+ * Masque, à l'unique sortie, ce qu'une branche aurait laissé passer.
+ *
+ * Chaque vérification calcule déjà son propre `shown`, mais ce masquage est à
+ * refaire à la main dans chaque nouvelle branche — et `numberEquals` l'avait
+ * oublié dans ses deux messages, ce qui recopiait un secret en clair dans un
+ * rapport, donc dans les journaux d'une CI. Corriger la branche ne corrige que
+ * cette branche ; le filet, lui, retire la classe entière du bug : une
+ * vérification future qui oublie `shown` ne peut plus rien divulguer.
+ */
+export function evaluateCheck(check: Check, context: CheckContext): CheckResult {
+  // Ce que cette vérification puise elle-même dans l'environnement rejoint le
+  // registre : une assertion sur `{{env.X}}` enseigne le secret aux étapes
+  // suivantes, qui pourraient sinon le laisser fuir par une capture.
+  const own = envSecrets(check, context.bag);
+  context.secrets?.addAll(own);
+
+  const result = evaluate(check, context);
+  if (result.ok) return result;
+
+  // Le registre, quand il existe, masque contre tous les secrets connus — pas
+  // seulement `own` — ce qui rattrape la fuite par capture ou par observation.
+  if (context.secrets !== undefined) return { ok: false, reason: context.secrets.redact(result.reason) };
+  return own.length === 0 ? result : { ok: false, reason: redact(result.reason, own) };
+}
+
+function evaluate(check: Check, context: CheckContext): CheckResult {
+  const { root, bag } = context;
+
+  /**
+   * Les vérifications d'URL passent avant toute recherche dans l'arbre : une
+   * URL n'est pas un nœud, elle n'a donc pas de cible à résoudre.
+   *
+   * La comparaison est brute, sans normalisation. Une barre finale, un
+   * paramètre de requête ou un fragment font partie de ce qui est affirmé —
+   * les effacer ferait passer une redirection vers « /connexion?next=/admin »
+   * pour une redirection vers « /connexion », alors que la différence est
+   * précisément ce qu'un parcours de droits d'accès cherche à prouver.
+   */
+  if (check.check === 'urlContains' || check.check === 'urlEquals') {
+    const expected = interpolate(check.value, bag);
+    const shown = usesEnv(check.value) ? '***' : expected;
+    const observed = context.location;
+    if (check.check === 'urlContains') {
+      return observed.includes(expected)
+        ? { ok: true }
+        : { ok: false, reason: `"${shown}" not found in URL "${observed}"` };
+    }
+    return observed === expected
+      ? { ok: true }
+      : { ok: false, reason: `expected URL "${shown}", observed "${observed}"` };
+  }
+
+  /**
+   * Les garde-fous d'observation passent aussi avant l'arbre : ils ne parlent
+   * pas d'un élément mais de ce que l'application a fait pour l'afficher.
+   */
+  if (check.check === 'noFailedRequests') {
+    const failed = (context.observations?.network ?? [])
+      .filter(isFailed)
+      .filter((entry) => !allowed(entry.url, check.allow));
+    if (failed.length === 0) return { ok: true };
+    const first = failed[0] as NetworkEntry;
+    return {
+      ok: false,
+      reason: `${failed.length} failed request(s), including ${first.method} ${first.url} → ${first.status ?? 'network failure'}`,
+    };
+  }
+
+  if (check.check === 'noConsoleErrors') {
+    const errors = (context.observations?.console ?? [])
+      .filter((entry) => entry.level === 'error')
+      .filter((entry) => !allowed(entry.text, check.allow));
+    if (errors.length === 0) return { ok: true };
+    return {
+      ok: false,
+      reason: `${errors.length} console error(s), including "${(errors[0] as ConsoleEntry).text}"`,
+    };
+  }
+
   const matched = matchNodes(root, interpolateLocator(check.target, bag));
 
   if (check.check === 'absent') {
@@ -136,11 +359,15 @@ export function evaluateCheck(
   }
 
   const expected = interpolate(check.value, bag);
+  // Ce qui vient de l'environnement est un secret par hypothèse, et un rapport
+  // d'échec finit dans les journaux d'une CI.
+  const secret = usesEnv(check.value);
+  const shown = secret ? '***' : expected;
 
   if (check.check === 'textContains') {
     return matched.some((node) => textOf(node).includes(expected))
       ? { ok: true }
-      : { ok: false, reason: `"${expected}" not found in "${textOf(matched[0] as UINode)}"` };
+      : { ok: false, reason: `"${shown}" not found in "${textOf(matched[0] as UINode)}"` };
   }
 
   const observed = textOf(matched[0] as UINode);
@@ -148,15 +375,18 @@ export function evaluateCheck(
   if (check.check === 'textEquals') {
     return observed === expected
       ? { ok: true }
-      : { ok: false, reason: `expected "${expected}", observed "${observed}"` };
+      : { ok: false, reason: `expected "${shown}", observed "${observed}"` };
   }
 
   const left = toNumber(observed);
   const right = toNumber(expected);
   if (left === null || right === null) {
-    return { ok: false, reason: `non-numeric value: "${observed}" vs "${expected}"` };
+    return { ok: false, reason: `non-numeric value: "${observed}" vs "${shown}"` };
   }
+  // `right` est la valeur attendue reconvertie : la masquer aussi, sans quoi un
+  // secret qui se trouve être numérique — un code, un matricule — ressortirait
+  // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${right}, observed ${left}` };
+    : { ok: false, reason: `expected ${secret ? '***' : right}, observed ${left}` };
 }

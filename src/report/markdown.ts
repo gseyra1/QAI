@@ -1,5 +1,6 @@
 import type { StepReport } from '../engine/run.ts';
 import type { SuiteReport } from '../engine/suite.ts';
+import { warningCount } from '../engine/suite.ts';
 
 /**
  * Marqueur invisible qui permet à la CI de retrouver son propre commentaire et
@@ -42,6 +43,19 @@ function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
         : `  - [screenshot at the moment of failure](${options.runUrl}) (\`${step.screenshot}\`)`,
     );
   }
+
+  /**
+   * Le réseau et la console à côté de la capture : c'est ce qui distingue « la
+   * liste est vide » de « l'appel qui la remplit a rendu 500 ». Les trois
+   * dernières entrées suffisent — au-delà, le commentaire de pull request
+   * cesse d'être lu.
+   */
+  for (const entry of (step.network ?? []).slice(-3)) {
+    lines.push(`  - ↯ \`${entry.method} ${entry.url}\` → ${entry.status ?? 'network failure'}`);
+  }
+  for (const error of (step.consoleErrors ?? []).slice(-3)) {
+    lines.push(`  - ⚡ console: \`${error}\``);
+  }
   return lines;
 }
 
@@ -53,9 +67,22 @@ function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
  * n'apparaît que sous les parcours en échec ou réparés.
  */
 export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {}): string {
+  const warnings = warningCount(report);
+
+  /**
+   * Le statut reste `passed` — un palier `warn` ne fait pas échouer, c'est sa
+   * raison d'être — mais « all green » au-dessus d'une exécution qui porte des
+   * avertissements est un titre faux. Et le titre est ce que la plupart des
+   * relecteurs lisent, souvent la seule chose.
+   */
+  const headline =
+    report.status === 'passed' && warnings > 0
+      ? '⚠️ QAI — green, with warnings'
+      : HEADLINE[report.status];
+
   const lines: string[] = [
     COMMENT_MARKER,
-    `## ${HEADLINE[report.status]}`,
+    `## ${headline}`,
     '',
     `${report.entries.length} journey(s) in ${seconds(report.durationMs)}.`,
     '',
@@ -78,11 +105,16 @@ export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {
       lines.push('', `### \`${entry.scenarioId}\``, '', entry.error ?? 'unknown failure');
       continue;
     }
-    if (entry.report.status === 'passed') continue;
+    // Un parcours vert qui a déclenché une sentinelle a quelque chose à
+    // montrer : sans cette section, l'avertissement n'existe nulle part dans
+    // le commentaire, et le palier `warn` ne sert à rien.
+    const averti = entry.report.steps.some((step) => (step.warnings ?? []).length > 0);
+    if (entry.report.status === 'passed' && !averti) continue;
 
     lines.push('', `### \`${entry.scenarioId}\``, '');
     for (const step of entry.report.steps) {
-      if (step.status === 'passed' || step.status === 'skipped') continue;
+      const silencieuse = (step.warnings ?? []).length === 0;
+      if (silencieuse && (step.status === 'passed' || step.status === 'skipped')) continue;
       lines.push(...stepDetail(step, options));
     }
   }
@@ -98,6 +130,11 @@ export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {
   if (heals > 0) {
     lines.push(
       `> ${heals} repair(s) written to \`.qai/resolutions/\` — **review the diff before merging**.`,
+    );
+  }
+  if (warnings > 0) {
+    lines.push(
+      `> ${warnings} warning(s) from watchdogs set to \`warn\`: reported, not failing. Raise them to \`fail\` once the list is empty.`,
     );
   }
   if (options.runUrl !== undefined && options.artifactName !== undefined) {

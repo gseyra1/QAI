@@ -34,6 +34,85 @@ and `1 234,56 €` compare without the scenario caring. A dot followed by three
 digits is treated as a thousands separator — the right bet for displayed
 amounts.
 
+`evaluateCheck()` receives a context — the tree, the current address, the
+captures already known — not just the tree. That is what lets a check bear on
+something other than a node.
+
+### Checking the address
+
+`urlContains` and `urlEquals` are the only two checks **without a target**: a
+URL is not a node of the interface. They make the whole family of access-rights
+journeys expressible — "an anonymous user is redirected to the login page" —
+which has nothing to assert about the screen it lands on except where it landed.
+
+```json
+{ "check": "urlContains", "value": "/login" }
+{ "check": "urlEquals", "value": "https://app.example.com/login?next=/admin" }
+```
+
+The comparison is **raw**: neither trailing slash, nor query string, nor
+fragment is normalised. Erasing them would make a redirect to
+`/login?next=/admin` look like a redirect to `/login`, when that difference is
+precisely what an access-rights journey sets out to prove. `urlContains` covers
+the common case where only the path matters.
+
+The value accepts `{{capture}}`, which allows asserting an address built at the
+previous step — `/students/{{id}}` after creating a record.
+
+Like any assertion, a URL check is re-evaluated within the `assertTimeout`
+window: a redirect that arrives after network rest is seen.
+
+## What the application did, not only what it displays
+
+The driver passively listens to the network and the console during each step.
+Nothing is blocked or altered: `drainObservations()` returns what has piled up
+and empties the buffer, which slices the observation per step without the
+driver having to know what a step is.
+
+This information is the only thing separating two identical screens: a list
+empty because there is nothing to show, and a list empty because the call that
+fills it returned 500. Without it, the report says "element not found" where
+the cause lies elsewhere.
+
+Failed requests and console errors appear in the report **only on a broken or
+flagged step** — anywhere else they would inflate the report without teaching
+anything.
+
+### Two levels, both optional
+
+**Step assertion**, declared like any other:
+
+```json
+{ "check": "noFailedRequests", "allow": ["/api/telemetry"] }
+{ "check": "noConsoleErrors" }
+```
+
+**Suite watchdog**, in `qai.config.json`:
+
+```json
+"watchdogs": { "consoleErrors": "warn", "requestFailures": "fail", "allow": ["/analytics"] }
+```
+
+The default is `off` on both. This is not timidity: setting them straight to
+`fail` would break whole suites on the day of the upgrade, on pre-existing
+errors. The climb happens in two steps — `warn`, then `fail` once the known
+noise is written into `allow`.
+
+A `warn` does not change the verdict, which is the whole point — so it only
+ever lands on a step that stayed green. Every format shows it there: the text
+report expands that one step and stops printing `All green.`, the pull request
+comment gives the journey a section and titles itself *green, with warnings*,
+and JUnit emits a `<system-err>`. A level nobody can see is a level nobody can
+act on, and the climb would never happen.
+
+`allow` exists for the same reason: a noisy third-party integration must not
+teach the team to switch the watchdog off, which would cost more than never
+having set it.
+
+**These checks stay out of the re-evaluation window.** A console error does not
+become false by waiting, and leaving them in would make every noisy step wait
+out the whole assertion timeout.
+
 ## The safety boundary, made structural
 
 The engine calls the healer **only** on a target resolution failure. A false

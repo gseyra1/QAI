@@ -64,6 +64,12 @@ function action(kind: string, extra: Record<string, unknown> = {}, required: str
 
 const CHECKS = ['visible', 'absent', 'textEquals', 'textContains', 'countAtLeast', 'numberEquals', 'stateIs'];
 
+/** Les seules vérifications sans cible : une URL n'est pas un nœud de l'arbre. */
+const URL_CHECKS = ['urlContains', 'urlEquals'];
+
+/** Ce que l'application a FAIT pendant l'étape, et qui ne se voit pas à l'écran. */
+const OBSERVATION_CHECKS = ['noFailedRequests', 'noConsoleErrors'];
+
 function captures(): Record<string, unknown> {
   return {
     type: 'object',
@@ -77,22 +83,64 @@ function captures(): Record<string, unknown> {
   };
 }
 
+/**
+ * Deux branches, parce que ce sont deux formes réellement différentes.
+ *
+ * Une vérification d'URL n'a pas de cible. Rendre `target` facultatif partout
+ * inviterait le modèle à l'omettre là où il est indispensable : garder chaque
+ * branche stricte est ce qui laisse l'erreur détectable au décodage, plutôt
+ * qu'à l'exécution six étapes plus loin.
+ */
 function assertions(): Record<string, unknown> {
   return {
     type: 'object',
     description: 'key = exact text of the scenario assertion, value = its machine form',
     additionalProperties: {
-      type: 'object',
-      properties: {
-        check: { enum: CHECKS },
-        target: locator(2),
-        value: {
-          oneOf: [{ type: 'string' }, { type: 'number' }],
-          description: 'can reference a capture, e.g. "{{price}}"',
+      oneOf: [
+        {
+          type: 'object',
+          properties: {
+            check: { enum: CHECKS },
+            target: locator(2),
+            value: {
+              oneOf: [{ type: 'string' }, { type: 'number' }],
+              description: 'can reference a capture, e.g. "{{price}}"',
+            },
+          },
+          required: ['check', 'target'],
+          additionalProperties: false,
         },
-      },
-      required: ['check', 'target'],
-      additionalProperties: false,
+        {
+          type: 'object',
+          description: 'check on the current address: a redirect, a denied access, a navigation',
+          properties: {
+            check: { enum: URL_CHECKS },
+            value: {
+              type: 'string',
+              description:
+                'urlContains: a fragment is enough (e.g. "/login"). urlEquals: the whole URL, compared as-is, trailing slash and query included.',
+            },
+          },
+          required: ['check', 'value'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          description:
+            'check on what the application DID during the step: network calls, console',
+          properties: {
+            check: { enum: OBSERVATION_CHECKS },
+            allow: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'tolerated URL or message fragments, when a failure is the expected answer',
+            },
+          },
+          required: ['check'],
+          additionalProperties: false,
+        },
+      ],
     },
   };
 }
@@ -133,6 +181,28 @@ export function stepProposalSchema(): Record<string, unknown> {
             action('press', { key: { type: 'string' } }, ['key']),
             action('scrollTo', { target: targetSchema() }, ['target']),
             action('hover', { target: targetSchema() }, ['target']),
+            action(
+              'upload',
+              {
+                target: targetSchema(),
+                files: {
+                  type: 'array',
+                  minItems: 1,
+                  items: { type: 'string' },
+                  description:
+                    'paths relative to the scenario file; target = the input[type=file], even hidden',
+                },
+              },
+              ['target', 'files'],
+            ),
+            action(
+              'expectDialog',
+              {
+                response: { enum: ['accept', 'dismiss'] },
+                promptText: { type: 'string', description: 'only for a prompt()' },
+              },
+              ['response'],
+            ),
           ],
         },
       },

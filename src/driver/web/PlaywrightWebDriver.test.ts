@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { chromium, type Browser } from 'playwright';
 import type { UINode } from '../types.ts';
@@ -25,6 +28,25 @@ const FIXTURE = `<!doctype html>
     <button>Valider</button>
     <button aria-hidden="true">Fantôme</button>
     <div style="display:none"><button>Bouton masqué</button></div>
+    <select aria-label="Transporteur">
+      <option value="std">Livraison standard</option>
+      <option value="exp">Livraison express</option>
+    </select>
+    <button id="supprimer">Supprimer le compte</button>
+    <button id="renommer">Renommer</button>
+    <p data-testid="etat">intact</p>
+    <button id="casser">Charger la liste</button>
+    <input type="file" id="piece" data-testid="piece-jointe" style="display:none">
+    <p data-testid="depose">aucun fichier</p>
+    <div id="explication">Le code postal est requis</div>
+    <button id="eleves"><span role="img" aria-label="team" style="display:inline-flex"></span>Membres</button>
+    <button id="envoyer">Envo<b>yer</b></button>
+    <button id="decoratif"><img src="data:," alt=""> Exporter</button>
+    <button id="cache"><span style="display:none">Masquer</span>Afficher</button>
+    <button id="ghost"><span style="visibility:hidden">Fantome</span>Valider tout</button>
+    <button id="saut">ligne1<br>ligne2</button>
+    <button id="entre">Enregistrer<span style="display:none">X</span>le brouillon</button>
+    <button id="icone"><i title="Fermer"></i>Panneau</button>
   </main>
   <p id="salut"></p>
   <script>
@@ -37,6 +59,22 @@ const FIXTURE = `<!doctype html>
     // observable.
     const u = localStorage.getItem('qai_user');
     if (u) document.getElementById('salut').textContent = 'Bonjour ' + u;
+    const etat = document.querySelector('[data-testid=etat]');
+    document.getElementById('supprimer').addEventListener('click', () => {
+      etat.textContent = confirm('Confirmer la suppression ?') ? 'supprimé' : 'intact';
+    });
+    document.getElementById('renommer').addEventListener('click', () => {
+      etat.textContent = prompt('Nouveau nom ?') ?? 'annulé';
+    });
+    document.getElementById('casser').addEventListener('click', () => {
+      fetch('/api/casse');
+      console.error('appel en echec');
+      console.warn('juste un avertissement');
+    });
+    document.getElementById('piece').addEventListener('change', (e) => {
+      document.querySelector('[data-testid=depose]').textContent =
+        [...e.target.files].map((f) => f.name).join(', ');
+    });
   </script>
 </body></html>`;
 
@@ -59,7 +97,13 @@ describe('PlaywrightWebDriver', () => {
   let baseUrl: string;
 
   before(async () => {
-    server = createServer((_req, res) => {
+    server = createServer((req, res) => {
+      // Un endpoint qui refuse : c'est la panne que l'observation doit voir.
+      if (req.url?.startsWith('/api/casse') === true) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end('{"erreur":"boum"}');
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(FIXTURE);
     });
@@ -107,6 +151,105 @@ describe('PlaywrightWebDriver', () => {
     const snapshot = await driver.observe();
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Fantôme').length, 0);
     assert.equal(findAll(snapshot.root, (n) => n.name === 'Bouton masqué').length, 0);
+  });
+
+  /**
+   * Le texte écrit dans un `div` était invisible : `group` n'est pas un rôle
+   * dont accname déduit le nom, donc le nœud sortait avec un nom vide. C'est
+   * le rendu par défaut de la plupart des bibliothèques de composants — antd y
+   * met ses messages de validation, ce qui rendait « le formulaire refuse une
+   * saisie vide » inexprimable.
+   */
+  it('voit le texte porté par un conteneur générique', async () => {
+    const snapshot = await driver.observe();
+    const trouve = findAll(snapshot.root, (n) => n.name === 'Le code postal est requis');
+
+    assert.equal(trouve.length, 1);
+    assert.equal(trouve[0]?.role, 'text');
+  });
+
+  /**
+   * L'arbre observé sert à formuler la cible ; c'est Playwright qui la
+   * résout, avec le calcul du navigateur. Les deux doivent donc nommer
+   * pareil — sinon le modèle recopie fidèlement un nom que la résolution
+   * rejettera toujours.
+   */
+  it('fait contribuer le libellé d\'une icône au nom de son bouton', async () => {
+    const snapshot = await driver.observe();
+
+    // Ce que le navigateur calcule, et donc ce que Playwright cherchera.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'team Membres').length, 1);
+  });
+
+  it('n\'insère pas de séparateur autour d\'un descendant en ligne', async () => {
+    const snapshot = await driver.observe();
+
+    // Joindre inconditionnellement donnerait « Envo yer » : un nom que le
+    // navigateur ne calcule jamais, donc une cible impossible à viser.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Envoyer').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Envo yer').length, 0);
+  });
+
+  it('exclut du nom un descendant masqué par le rendu, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    // « display:none » et « visibility:hidden » ne sont pas dans le nom
+    // accessible : les inclure donnait « Masquer Afficher », introuvable.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Afficher').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Masquer Afficher').length, 0);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Valider tout').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Fantome Valider tout').length, 0);
+  });
+
+  it('compte un <br> comme une espace, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'ligne1 ligne2').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'ligne1ligne2').length, 0);
+  });
+
+  it('traite display:none comme une espace entre deux textes, contrairement à visibility:hidden', async () => {
+    const snapshot = await driver.observe();
+
+    // display:none retire l'élément du flux → le navigateur garde une espace.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Enregistrer le brouillon').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Enregistrerle brouillon').length, 0);
+    // visibility:hidden colle les voisins → pas d'espace.
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Valider tout').length, 1);
+  });
+
+  it('fait contribuer le title d\'une icône sans texte au nom, comme accname', async () => {
+    const snapshot = await driver.observe();
+
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'FermerPanneau').length, 1);
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Panneau').length, 0);
+  });
+
+  /**
+   * La preuve dure : le nom observé et le calcul de Playwright convergent. On
+   * observe le nom, puis on le résout par ce même nom — si l'observation
+   * divergeait, getByRole ne trouverait rien. C'était le défaut central de la
+   * v2, prouvé faux ici pour chaque cas piégeux.
+   */
+  it('résout chaque nom piégeux par le calcul de Playwright', async () => {
+    const noms = [
+      'team Membres',
+      'Envoyer',
+      'Afficher',
+      'Valider tout',
+      'ligne1 ligne2',
+      'Enregistrer le brouillon',
+      'FermerPanneau',
+    ];
+    for (const name of noms) {
+      const outcome = await driver.resolve({ primary: { role: 'button', name } });
+      assert.equal(outcome.found, true, `getByRole must find "${name}"`);
+    }
+  });
+
+  it('ignore une image décorative, dont l\'alt est vide', async () => {
+    const snapshot = await driver.observe();
+    assert.equal(findAll(snapshot.root, (n) => n.name === 'Exporter').length, 1);
   });
 
   it('remonte l\'identifiant de test des éléments qui en portent un', async () => {
@@ -196,6 +339,133 @@ describe('PlaywrightWebDriver', () => {
     });
     assert.equal(outcome.found, true);
     assert.equal(outcome.found && outcome.node.name, '1');
+  });
+
+  /**
+   * `selectOption(string)` apparie la *value*, un détail technique invisible
+   * de l'utilisateur. Un outil d'intention doit viser le libellé affiché —
+   * mais les résolutions déjà écrites par valeur doivent continuer à jouer,
+   * d'où les deux sens vérifiés ici.
+   */
+  it('choisit une option par son libellé, et encore par sa valeur', async () => {
+    const cible = { primary: { role: 'combobox' as const, name: 'Transporteur' } };
+    const valeur = async (): Promise<string> => {
+      const outcome = await driver.resolve(cible);
+      return outcome.found ? (outcome.node.value ?? '') : '';
+    };
+
+    await driver.act({ kind: 'select', target: cible, option: 'Livraison express' });
+    assert.equal(await valeur(), 'exp', 'le libellé affiché doit suffire');
+
+    await driver.act({ kind: 'select', target: cible, option: 'std' });
+    assert.equal(await valeur(), 'std', 'une résolution écrite par valeur doit continuer à jouer');
+  });
+
+  /**
+   * Playwright refuse automatiquement tout dialogue natif tant que personne
+   * n'écoute. Un parcours « supprimer puis confirmer » se déroulait donc sans
+   * erreur mais sans rien supprimer — le pire des cas : un vert qui ne prouve
+   * rien.
+   */
+  describe('dialogues natifs', () => {
+    const etat = async (): Promise<string> => {
+      const outcome = await driver.resolve({
+        primary: { role: 'text', name: 'Libellé absent' },
+        fallback: { testId: 'etat' },
+      });
+      return outcome.found ? outcome.node.name : '';
+    };
+
+    const supprimer = { primary: { role: 'button' as const, name: 'Supprimer le compte' } };
+
+    it('accepte la confirmation quand elle est armée', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept' });
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+
+      assert.equal(await etat(), 'supprimé');
+      assert.equal(driver.takePendingDialogs(), 0, 'la politique doit avoir été consommée');
+    });
+
+    it('refuse la confirmation, et par défaut aussi', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'dismiss' });
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+      assert.equal(await etat(), 'intact');
+
+      // Aucune politique armée : le comportement d'avant est conservé.
+      await driver.act({ kind: 'click', target: supprimer });
+      await driver.settle();
+      assert.equal(await etat(), 'intact');
+    });
+
+    it('répond à un prompt avec le texte demandé', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept', promptText: 'Nouveau libellé' });
+      await driver.act({ kind: 'click', target: { primary: { role: 'button', name: 'Renommer' } } });
+      await driver.settle();
+
+      assert.equal(await etat(), 'Nouveau libellé');
+    });
+
+    it('rend et efface une politique jamais consommée', async () => {
+      await driver.act({ kind: 'expectDialog', response: 'accept' });
+      assert.equal(driver.takePendingDialogs(), 1);
+      assert.equal(driver.takePendingDialogs(), 0, 'la lecture doit aussi désarmer');
+    });
+  });
+
+  /**
+   * Le champ de téléversement est presque toujours masqué derrière un bouton
+   * stylé. `setInputFiles` accepte l'élément invisible là où un clic échouerait
+   * — sans quoi tout import, avatar ou pièce jointe reste intestable.
+   */
+  it('dépose un fichier dans un champ masqué', async () => {
+    const dossier = await mkdtemp(join(tmpdir(), 'qai-upload-'));
+    const fichier = join(dossier, 'releve.txt');
+    await writeFile(fichier, 'contenu');
+
+    try {
+      await driver.act({
+        kind: 'upload',
+        target: { primary: { role: 'unknown', name: 'introuvable' }, fallback: { testId: 'piece-jointe' } },
+        files: [fichier],
+      });
+      await driver.settle();
+
+      const outcome = await driver.resolve({
+        primary: { role: 'text', name: 'Libellé absent' },
+        fallback: { testId: 'depose' },
+      });
+      assert.equal(outcome.found && outcome.node.name, 'releve.txt');
+    } finally {
+      await rm(dossier, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * Sans ces observations, un écran vide parce qu'un appel a rendu 500 est
+   * indiscernable d'un écran vide parce qu'il n'y a rien à montrer — et le
+   * rapport dit « élément introuvable » là où la cause est ailleurs.
+   */
+  it('observe les requêtes en échec et les erreurs console', async () => {
+    driver.drainObservations();
+
+    await driver.act({
+      kind: 'click',
+      target: { primary: { role: 'button', name: 'Charger la liste' } },
+    });
+    await driver.settle();
+
+    const { network, console: journal } = driver.drainObservations();
+
+    const casse = network.find((entry) => entry.url.includes('/api/casse'));
+    assert.equal(casse?.status, 500);
+    assert.equal(casse?.method, 'GET');
+
+    assert.ok(journal.some((e) => e.level === 'error' && e.text.includes('appel en echec')));
+    assert.ok(journal.some((e) => e.level === 'warning'), 'les avertissements sont aussi collectés');
+
+    assert.deepEqual(driver.drainObservations(), { network: [], console: [] }, 'la lecture doit vider');
   });
 
   it('refuse une action que la plateforme ne sait pas faire', async () => {

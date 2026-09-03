@@ -1,0 +1,34 @@
+# Demo journey for the checks added in 0.2:
+#   - a native confirmation, which the driver used to dismiss on its own
+#   - a network call, which no assertion on the screen can watch fail
+#
+# Green on the healthy shop, red with `--bug reco-500`: the difference shows
+# up NOWHERE on screen, which is the entire point.
+#
+# The shop speaks French, the journey speaks English: an intent is prose, a
+# target is whatever the application says. That separation is the product.
+id: cart-confirmation
+title: Emptying the cart asks for confirmation, and the screen does not lie about the network
+tags: [critical-path, dialogs]
+
+steps:
+  - id: s1
+    do: search for "chaise de bureau"
+    expect: the result list holds at least one item
+
+  - id: s2
+    do: open the first item of the list
+
+  - id: s3
+    do: add the item to the cart
+
+  - id: s4
+    do: open the cart
+    expect:
+      - the cart holds one item
+      - no network call fails
+      - the console stays clean
+
+  - id: s5
+    do: empty the cart, confirming the dialog
+    expect: the cart is empty

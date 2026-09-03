@@ -40,7 +40,11 @@
 <section id="cart" hidden>
   <ul aria-label="Articles du panier" id="cart-items"></ul>
   <div role="group" aria-label="Total"><span id="cart-total"></span></div>
-  <p><button id="guest-checkout">Commander en tant qu'invité</button></p>
+  <ul aria-label="Recommandations" id="reco"></ul>
+  <p>
+    <button id="guest-checkout">Commander en tant qu'invité</button>
+    <button id="empty-cart">Vider le panier</button>
+  </p>
 </section>
 
 <section id="checkout" hidden>
@@ -128,7 +132,38 @@ $('add').addEventListener('click', () => {
   renderCart();
 });
 
-$('cart-link').addEventListener('click', () => { renderCart(); show('cart'); });
+/**
+ * Le panier interroge un endpoint de recommandations à son ouverture.
+ *
+ * Avec la régression « reco-500 », l'appel échoue : l'écran reste correct — la
+ * liste des recommandations est simplement vide — et seule l'observation du
+ * réseau distingue « rien à recommander » de « l'appel a cassé ».
+ */
+async function loadRecommendations() {
+  try {
+    const response = await fetch('/api/recommandations');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const items = await response.json();
+    $('reco').replaceChildren(...items.map((nom) => {
+      const li = document.createElement('li');
+      li.textContent = nom;
+      return li;
+    }));
+  } catch (error) {
+    $('reco').replaceChildren();
+    console.error('recommandations indisponibles : ' + error.message);
+  }
+}
+
+$('cart-link').addEventListener('click', () => { renderCart(); show('cart'); loadRecommendations(); });
+
+// Une confirmation native : sans politique déclarée, le pilote la refuse et le
+// panier n'est jamais vidé — un parcours vert qui ne prouve rien.
+$('empty-cart').addEventListener('click', () => {
+  if (!confirm('Vider le panier ?')) return;
+  state.cart = [];
+  renderCart();
+});
 $('guest-checkout').addEventListener('click', () => show('checkout'));
 
 $('pay').addEventListener('click', () => {

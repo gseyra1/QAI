@@ -3,7 +3,7 @@ import type { Driver } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import type { StateProvider } from '../state/types.ts';
-import type { Healer, ScenarioReport } from './run.ts';
+import type { Healer, ScenarioReport, Watchdogs } from './run.ts';
 import { runScenario } from './run.ts';
 
 export interface SuiteItem {
@@ -11,6 +11,8 @@ export interface SuiteItem {
   resolution: Resolution;
   /** Où réécrire la résolution si le parcours est réparé. */
   resolutionPath: string;
+  /** Dossier du fichier scénario : racine des chemins relatifs d'un upload. */
+  baseDir?: string;
 }
 
 export interface SuiteInput {
@@ -28,6 +30,8 @@ export interface SuiteInput {
   assertTimeoutMs?: number;
   /** Range une capture d'échec et rend son identifiant. Voir RunInput. */
   captureArtifact?: (name: string, bytes: Uint8Array) => Promise<string>;
+  /** Garde-fous réseau et console, communs à toute la suite. */
+  watchdogs?: Watchdogs;
 }
 
 export interface SuiteEntry {
@@ -41,6 +45,24 @@ export interface SuiteReport {
   status: 'passed' | 'healed' | 'failed';
   entries: SuiteEntry[];
   durationMs: number;
+}
+
+/**
+ * Combien d'avertissements la suite a produits, toutes étapes confondues.
+ *
+ * Un avertissement ne change pas le statut — c'est ce qui distingue `warn` de
+ * `fail` — donc un parcours entièrement vert peut en porter plusieurs. Compter
+ * ici plutôt que dans chaque format évite ce qui vient de se produire : JUnit
+ * les rendait, le texte et le markdown les taisaient, et le niveau `warn`
+ * n'était donc observable que par la moitié des sorties.
+ */
+export function warningCount(report: SuiteReport): number {
+  return report.entries.reduce(
+    (total, entry) =>
+      total +
+      (entry.report?.steps ?? []).reduce((count, step) => count + (step.warnings?.length ?? 0), 0),
+    0,
+  );
 }
 
 async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
@@ -87,6 +109,8 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       ...(input.healBudget !== undefined ? { healBudget: input.healBudget } : {}),
       ...(input.assertTimeoutMs !== undefined ? { assertTimeoutMs: input.assertTimeoutMs } : {}),
       ...(input.captureArtifact !== undefined ? { captureArtifact: input.captureArtifact } : {}),
+      ...(item.baseDir !== undefined ? { baseDir: item.baseDir } : {}),
+      ...(input.watchdogs !== undefined ? { watchdogs: input.watchdogs } : {}),
     });
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);

@@ -75,3 +75,24 @@ The CLI produces the markdown; the rest is yours:
 ```bash
 qai run --base-url $URL --format markdown --out report.md
 ```
+
+Or JUnit, which GitLab, Jenkins and Azure ingest natively — that is what makes
+journeys show up in the "Tests" tab instead of drowning in a log:
+
+```bash
+qai run --base-url $URL --format junit --out report.xml
+```
+
+**One JUnit suite is one journey, one case is one step.** That is the
+projection that keeps the useful information — which step gave way, on which
+assertion — where one case per journey would reduce everything to a boolean.
+The case name carries the intent, not just the id: `s4` teaches nothing to
+whoever reads the "Tests" tab.
+
+A skipped step becomes `<skipped/>`. A **healed** step stays green, with the
+repair note in `<system-out>` — except under `--strict`, where it becomes a
+`<failure>`: the report must say the same thing as the exit code.
+
+A watchdog set to `warn` lands in `<system-err>` on a step that stayed green.
+That is the only place it can land: `warn` does not change the verdict, which
+is the point.

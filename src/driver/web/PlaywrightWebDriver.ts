@@ -2,8 +2,11 @@ import type { Browser, Locator as PWLocator, Page } from 'playwright';
 import type {
   Action,
   Capabilities,
+  ConsoleEntry,
   Driver,
   LaunchTarget,
+  NetworkEntry,
+  Observations,
   ObserveOptions,
   Platform,
   PreparedState,
@@ -16,6 +19,25 @@ import { buildFallback, buildLocator } from './locator.ts';
 import { collectTree } from './observe-script.ts';
 
 export type DriverErrorCode = 'not-launched' | 'unsupported' | 'unresolved';
+
+/**
+ * Bornes des tampons d'observation.
+ *
+ * Une application moderne émet des centaines de requêtes ; tout garder ferait
+ * grossir le rapport jusqu'à l'illisible, et la mémoire avec. Les entrées les
+ * plus anciennes cèdent la place : ce qui compte, à l'échec, est ce qui vient
+ * de se passer.
+ */
+const BUFFER = 200;
+
+/**
+ * Bruit connu, jamais imputable à l'application testée.
+ *
+ * Un favicon manquant en développement ferait échouer un garde-fou réseau et
+ * apprendrait à l'équipe à le désactiver — ce qui coûte plus cher que de ne
+ * jamais l'avoir posé.
+ */
+const IGNORED = [/^data:/, /^blob:/, /favicon\.ico(\?|$)/];
 
 export class DriverError extends Error {
   readonly code: DriverErrorCode;
@@ -50,12 +72,17 @@ export class PlaywrightWebDriver implements Driver {
     swipe: false,
     navigateByUrl: true,
     deepLink: true,
+    dialogs: true,
   };
 
   readonly #launch: () => Promise<Browser>;
   #browser: Browser | null = null;
   #page: Page | null = null;
   #baseUrl = '';
+  /** File des politiques armées par `expectDialog`, consommées dans l'ordre. */
+  readonly #dialogs: { response: 'accept' | 'dismiss'; promptText?: string }[] = [];
+  #network: NetworkEntry[] = [];
+  #console: ConsoleEntry[] = [];
 
   constructor(launcher: () => Promise<Browser>) {
     this.#launch = launcher;
@@ -74,9 +101,92 @@ export class PlaywrightWebDriver implements Driver {
       target.viewport ? { viewport: target.viewport } : {},
     );
     this.#page = await context.newPage();
+    /**
+     * Sans écouteur, Playwright refuse automatiquement tout dialogue natif.
+     * Le poser rend la décision au scénario — et le défaut reste le refus,
+     * pour qu'un parcours qui n'a rien déclaré se comporte comme avant.
+     */
+    this.#page.on('dialog', (dialog) => {
+      const policy = this.#dialogs.shift();
+      void (policy?.response === 'accept' ? dialog.accept(policy.promptText) : dialog.dismiss());
+    });
+
+    this.#watch(this.#page);
+
     this.#baseUrl = target.entry;
     await this.#page.addInitScript({ content: COLLECTOR_SOURCE });
     await this.#page.goto(target.entry);
+  }
+
+  #push<T>(buffer: T[], entry: T): void {
+    buffer.push(entry);
+    if (buffer.length > BUFFER) buffer.shift();
+  }
+
+  /**
+   * Écoute passive : rien n'est bloqué, rien n'est modifié.
+   *
+   * Sans ces observations, un écran vide parce qu'un appel a rendu 500 est
+   * indiscernable d'un écran vide parce qu'il n'y a rien à montrer — et le
+   * rapport d'échec dit « élément introuvable » là où la cause est ailleurs.
+   */
+  #watch(page: Page): void {
+    const started = new WeakMap<object, number>();
+    const ignored = (url: string): boolean => IGNORED.some((motif) => motif.test(url));
+
+    page.on('request', (request) => {
+      started.set(request, Date.now());
+    });
+
+    page.on('response', (response) => {
+      const request = response.request();
+      const url = request.url();
+      if (ignored(url)) return;
+      this.#push(this.#network, {
+        method: request.method(),
+        url,
+        status: response.status(),
+        durationMs: Date.now() - (started.get(request) ?? Date.now()),
+        at: new Date().toISOString(),
+      });
+    });
+
+    page.on('requestfailed', (request) => {
+      const url = request.url();
+      if (ignored(url)) return;
+      // `status: null` : la requête n'a jamais abouti. Ce n'est pas la même
+      // panne qu'un 500, et le rapport doit pouvoir les distinguer.
+      this.#push(this.#network, {
+        method: request.method(),
+        url,
+        status: null,
+        durationMs: Date.now() - (started.get(request) ?? Date.now()),
+        at: new Date().toISOString(),
+      });
+    });
+
+    page.on('console', (message) => {
+      const level = message.type();
+      if (level !== 'error' && level !== 'warning') return;
+      this.#push(this.#console, { level, text: message.text(), at: new Date().toISOString() });
+    });
+
+    // Une exception non rattrapée ne passe pas par console.error : sans cette
+    // écoute, le symptôme le plus grave serait le seul à ne pas être vu.
+    page.on('pageerror', (error) => {
+      this.#push(this.#console, {
+        level: 'error',
+        text: error.message,
+        at: new Date().toISOString(),
+      });
+    });
+  }
+
+  drainObservations(): Observations {
+    const observations = { network: this.#network, console: this.#console };
+    this.#network = [];
+    this.#console = [];
+    return observations;
   }
 
   async applyState(state: PreparedState): Promise<void> {
@@ -210,6 +320,30 @@ export class PlaywrightWebDriver implements Driver {
     }, { interactiveOnly: false, maxDepth: 0 });
   }
 
+  /**
+   * Choisir par **libellé** d'abord, par valeur ensuite.
+   *
+   * `selectOption(string)` de Playwright apparie la *value* de l'option, qui
+   * est un détail technique invisible de l'utilisateur — un outil d'intention
+   * doit viser ce qui est affiché. L'ordre est donc libellé puis valeur : les
+   * résolutions produites par le modèle décrivent ce qu'il a lu à l'écran, et
+   * les anciennes, écrites par valeur, passent par le repli.
+   *
+   * Les options sont lues d'un coup avant de choisir. Tenter le libellé puis
+   * rattraper l'erreur consommerait un délai d'attente complet — trente
+   * secondes par `select` sur les résolutions existantes.
+   */
+  async #select(locator: PWLocator, option: string): Promise<void> {
+    const labels = await locator.evaluate((element) =>
+      element instanceof HTMLSelectElement
+        ? Array.from(element.options).map((one) => (one.label || one.textContent) ?? '')
+        : [],
+    );
+
+    const known = labels.some((label) => label.trim() === option);
+    await locator.selectOption(known ? { label: option } : option);
+  }
+
   async #locatorFor(target: ResolvedTarget): Promise<PWLocator> {
     const { locator, matches } = await this.#pick(target);
     if (locator !== null) return locator;
@@ -231,6 +365,13 @@ export class PlaywrightWebDriver implements Driver {
         return;
       case 'swipe':
         throw new DriverError('swipe does not exist on the web driver', 'unsupported');
+      case 'expectDialog':
+        // Rien n'est exécuté : on arme, le geste suivant déclenchera.
+        this.#dialogs.push({
+          response: action.response,
+          ...(action.promptText !== undefined ? { promptText: action.promptText } : {}),
+        });
+        return;
       case 'click':
         await (await this.#locatorFor(action.target)).click();
         return;
@@ -238,10 +379,15 @@ export class PlaywrightWebDriver implements Driver {
         await (await this.#locatorFor(action.target)).fill(action.value);
         return;
       case 'select':
-        await (await this.#locatorFor(action.target)).selectOption(action.option);
+        await this.#select(await this.#locatorFor(action.target), action.option);
         return;
       case 'hover':
         await (await this.#locatorFor(action.target)).hover();
+        return;
+      case 'upload':
+        // Le champ est très souvent masqué derrière un bouton stylé :
+        // `setInputFiles` accepte l'élément invisible, contrairement à un clic.
+        await (await this.#locatorFor(action.target)).setInputFiles(action.files);
         return;
       case 'scrollTo':
         await (await this.#locatorFor(action.target)).scrollIntoViewIfNeeded();
@@ -264,6 +410,12 @@ export class PlaywrightWebDriver implements Driver {
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }),
     );
+  }
+
+  takePendingDialogs(): number {
+    const pending = this.#dialogs.length;
+    this.#dialogs.length = 0;
+    return pending;
   }
 
   async dispose(): Promise<void> {

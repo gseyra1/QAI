@@ -138,7 +138,27 @@ export type Action =
   | { kind: 'press'; key: string }
   | { kind: 'scrollTo'; target: ResolvedTarget }
   | { kind: 'hover'; target: ResolvedTarget }
-  | { kind: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' };
+  | { kind: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' }
+  /**
+   * Dépose des fichiers dans un champ de téléversement.
+   *
+   * Les chemins sont relatifs au **fichier scénario** et résolus par le moteur,
+   * pas par le driver : un chemin absolu dans une résolution versionnée ne
+   * fonctionnerait que sur la machine qui l'a écrite.
+   */
+  | { kind: 'upload'; target: ResolvedTarget; files: string[] }
+  /**
+   * Arme la réponse au **prochain** dialogue natif, pour une seule fois.
+   *
+   * Se place juste avant le geste qui le déclenche, jamais après : le dialogue
+   * bloque la page dès le clic, il n'y a donc aucun moment ultérieur où
+   * répondre. Sans cette action, tout parcours « supprimer puis confirmer »
+   * casse en silence — un pilote sans politique déclarée refuse le dialogue,
+   * et la suppression n'a jamais lieu.
+   *
+   * `promptText` ne vaut que pour un prompt() ; il est ignoré ailleurs.
+   */
+  | { kind: 'expectDialog'; response: 'accept' | 'dismiss'; promptText?: string };
 
 /**
  * Ce que la plateforme sait faire. Le moteur consulte ces drapeaux avant de
@@ -150,6 +170,53 @@ export interface Capabilities {
   swipe: boolean;
   navigateByUrl: boolean;
   deepLink: boolean;
+  /**
+   * Dialogues natifs : alert, confirm, prompt — et leurs équivalents mobiles.
+   *
+   * **Optionnel, et absent vaut non.** Ce contrat est publié : un champ requis
+   * ajouté après coup empêche de compiler tout pilote écrit contre la version
+   * précédente, ce qui n'est pas un ajout mais une rupture.
+   *
+   * Le défaut est le refus, jamais l'inverse. Un pilote incapable de répondre
+   * à un dialogue et qu'on laisserait passer produirait un parcours
+   * « supprimer puis confirmer » vert sans que la suppression ait eu lieu —
+   * précisément le faux vert que `expectDialog` existe pour supprimer.
+   */
+  dialogs?: boolean;
+}
+
+/**
+ * Une requête sortante observée pendant une étape.
+ *
+ * `status: null` distingue l'échec réseau — DNS, CORS, connexion refusée — du
+ * code d'erreur applicatif. Les deux cassent une interface, mais pas pour les
+ * mêmes raisons, et le rapport doit permettre de les séparer.
+ */
+export interface NetworkEntry {
+  method: string;
+  url: string;
+  status: number | null;
+  durationMs: number;
+  at: string;
+}
+
+export interface ConsoleEntry {
+  level: 'error' | 'warning';
+  text: string;
+  at: string;
+}
+
+/**
+ * Ce qui s'est passé hors de l'arbre pendant une étape.
+ *
+ * Une assertion prouve ce que l'écran affiche ; ces observations disent ce que
+ * l'application a fait pour l'afficher. Un écran vide parce qu'un appel a rendu
+ * 500 et un écran vide parce qu'il n'y a rien à montrer se ressemblent
+ * exactement — c'est la seule information qui les sépare.
+ */
+export interface Observations {
+  network: NetworkEntry[];
+  console: ConsoleEntry[];
 }
 
 export type ResolveOutcome =
@@ -243,6 +310,29 @@ export interface Driver {
    * et polluerait l'historique de réparations.
    */
   settle(timeoutMs?: number): Promise<void>;
+
+  /**
+   * Rend et efface les politiques de dialogue armées mais jamais consommées.
+   *
+   * Une politique qui survit à son étape répondrait à un dialogue qu'aucun
+   * scénario n'a prévu, trois étapes plus loin. La rendre au moteur permet
+   * d'avertir : « expectDialog armé, aucun dialogue n'est apparu » signale le
+   * plus souvent que le bouton de confirmation a disparu de l'application.
+   */
+  takePendingDialogs?(): number;
+
+  /**
+   * Rend et vide ce qui a été observé depuis le dernier appel.
+   *
+   * Optionnelle : un driver mobile peut ne pas savoir écouter le réseau, et le
+   * moteur doit continuer de fonctionner sans. Son absence est la seule
+   * déclaration nécessaire — un drapeau qui la double serait un second endroit
+   * à tenir à jour, que le moteur n'aurait aucune raison de consulter.
+   *
+   * Vider à la lecture est ce qui découpe l'observation par étape sans que le
+   * driver ait à connaître la notion d'étape.
+   */
+  drainObservations?(): Observations;
 
   dispose(): Promise<void>;
 }

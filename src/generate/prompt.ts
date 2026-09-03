@@ -40,6 +40,37 @@ Rules for assertions:
   good state: a false assertion here would be a false test.
 - A value can reference a capture with {{name}}, including in the name of a
   target.
+- When the assertion speaks of the address — a redirect, a denied access, a
+  navigation — use "urlContains" (a stable fragment, e.g. "/login") or
+  "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
+  bear on no element at all.
+
+Rules for what the application DOES, which is not visible on screen:
+- When the assertion speaks of network calls — "no call breaks", "the search
+  raised no error" — use "noFailedRequests".
+- When it speaks of the console — "the console stays quiet" — use
+  "noConsoleErrors".
+- Neither takes a "target": they bear on no element. NEVER replace them with a
+  screen or URL check that happens to be true: it would pass while asserting
+  something other than what was asked.
+- "allow" lists the tolerated fragments, when a failure is the expected answer
+  (for instance a 401 on /me for an anonymous visitor).
+
+Rules for typed values:
+- When the intent designates a value by an environment variable ("sign in with
+  QAI_USER and QAI_PASS"), return the template {{env.QAI_USER}}, never the
+  value itself nor an invented one. The file produced is versioned: a secret
+  copied into it stays there forever. The engine resolves these templates at
+  the moment of acting.
+- {{capture}} also works in a typed value, to reuse what was read at an
+  earlier step.
+
+Rule for native confirmations:
+- A gesture that triggers a browser dialog (confirm, alert, prompt) must be
+  PRECEDED by { "kind": "expectDialog", "response": "accept" }. The dialog
+  blocks the page from the click onwards: there is no moment after it to
+  answer. Without this action the dialog is dismissed, and the deletion, the
+  confirmation or the exit never happens.
 
 An intent often translates into several gestures: "fill in the address" or
 "sign in" are several actions, in order — but all on the screen you are
@@ -98,11 +129,18 @@ export function retryMessage(errors: string[], tree?: string): string {
 
 export function checksMessage(input: {
   tree: string;
+  /** Sans elle, une assertion d'URL serait à deviner. */
+  location: string;
   expectations: string[];
   captures: Record<string, string>;
   availableCaptures: Record<string, string>;
 }): string {
-  const parts = ['The actions have been executed. Here is the resulting screen:', '', input.tree, ''];
+  const parts = [
+    `The actions have been executed. Here is the resulting screen (${input.location}):`,
+    '',
+    input.tree,
+    '',
+  ];
 
   if (Object.keys(input.captures).length > 0) {
     parts.push('Captures to produce from this screen:', ...captureLines(input.captures));

@@ -48,6 +48,7 @@ describe('messages de génération', () => {
 
     const checks = checksMessage({
       tree: 'group',
+      location: 'http://app.test/',
       expectations: [],
       captures: { commande: 'le numéro de commande' },
       availableCaptures: {},
