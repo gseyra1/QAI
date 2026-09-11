@@ -272,6 +272,9 @@ export async function main(argv: string[]): Promise<number> {
           // Même base qu'au rejeu, sans quoi un chemin de fixture écrit ici ne
           // désigne pas le même fichier là-bas.
           baseDir: dirname(path),
+          // Ramène une navigation absolue à un chemin : sinon la résolution
+          // porte le port de développement et ne rejoue que sur cette machine.
+          baseUrl,
           ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });
 

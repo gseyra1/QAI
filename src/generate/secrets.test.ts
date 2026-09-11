@@ -100,3 +100,62 @@ describe('fuite de secret à la génération', () => {
     }
   });
 });
+
+/**
+ * Une navigation absolue recopiée par le modèle enferme la résolution sur la
+ * machine qui l'a générée : le port de développement part dans un fichier
+ * versionné, et le rejeu meurt ailleurs sur un « network failure » qui ne dit
+ * rien de l'application. La vérification ne peut pas l'attraper — l'URL marche
+ * parfaitement à la génération.
+ */
+class NavigatingDriver extends ReflectingDriver {
+  override async resolve(): Promise<ResolveOutcome> {
+    return { found: true, node: node('group', 'page'), usedFallback: false };
+  }
+}
+
+class NavigateProvider implements ModelProvider {
+  readonly name = 'navigate';
+  readonly #to: string;
+
+  constructor(to: string) {
+    this.#to = to;
+  }
+
+  async complete(): Promise<ModelResponse> {
+    return {
+      output: { actions: [{ kind: 'navigate', to: this.#to }], captures: {}, assertions: {} },
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+  }
+}
+
+describe('navigation portable', () => {
+  const scenarioNav: Scenario = {
+    id: 'nav',
+    title: 'Navigation',
+    steps: [{ id: 's1', do: 'open the home page' }],
+  };
+
+  it('ramène une URL absolue de la base à un chemin', async () => {
+    const result = await generateResolution({
+      scenario: scenarioNav,
+      driver: new NavigatingDriver(),
+      provider: new NavigateProvider('http://127.0.0.1:8940/cart?x=1'),
+      baseUrl: 'http://127.0.0.1:8940',
+    });
+    const action = result.resolution?.steps['s1']?.actions[0];
+    assert.deepEqual(action, { kind: 'navigate', to: '/cart?x=1' });
+  });
+
+  it('conserve une URL d\'un autre domaine, qui est un départ délibéré', async () => {
+    const result = await generateResolution({
+      scenario: scenarioNav,
+      driver: new NavigatingDriver(),
+      provider: new NavigateProvider('https://ailleurs.example/sso'),
+      baseUrl: 'http://127.0.0.1:8940',
+    });
+    const action = result.resolution?.steps['s1']?.actions[0];
+    assert.deepEqual(action, { kind: 'navigate', to: 'https://ailleurs.example/sso' });
+  });
+});

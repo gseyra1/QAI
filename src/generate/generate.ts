@@ -34,6 +34,12 @@ export interface GenerateInput {
    * racine du dépôt cassait au premier rejeu.
    */
   baseDir?: string;
+  /**
+   * Racine de l'application testée. Sert à ramener une navigation absolue à un
+   * chemin relatif : une résolution versionnée doit rejouer ailleurs que sur la
+   * machine qui l'a écrite.
+   */
+  baseUrl?: string;
   appVersion?: string;
 }
 
@@ -238,6 +244,33 @@ function verifyChecks(
   return { errors: errors.map((error) => secrets.redact(error)), produced };
 }
 
+/**
+ * Ramène une navigation à un chemin relatif à la racine testée.
+ *
+ * Le modèle recopie volontiers l'URL qu'il voit — port de développement
+ * compris. Écrite telle quelle dans un fichier versionné, elle ne rejoue que
+ * sur la machine qui l'a générée : le port change, et le parcours meurt sur un
+ * « network failure » qui ne dit rien de l'application. La vérification ne peut
+ * pas l'attraper, puisque l'URL absolue fonctionne parfaitement à la
+ * génération — c'est plus tard, ailleurs, qu'elle casse.
+ *
+ * Une URL d'un AUTRE domaine est conservée : c'est alors une navigation
+ * délibérée hors de l'application, pas une adresse recopiée par accident.
+ */
+function relativize(action: Action, baseUrl: string | undefined): Action {
+  if (action.kind !== 'navigate' || baseUrl === undefined) return action;
+  try {
+    const target = new URL(action.to, baseUrl);
+    const root = new URL(baseUrl);
+    if (target.origin !== root.origin) return action;
+    return { ...action, to: `${target.pathname}${target.search}${target.hash}` };
+  } catch {
+    // Ni une URL absolue ni un chemin résolvable : on n'y touche pas, la
+    // vérification en dira plus que nous.
+    return action;
+  }
+}
+
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
   const { scenario, driver, provider } = input;
   const attempts = input.attemptsPerStep ?? 3;
@@ -415,7 +448,10 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
     Object.assign(bag, outcome.produced);
 
-    const resolved: StepResolution = { actions: proposal.actions, healedAt: null };
+    const resolved: StepResolution = {
+      actions: proposal.actions.map((action) => relativize(action, input.baseUrl)),
+      healedAt: null,
+    };
     if (Object.keys(checks.captures).length > 0) resolved.captures = checks.captures;
     if (Object.keys(checks.assertions).length > 0) resolved.assertions = checks.assertions;
     steps[step.id] = resolved;

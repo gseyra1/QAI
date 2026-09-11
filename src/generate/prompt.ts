@@ -12,14 +12,25 @@ Targeting rules, no exceptions:
 - The name must match the one in the tree exactly. If the exact name is
   unstable (it contains a counter, a date, an amount), use
   { "contains": "..." } on the stable part.
-- The test will be REPLAYED on other data: a name that comes from the page's
-  data — order number, item name, price, generated code — will change on the
-  next replay. Target the structure (role, "within", "nth") or the stable part
-  of the name with { "contains": "..." }, never the data itself.
+- NEVER use the page's data as a target name. Item names, prices, amounts,
+  order numbers, dates, generated codes are content, not identity: the test is
+  replayed on other data and the name is gone. This holds even though the value
+  is on the screen right now — that is exactly what makes the mistake easy.
+  Instead, target:
+    · the structure — role plus "within" (the container) and/or "nth";
+    · or the stable part of the name with { "contains": "..." }.
+  Wrong: { "role": "text", "name": "129,00 €" } · { "role": "link", "name":
+  "Chaise de bureau" }
+  Right: { "role": "text", "within": { "role": "group", "name": "Total" } } ·
+  { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } }
+  A name copied off the screen is the single most common way to write a test
+  that passes today and fails tomorrow.
 - "The first in the list" translates to a position — "nth": 0 in the list's
   "within" — not to the name of the element that happens to be first today.
 - To open a page whose path is known, prefer "navigate" to a click: less
-  fragile than a link whose label can change.
+  fragile than a link whose label can change. Its "to" is a PATH relative to
+  the application root — "/" or "/cart" — never a full URL: the host and port
+  belong to the machine running the test, not to the test.
 - If several elements match, disambiguate with "within" (the container) by
   preference, otherwise with "nth". An ambiguous target is refused: the
   engine is not allowed to choose in your place.
@@ -57,11 +68,15 @@ Rules for what the application DOES, which is not visible on screen:
   (for instance a 401 on /me for an anonymous visitor).
 
 Rules for typed values:
-- When the intent designates a value by an environment variable ("sign in with
-  QAI_USER and QAI_PASS"), return the template {{env.QAI_USER}}, never the
-  value itself nor an invented one. The file produced is versioned: a secret
-  copied into it stays there forever. The engine resolves these templates at
-  the moment of acting.
+- Use {{env.NAME}} ONLY when the intent names that variable itself, in capitals
+  ("sign in with QAI_USER and QAI_PASS" → {{env.QAI_USER}}). Never invent a
+  variable name, and never turn an ordinary value into one: an intent that says
+  "fill in the address with the \\"client-fr\\" data set" designates a named
+  fixture, not an environment variable — read the values off the screen, or use
+  what the scenario and the earlier captures already give you. A template
+  pointing at a variable nobody defined fails the step outright.
+- The reason for the rule is narrow: a secret must not land in the produced
+  file, which is versioned forever. It is not a general way to name values.
 - {{capture}} also works in a typed value, to reuse what was read at an
   earlier step.
 
