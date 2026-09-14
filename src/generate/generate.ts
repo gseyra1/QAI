@@ -107,6 +107,40 @@ function asChecks(output: unknown): Pick<Proposal, 'captures' | 'assertions'> | 
   };
 }
 
+const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+
+/**
+ * Une variable d'environnement que l'intention ne nomme pas est refusée.
+ *
+ * Le modèle généralise volontiers la règle des secrets à toute valeur à
+ * saisir : « renseigner l'adresse avec le jeu de données client-fr » est
+ * devenu `{{env.QAI_USER}}`. Le cas bruyant — la variable n'existe pas —
+ * échoue de lui-même. Le cas SILENCIEUX est pire : si la CI définit bien
+ * `QAI_USER` pour le parcours de connexion, l'identifiant est saisi dans le
+ * champ adresse sans erreur, et comme la valeur vient de l'environnement le
+ * registre la masque en `***` dans chaque rapport — mauvaise valeur, et
+ * invisible pour qui relit.
+ *
+ * C'est garantissable, donc c'est garanti : on ne le confie pas à la consigne.
+ */
+function verifyEnvTemplates(actions: Action[], intent: string): string[] {
+  const errors: string[] = [];
+  for (const [index, action] of actions.entries()) {
+    const value = valueOf(action);
+    if (value === null) continue;
+    ENV_TEMPLATE.lastIndex = 0;
+    for (const match of value.matchAll(ENV_TEMPLATE)) {
+      const name = match[1] as string;
+      if (!intent.includes(name)) {
+        errors.push(
+          `action ${index}: {{env.${name}}} — the intent does not name this variable, so it is not the value being asked for; read it off the screen or use the scenario's own data`,
+        );
+      }
+    }
+  }
+  return errors;
+}
+
 /** Chaque cible est confrontée à l'application avant d'agir. */
 async function verifyActions(driver: Driver, actions: Action[]): Promise<string[]> {
   const errors: string[] = [];
@@ -245,6 +279,18 @@ function verifyChecks(
 }
 
 /**
+ * Ce qu'on renvoie au modèle quand son fournisseur a levé.
+ *
+ * Le message d'exception dit souvent précisément ce qui manque — « réponse
+ * tronquée », « JSON invalide » — donc le lui rendre vaut mieux que de le
+ * remplacer par une formule générique.
+ */
+function modelFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `your answer could not be read (${message}) — return a single valid JSON object, nothing else`;
+}
+
+/**
  * Ramène une navigation à un chemin relatif à la racine testée.
  *
  * Le modèle recopie volontiers l'URL qu'il voit — port de développement
@@ -257,13 +303,42 @@ function verifyChecks(
  * Une URL d'un AUTRE domaine est conservée : c'est alors une navigation
  * délibérée hors de l'application, pas une adresse recopiée par accident.
  */
-function relativize(action: Action, baseUrl: string | undefined): Action {
-  if (action.kind !== 'navigate' || baseUrl === undefined) return action;
+function relativize(action: Action, baseUrl: string | undefined, warn: (m: string) => void): Action {
+  if (action.kind !== 'navigate') return action;
+  if (baseUrl === undefined) {
+    // `generateResolution` est exporté : un harnais qui omet `baseUrl`
+    // n'obtient aucune relativisation. Se taire lui livrerait une résolution
+    // liée à sa machine sans qu'il l'apprenne jamais.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(action.to)) {
+      warn(
+        `navigate "${action.to}" is saved as an absolute URL: pass baseUrl to generateResolution so the resolution replays elsewhere`,
+      );
+    }
+    return action;
+  }
   try {
-    const target = new URL(action.to, baseUrl);
-    const root = new URL(baseUrl);
+    const root = normalizedBase(baseUrl);
+    const target = new URL(action.to, root);
     if (target.origin !== root.origin) return action;
-    return { ...action, to: `${target.pathname}${target.search}${target.hash}` };
+
+    /**
+     * Relatif à la BASE, pas à l'origine.
+     *
+     * Une application servie sous un préfixe — « https://staging/ecole/ » —
+     * perdait ce préfixe : un chemin absolu « /ecole/eleves » écrit à la
+     * génération devient « https://autre-hote/ecole/eleves » au rejeu si la
+     * base change de préfixe, et « /eleves » écrasait carrément le préfixe.
+     * Une forme relative suit la base où qu'elle soit montée.
+     */
+    if (!target.pathname.startsWith(root.pathname)) {
+      return { ...action, to: `${target.pathname}${target.search}${target.hash}` };
+    }
+    const relative = target.pathname.slice(root.pathname.length);
+    // La base elle-même ne donne pas une chaîne vide, qui se lirait comme un
+    // champ oublié : « . » est la référence relative au dossier courant, et
+    // `new URL('.', base)` rend exactement la base.
+    const to = relative === '' && target.search === '' && target.hash === '' ? '.' : relative;
+    return { ...action, to: `${to}${target.search}${target.hash}` };
   } catch {
     // Ni une URL absolue ni un chemin résolvable : on n'y touche pas, la
     // vérification en dira plus que nous.
@@ -271,9 +346,22 @@ function relativize(action: Action, baseUrl: string | undefined): Action {
   }
 }
 
+/**
+ * La base, terminée par « / ».
+ *
+ * Sans la barre finale, `new URL('eleves', 'https://x/ecole')` rend
+ * `https://x/eleves` : le dernier segment est traité comme un fichier, pas
+ * comme un dossier, et le préfixe disparaît silencieusement.
+ */
+function normalizedBase(baseUrl: string): URL {
+  const url = new URL(baseUrl);
+  if (!url.pathname.endsWith('/')) url.pathname = `${url.pathname}/`;
+  return url;
+}
+
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
   const { scenario, driver, provider } = input;
-  const attempts = input.attemptsPerStep ?? 3;
+  const attempts = input.attemptsPerStep ?? 5;
   const baseDir = input.baseDir ?? process.cwd();
   const platform = driver.platform;
 
@@ -323,17 +411,35 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
     while (used < attempts && proposal === null) {
       used += 1;
-      const response = await provider.complete({
-        system: SYSTEM_PROMPT,
-        messages: conversation,
-        responseSchema: stepProposalSchema(),
-      });
+      let response;
+      try {
+        response = await provider.complete({
+          system: SYSTEM_PROMPT,
+          messages: conversation,
+          responseSchema: stepProposalSchema(),
+        });
+      } catch (error) {
+        // Une réponse illisible est un rejet, pas une panne du moteur. Un
+        // fournisseur sans décodage contraint par schéma lève ici — JSON.parse
+        // échoue chez lui, avant toute validation — et c'est son mode de panne
+        // NORMAL, pas un cas théorique. Laisser filer l'exception abandonnait
+        // tous les scénarios restants sur une seule réponse tronquée.
+        rejections.push(secrets.redact(error instanceof Error ? error.message : String(error)));
+        conversation.push({
+          role: 'user',
+          content: [{ type: 'text', text: retryMessage([modelFailure(error)]) }],
+        });
+        continue;
+      }
 
       const candidate = asProposal(response.output);
       const raw =
         candidate === null
           ? ['malformed response: "actions" must be a non-empty list of known gestures']
-          : await verifyActions(driver, candidate.actions);
+          : [
+              ...verifyEnvTemplates(candidate.actions, intent),
+              ...(await verifyActions(driver, candidate.actions)),
+            ];
       // Masqué avant de rejoindre le rapport ET la conversation : un rejet peut
       // recopier un nom d'écran, et un secret d'une étape antérieure y figure.
       const errors = raw.map((error) => secrets.redact(error));
@@ -355,6 +461,21 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       aborted = true;
       continue;
     }
+
+    /**
+     * Relativisé AVANT d'exécuter, pas au moment d'écrire.
+     *
+     * Sinon la génération valide une forme — l'URL absolue que le modèle a
+     * proposée — et en versionne une autre, jamais exécutée. C'est exactement
+     * la classe de défaut que cette PR corrige par ailleurs : vert ici, cassé
+     * au rejeu. En jouant la forme versionnée, la génération la prouve.
+     */
+    proposal = {
+      ...proposal,
+      actions: proposal.actions.map((action) =>
+        relativize(action, input.baseUrl, (message) => rejections.push(message)),
+      ),
+    };
 
     try {
       // Les valeurs sont interpolées ici aussi : sans ça, la génération
@@ -418,11 +539,19 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         });
       }
 
-      const response = await provider.complete({
-        system: SYSTEM_PROMPT,
-        messages: checksConversation,
-        responseSchema: checksProposalSchema(),
-      });
+      let response;
+      try {
+        response = await provider.complete({
+          system: SYSTEM_PROMPT,
+          messages: checksConversation,
+          responseSchema: checksProposalSchema(),
+        });
+      } catch (error) {
+        // Même traitement qu'en phase A : un fournisseur qui lève consomme une
+        // tentative et reçoit l'erreur, il n'interrompt pas la génération.
+        outcome = { errors: [modelFailure(error)], produced: {} };
+        continue;
+      }
 
       checksConversation.push({
         role: 'assistant',
@@ -448,10 +577,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
     Object.assign(bag, outcome.produced);
 
-    const resolved: StepResolution = {
-      actions: proposal.actions.map((action) => relativize(action, input.baseUrl)),
-      healedAt: null,
-    };
+    // Déjà relativisées avant l'exécution : on versionne exactement ce qui a
+    // été joué.
+    const resolved: StepResolution = { actions: proposal.actions, healedAt: null };
     if (Object.keys(checks.captures).length > 0) resolved.captures = checks.captures;
     if (Object.keys(checks.assertions).length > 0) resolved.assertions = checks.assertions;
     steps[step.id] = resolved;

@@ -71,7 +71,7 @@ Rules for typed values:
 - Use {{env.NAME}} ONLY when the intent names that variable itself, in capitals
   ("sign in with QAI_USER and QAI_PASS" → {{env.QAI_USER}}). Never invent a
   variable name, and never turn an ordinary value into one: an intent that says
-  "fill in the address with the \\"client-fr\\" data set" designates a named
+  "fill in the address with the client-fr data set" designates a named
   fixture, not an environment variable — read the values off the screen, or use
   what the scenario and the earlier captures already give you. A template
   pointing at a variable nobody defined fails the step outright.
