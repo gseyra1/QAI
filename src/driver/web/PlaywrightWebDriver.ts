@@ -65,6 +65,17 @@ interface PageGlobals {
  */
 const COLLECTOR_SOURCE = `(() => { globalThis.__qaiCollect = ${collectTree.toString()}; })()`;
 
+/** Voir `launch` : sans barre finale, une base à préfixe perd son préfixe. */
+function withTrailingSlash(entry: string): string {
+  try {
+    const url = new URL(entry);
+    if (!url.pathname.endsWith('/')) url.pathname = `${url.pathname}/`;
+    return url.toString();
+  } catch {
+    return entry;
+  }
+}
+
 export class PlaywrightWebDriver implements Driver {
   readonly platform: Platform = 'web';
   readonly capabilities: Capabilities = {
@@ -113,7 +124,15 @@ export class PlaywrightWebDriver implements Driver {
 
     this.#watch(this.#page);
 
-    this.#baseUrl = target.entry;
+    /**
+     * La base est mémorisée avec une barre finale.
+     *
+     * `new URL('eleves', 'https://x/ecole')` rend `https://x/eleves` : sans la
+     * barre, le dernier segment passe pour un fichier et le préfixe de montage
+     * disparaît. Une application servie sous un chemin — et un chemin de
+     * résolution relatif à cette base — en dépend.
+     */
+    this.#baseUrl = withTrailingSlash(target.entry);
     await this.#page.addInitScript({ content: COLLECTOR_SOURCE });
     await this.#page.goto(target.entry);
   }
