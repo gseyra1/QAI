@@ -5,7 +5,8 @@
     "emitDeclarationOnly": true,
     "declaration": true,
     "rewriteRelativeImportExtensions": true,
-    "outDir": "dist/types"
+    "outDir": "dist/types",
+    "rootDir": "./src"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
