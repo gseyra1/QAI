@@ -44,7 +44,7 @@ Options
   --workers <n>         journeys in parallel (default: 4)
   --heal                repair stale targets and rewrite the resolutions
   --max-cost <n>        model spend cap
-  --attempts <n>        attempts per step during generation (default 3)
+  --attempts <n>        attempts per step during generation (default 5)
   --assert-timeout <ms> re-evaluation window for an assertion still false,
                         for rendering that finishes after network idle
                         (default 5000)
@@ -272,13 +272,20 @@ export async function main(argv: string[]): Promise<number> {
           // Même base qu'au rejeu, sans quoi un chemin de fixture écrit ici ne
           // désigne pas le même fichier là-bas.
           baseDir: dirname(path),
+          // Ramène une navigation absolue à un chemin : sinon la résolution
+          // porte le port de développement et ne rejoue que sur cette machine.
+          baseUrl,
           ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });
 
         process.stdout.write(`${scenario.id}\n`);
         for (const step of result.steps) {
           const mark = step.status === 'resolved' ? '✓' : step.status === 'skipped' ? '⊘' : '✖';
-          process.stdout.write(`  ${mark} ${step.stepId.padEnd(4)} ${step.intent}\n`);
+          // Le nombre de tentatives est affiché dès qu'il en a fallu plus
+          // d'une : sans lui, une consigne qui se dégrade — donc un besoin
+          // croissant de reprises — serait absorbée en silence par le budget.
+          const tries = step.attempts > 1 ? `  (${step.attempts} attempts)` : '';
+          process.stdout.write(`  ${mark} ${step.stepId.padEnd(4)} ${step.intent}${tries}\n`);
           for (const rejection of step.rejections) {
             process.stdout.write(`        attempt rejected: ${rejection}\n`);
           }

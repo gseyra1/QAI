@@ -14,6 +14,7 @@ describe('resolveUpload', () => {
   let root: string;
   let base: string;
   let outside: string;
+  let symlinked = false;
 
   before(() => {
     root = mkdtempSync(join(tmpdir(), 'qai-upload-'));
@@ -27,7 +28,16 @@ describe('resolveUpload', () => {
     writeFileSync(join(outside, 'id_rsa'), 'SECRET KEY');
     // Le vecteur : un lien DANS le scénario qui pointe DEHORS. Git préserve les
     // liens, donc un dépôt de scénarios tiers pourrait en contenir un.
-    symlinkSync(join(outside, 'id_rsa'), join(base, 'avatar.png'));
+    //
+    // Windows refuse le lien sans mode développeur (EPERM). L'échec est isolé
+    // ici : un `before()` qui lève annulerait les huit cas, y compris ceux qui
+    // ne touchent pas aux liens — chemin absolu, remontée, « ..cache ».
+    try {
+      symlinkSync(join(outside, 'id_rsa'), join(base, 'avatar.png'));
+      symlinked = true;
+    } catch {
+      symlinked = false;
+    }
   });
 
   after(() => {
@@ -42,7 +52,8 @@ describe('resolveUpload', () => {
     );
   });
 
-  it('refuse un lien symbolique qui sort du dossier — la faille du cadrage lexical', () => {
+  it('refuse un lien symbolique qui sort du dossier — la faille du cadrage lexical', (t) => {
+    if (!symlinked) return t.skip('symlinks unavailable on this machine');
     // « avatar.png » est lexicalement dans le dossier, mais réel dehors :
     // sans résolution des liens, ~/.ssh/id_rsa serait parti vers l'application.
     assert.throws(() => resolveUpload(base, 'avatar.png'), /outside the scenario directory/);
