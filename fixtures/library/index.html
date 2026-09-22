@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Médiathèque</title>
+</head>
+<body>
+  <!--
+    Application TÉMOIN de la mesure de génération.
+
+    Aucune de ses chaînes ne figure dans le prompt système : ni son vocabulaire
+    (emprunt, adhérent, notice, exemplaire), ni ses libellés, ni ses données.
+    La boutique de démonstration, elle, a fourni les exemples du prompt — un
+    bon résultat mesuré sur elle pourrait donc venir de la reconnaissance
+    plutôt que de la règle. C'est ce que cette page permet de trancher : si le
+    modèle cible ici la structure et non la donnée, la règle est apprise.
+
+    Elle reste délibérément petite : elle sert à mesurer, pas à démontrer.
+  -->
+  <header>
+    <a href="/emprunts" id="lien-emprunts">Mes emprunts <span data-testid="compteur-emprunts">0</span></a>
+  </header>
+
+  <main>
+    <input type="search" aria-label="Chercher une notice">
+    <ul aria-label="Notices trouvées" id="notices"></ul>
+
+    <section id="notice" hidden aria-label="Notice détaillée">
+      <h1 id="titre"></h1>
+      <p id="auteur"></p>
+      <p id="cote"></p>
+      <p>Exemplaires disponibles : <span id="dispo"></span></p>
+      <button id="emprunter">Emprunter</button>
+    </section>
+
+    <section id="confirmation" hidden aria-label="Emprunt enregistré">
+      <h2>Emprunt enregistré</h2>
+      <p>Référence <span id="recu"></span></p>
+      <p id="retour"></p>
+    </section>
+
+    <section aria-label="Emprunts en cours">
+      <ul aria-label="Liste des emprunts" id="liste-emprunts"></ul>
+    </section>
+  </main>
+
+  <script>
+    const CATALOGUE = [
+      { titre: 'Le Rivage des Syrtes', auteur: 'Julien Gracq', cote: '843 GRA', dispo: 2 },
+      { titre: 'La Horde du Contrevent', auteur: 'Alain Damasio', cote: '843 DAM', dispo: 1 },
+      { titre: 'Les Furtifs', auteur: 'Alain Damasio', cote: '843 DAM', dispo: 3 },
+    ];
+
+    const $ = (id) => document.getElementById(id);
+    let courante = null;
+    let numero = 4417;
+
+    $('notices').setAttribute('aria-label', 'Notices trouvées');
+
+    document.querySelector('input[type=search]').addEventListener('input', (event) => {
+      const terme = event.target.value.trim().toLowerCase();
+      const trouvees =
+        terme === ''
+          ? []
+          : CATALOGUE.filter(
+              (n) =>
+                n.titre.toLowerCase().includes(terme) || n.auteur.toLowerCase().includes(terme),
+            );
+      $('notices').innerHTML = trouvees
+        .map((n) => `<li><a href="#" data-titre="${n.titre}">${n.titre}</a></li>`)
+        .join('');
+    });
+
+    $('notices').addEventListener('click', (event) => {
+      const lien = event.target.closest('a');
+      if (!lien) return;
+      event.preventDefault();
+      courante = CATALOGUE.find((n) => n.titre === lien.dataset.titre);
+      $('titre').textContent = courante.titre;
+      $('auteur').textContent = courante.auteur;
+      $('cote').textContent = 'Cote ' + courante.cote;
+      $('dispo').textContent = String(courante.dispo);
+      $('notice').hidden = false;
+    });
+
+    $('emprunter').addEventListener('click', () => {
+      if (!courante || courante.dispo === 0) return;
+      courante.dispo -= 1;
+      numero += 1;
+      const reference = 'EMP-' + numero;
+      const echeance = '12/11/2026';
+
+      $('dispo').textContent = String(courante.dispo);
+      $('recu').textContent = reference;
+      $('retour').textContent = 'À rendre avant le ' + echeance;
+      $('confirmation').hidden = false;
+
+      const item = document.createElement('li');
+      item.textContent = reference + ' — ' + courante.titre + ' — en cours';
+      $('liste-emprunts').appendChild(item);
+
+      const compteur = document.querySelector('[data-testid=compteur-emprunts]');
+      compteur.textContent = String(Number(compteur.textContent) + 1);
+    });
+  </script>
+</body>
+</html>

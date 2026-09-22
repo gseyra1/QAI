@@ -81,7 +81,9 @@ The file holds only the **template**. The value is read from `process.env` at th
 
 Anything that comes from `env.` is treated as a secret: failure reports replace it with `***`, including when the message comes from the driver, and a final pass over every assertion reason catches what an individual check forgot to mask. A test report ends up in a CI's logs, which are archived and usually readable by the whole organisation.
 
-At generation time, phrase the intent by naming the variable — "sign in with QAI_USER and QAI_PASS" — and the model emits the template rather than an invented value.
+At generation time, phrase the intent by naming the variable — "sign in with QAI_USER and QAI_PASS" — and the model emits the template rather than an invented value. This is enforced, not merely advised: a generated `{{env.NAME}}` whose NAME the intent never mentions is rejected, because the failure mode is silent (see [resolving.md](resolving.md)).
+
+Redaction has limits worth knowing before relying on it — reformatted values, values too short to mask: [model.md](model.md).
 
 The same mechanism makes `{{capture}}` usable in a typed value: writing into a field what an earlier step read on screen.
 

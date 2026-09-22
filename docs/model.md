@@ -31,7 +31,7 @@ becomes necessary for the mobile fallback.
 
 No streaming: QAI needs a complete object, not tokens as they arrive.
 
-## Two examples that work out of the box
+## Three examples that work out of the box
 
 [examples/provider-claude.ts](../examples/provider-claude.ts) is ready to use:
 
@@ -48,8 +48,17 @@ validated the first real end-to-end resolving run: 9 steps resolved, green
 replay without a single model call, a renamed button repaired in one call, and
 a refusal to "repair" a real regression.
 
-In both cases `QAI_MODEL` selects the model and the pricing follows. These are
-examples, not dependencies: the published package ships no SDK.
+[examples/provider-deepseek.ts](../examples/provider-deepseek.ts)
+(`DEEPSEEK_API_KEY`) is the one that proves the contract does not rest on
+constrained decoding. DeepSeek offers a JSON *mode* — "answer in JSON" —
+not schema-constrained output: no guarantee of shape. The schema therefore
+travels in the system message, and conformance is caught downstream — a
+malformed answer is rejected and handed back to the model with its error, like
+any other rejection. That is what makes QAI pluggable into any model able to
+emit JSON, not only those with constrained output.
+
+In all three cases `QAI_MODEL` selects the model and the pricing follows. These
+are examples, not dependencies: the published package ships no SDK.
 
 ## Writing your own
 
@@ -99,6 +108,30 @@ call's cost is only known after the fact, so the cap can be exceeded by at
 most one call — refusing to act until the cost is predictable would block the
 product. `provider.spend` exposes the running total at any time, and the CLI
 prints it at the end of the command ("model spend: …") whenever a cap is set.
+
+## What reaches the provider, and what redaction misses
+
+A provider is a third party. Every rejection sent back to it — like every
+rejection written into a report — passes through `SecretRegistry`, which
+replaces known secret values with `***`.
+
+"Known" is the whole limit. QAI can only redact what it knows to be a secret,
+and it knows that by origin: the value came from `{{env.NAME}}`. A token the
+application exposes on its own, never routed through the environment, stays out
+of reach.
+
+Two symmetric blind spots follow from matching on substrings. Both are real,
+and neither is fixable at this layer:
+
+- **A value the application reformats is no longer recognised.** `1000` typed
+  into a field and redisplayed as `1 000` no longer matches, and appears in
+  clear.
+- **A value of two characters or less is refused outright.** Redacting `ab`
+  would erase that fragment throughout the report. The registry declines the
+  value, and the run reports a warning saying it will appear as-is — silence
+  would suggest a protection that does not exist.
+
+How `{{env.NAME}}` is written and read: [state.md](state.md).
 
 ## Choosing a model
 

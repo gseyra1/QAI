@@ -106,11 +106,21 @@ export function redact(text: string, secrets: readonly string[]): string {
 export class SecretRegistry {
   readonly #values = new Set<string>();
 
-  add(value: string): void {
-    // Un secret d'un seul caractère masquerait la moitié d'un rapport : la
-    // sous-chaîne se retrouverait partout. En pratique un secret utile
-    // (mot de passe, jeton) dépasse largement ce seuil.
-    if (value.length > 2) this.#values.add(value);
+  /**
+   * Rend `false` quand la valeur est trop courte pour être masquée sans dégât.
+   *
+   * Le masquage par sous-chaîne a deux angles morts symétriques : une valeur
+   * trop **transformée** par l'application n'est plus reconnue (« 1000 »
+   * réaffiché « 1 000 »), et une valeur trop **courte** ne se distingue plus
+   * du texte ordinaire — enregistrer « ab » effacerait ce fragment dans tout
+   * le rapport. On refuse donc les valeurs de deux caractères ou moins, et on
+   * le dit à l'appelant plutôt que de le taire : le silence laisserait croire
+   * à une protection qui n'existe pas.
+   */
+  add(value: string): boolean {
+    if (value.length <= 2) return false;
+    this.#values.add(value);
+    return true;
   }
 
   addAll(values: Iterable<string>): void {

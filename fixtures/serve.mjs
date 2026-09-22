@@ -6,10 +6,14 @@ const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '8899' },
     bug: { type: 'string' },
+    // L'application témoin de la mesure de génération : aucune de ses chaînes
+    // n'est dans le prompt, ce qui sépare la règle apprise de la simple
+    // reconnaissance des libellés de la boutique.
+    app: { type: 'string', default: 'shop' },
   },
 });
 
-const source = readFileSync(new URL('./shop/index.html', import.meta.url), 'utf8');
+const source = readFileSync(new URL(`./${values.app}/index.html`, import.meta.url), 'utf8');
 const page =
   values.bug === undefined
     ? source
@@ -34,5 +38,5 @@ createServer((request, response) => {
   response.end(page);
 }).listen(Number(values.port), '127.0.0.1', () => {
   const state = values.bug === undefined ? 'healthy' : `with regression "${values.bug}"`;
-  process.stdout.write(`Demo shop ${state}: http://127.0.0.1:${values.port}/\n`);
+  process.stdout.write(`Demo ${values.app} ${state}: http://127.0.0.1:${values.port}/\n`);
 });
