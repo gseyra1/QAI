@@ -72,6 +72,32 @@ Braces, quotes, and repeated field names make up most of a JSON payload's bytes
 and carry no information. The tree is paid for on every call: its density is an
 architecture decision.
 
+## Two things not left to the prompt
+
+Both are guaranteed mechanically, because both can be. A rule stated in the
+system prompt holds most of the time, which is not the same thing.
+
+**A generated `navigate` is rewritten relative to the base.** The model copies
+the URL it sees, development port included. Written as-is into a versioned
+file, it replays only on the machine that produced it — and verification cannot
+catch that, since the absolute URL works perfectly at resolving time. The path
+is made relative to `--base-url`, not to its origin: an application served
+under a prefix keeps it, and the relative form follows the base wherever it is
+mounted. The rewrite happens **before** the action is executed, so what gets
+versioned is what was actually played.
+
+An absolute URL to **another** origin is kept as is. That is a deliberate
+navigation out of the application, not an address copied by accident.
+
+**`{{env.NAME}}` is refused when the intent does not name NAME.** The model
+readily generalises the secrets rule to any value it has to type: "fill in the
+address with the client-fr data set" came back as `{{env.QAI_USER}}`. The noisy
+case — the variable does not exist — fails on its own. The silent case is the
+dangerous one: if CI does define `QAI_USER` for the login journey, the login is
+typed into the address field with no error, and because the value comes from
+the environment the registry masks it as `***` in every report. Wrong value,
+and invisible to whoever reviews it.
+
 ## The output file
 
 Serialized with a fixed key order: its diff is what a developer reads when a
@@ -89,8 +115,13 @@ the error feedback, the output file, and that the generated resolution replays
 green. Not proven: the quality of a real model's proposals — that depends on
 the model you plug in.
 
-Attempts per step are bounded (3 by default) and the spend cap applies to the
-whole resolving run.
+Attempts per step are bounded — 5 by default, `--attempts <n>` — and the spend
+cap applies to the whole resolving run.
+
+`qai resolve` prints `(N attempts)` beside every step that needed more than
+one. Watch that number: a prompt rule that is degrading shows up as a rising
+attempt count well before it shows up as a failure, and the budget would
+otherwise absorb it in silence.
 
 ## And tier 2
 

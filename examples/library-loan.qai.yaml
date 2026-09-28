@@ -1,0 +1,29 @@
+id: library-loan
+title: Un adhérent emprunte un ouvrage
+tags: [critical-path]
+
+steps:
+  - id: s1
+    do: ouvrir la page d'accueil de la médiathèque
+
+  - id: s2
+    do: chercher "Damasio"
+    expect: la liste des notices contient au moins deux entrées
+
+  - id: s3
+    do: ouvrir la première notice de la liste
+    capture:
+      ouvrage: le titre de l'ouvrage
+      cote: la cote affichée
+
+  - id: s4
+    do: emprunter l'ouvrage
+    expect:
+      - l'emprunt est enregistré
+      - une référence d'emprunt est affichée
+    capture:
+      reference: la référence de l'emprunt
+
+  - id: s5
+    do: vérifier que l'emprunt figure dans la liste
+    expect: la liste des emprunts contient la référence "{{reference}}"

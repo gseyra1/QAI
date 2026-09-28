@@ -23,10 +23,16 @@ describe('SecretRegistry', () => {
     assert.equal(reg.redact(`saw ${SECRET} in the url`), 'saw *** in the url');
   });
 
-  it('ne masque pas une valeur trop courte, qui polluerait tout un rapport', () => {
+  it('refuse une valeur trop courte, et le DIT au lieu de le taire', () => {
+    // Deux angles morts symétriques : trop transformée pour être reconnue,
+    // trop courte pour être distinguée du texte ordinaire. Le second est
+    // refusé, et le refus remonte — un silence laisserait croire à une
+    // protection inexistante.
     const reg = new SecretRegistry();
-    reg.add('ab');
+    assert.equal(reg.add('ab'), false);
     assert.equal(reg.redact('label ab here'), 'label ab here');
+    assert.equal(reg.add('abc'), true);
+    assert.equal(reg.redact('x abc y'), 'x *** y');
   });
 
   it('enregistre le secret qu\'une assertion sur {{env.X}} révèle', () => {

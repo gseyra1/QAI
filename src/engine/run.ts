@@ -382,7 +382,14 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
     if (template !== null) {
       try {
         const resolved = interpolate(template, context.bag);
-        if (usesEnv(template)) secrets.add(resolved);
+        // Une valeur trop courte pour être masquée sans effacer du texte
+        // ordinaire n'est PAS protégée : le dire vaut mieux que de laisser
+        // croire à une protection qui n'existe pas.
+        if (usesEnv(template) && !secrets.add(resolved)) {
+          warnings.push(
+            `an environment value used here is too short (${resolved.length} chars) to be redacted safely: it will appear as-is in reports`,
+          );
+        }
         action = withValue(action, resolved);
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
