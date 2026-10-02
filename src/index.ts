@@ -46,6 +46,8 @@ export { BudgetedProvider, BudgetExceededError } from './model/budget.ts';
 export type { StateProvider, StateRequest } from './state/types.ts';
 
 export type { Given, Scenario, Step, TargetPlatform } from './scenario/types.ts';
+// Ce que le CLI écarte d'une suite mixte : un harnais filtre de même avant `runSuite`.
+export { runsOn } from './scenario/types.ts';
 export type { Check, CaptureSpec, Resolution, StepResolution } from './resolution/types.ts';
 
 export type {

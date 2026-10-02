@@ -189,9 +189,17 @@ device plays one journey at a time: `--workers` must be 1 (a `workers` value
 from `qai.config.json` is brought down to 1). `--headed` is refused.
 
 `qai resolve` on iOS is as experimental as the driver: the model is prompted
-for the web and may propose a relative `navigate` or an `expectDialog`; both
-are rejected during generation and the model retries. A step with no intent on
+for the web and may propose a relative `navigate`, a `hover` or an
+`expectDialog`; each is rejected before any gesture and the model retries. So is
+a `urlContains` that only names the app (`com.example.app`): every location
+starts with it, so it would be true on every screen. A step with no intent on
 iOS (verification only) is resolved and replayed with no gesture, as on the web.
+
+A journey with no step for iOS (`platforms: [web]`, or `only: [web]` on every
+step) is skipped by `resolve`, `check` and `run`, with a line on stderr; it is
+never reported as passed, and a selection left with no journey fails.
+`runScenario` and `generateResolution` refuse it, and `runScenario` refuses a
+resolution written for another platform, before any gesture.
 
 ### Session
 

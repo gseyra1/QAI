@@ -326,6 +326,56 @@ describe('iOS command line', () => {
     assert.equal(fake.commands().at(-1), 'DELETE ');
   });
 
+  /**
+   * Un parcours web d'une suite mixte, lancée sur iOS, sautait toutes ses
+   * étapes et sortait vert. Il est écarté en le disant, et ne compte jamais
+   * comme réussi ; une sélection qui n'en garde aucun échoue.
+   */
+  it('skips a journey with no step on iOS, and never reports it as passed', async () => {
+    const suite = join(dir, 'mixed');
+    await mkdir(join(suite, '.qai', 'resolutions'), { recursive: true });
+    await writeFile(join(suite, 'login.qai.yaml'), LOGIN_SCENARIO);
+    await writeFile(join(suite, '.qai', 'resolutions', 'login.ios.json'), iosResolution('ios'));
+    await writeFile(
+      join(suite, 'hover.qai.yaml'),
+      'id: hover\ntitle: Quick view\nplatforms: [web]\nsteps:\n  - id: s1\n    do: hover the card\n',
+    );
+    await writeFile(
+      join(suite, 'tooltip.qai.yaml'),
+      'id: tooltip\ntitle: Tooltip\nsteps:\n  - id: s1\n    do: hover the help icon\n    only: [web]\n',
+    );
+    // Des résolutions présentes : sans le refus, elles seraient « cohérentes ».
+    for (const id of ['hover', 'tooltip']) {
+      await writeFile(
+        join(suite, '.qai', 'resolutions', `${id}.ios.json`),
+        JSON.stringify({ scenario: id, platform: 'ios', recordedAt: '2026-10-02T00:00:00.000Z', steps: {} }),
+      );
+    }
+    const ios = ['--platform', 'ios', '--app', 'com.example.acme', '--appium-url', fake.url];
+
+    for (const only of ['hover.qai.yaml', 'tooltip.qai.yaml']) {
+      for (const command of ['run', 'check', 'resolve']) {
+        fake.reset();
+        const { code, out, err } = await cli([
+          command, join(suite, only), ...ios, '--provider', join(dir, 'never.mjs'),
+        ]);
+        assert.equal(code, 1, `${command} ${only}: ${out}`);
+        assert.doesNotMatch(out, /PASSED|consistent|written to/);
+        assert.match(err, /: skipped, no step runs on ios \("platforms" or "only"\)/);
+        assert.match(err, /no selected scenario runs on ios/);
+        assert.deepEqual(fake.calls, []);
+      }
+    }
+
+    fake.reset();
+    const mixed = await cli(['run', suite, ...ios, '--artifacts', join(dir, 'artifacts'), '--json']);
+    assert.equal(mixed.code, 0, mixed.err);
+    const report = JSON.parse(mixed.out) as { entries: { scenarioId: string }[] };
+    assert.deepEqual(report.entries.map((entry) => entry.scenarioId), ['login']);
+    assert.match(mixed.err, /hover: skipped, no step runs on ios/);
+    assert.match(mixed.err, /tooltip: skipped, no step runs on ios/);
+  });
+
   it('writes what resolve produces on iOS to <id>.ios.json', async () => {
     const provider = join(dir, 'provider.mjs');
     await writeFile(

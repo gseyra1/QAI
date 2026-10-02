@@ -14,7 +14,7 @@ import type { Resolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import { checkBaseFor } from '../resolution/url.ts';
 import type { Scenario } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
+import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
 import {
   evaluateCheck,
   extractValue,
@@ -25,7 +25,7 @@ import {
   SecretRegistry,
   usesEnv,
 } from './assert.ts';
-import { actionsIssue, formatIssue } from './consistency.ts';
+import { actionsIssue, formatIssue, platformIssue } from './consistency.ts';
 import { resolveUpload } from './files.ts';
 import { matchOne } from './match.ts';
 import { suggestNearest } from './nearest.ts';
@@ -184,7 +184,8 @@ export interface RunInput {
   baseUrl?: string;
 }
 
-function supports(driver: Driver, action: Action): boolean {
+/** Partagé avec la génération, qui refuse au modèle ce que le rejeu refuserait. */
+export function supports(driver: Driver, action: Action): boolean {
   if (action.kind === 'hover') return driver.capabilities.hover;
   if (action.kind === 'swipe') return driver.capabilities.swipe;
   if (action.kind === 'navigate') return driver.capabilities.navigateByUrl;
@@ -535,6 +536,16 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const { scenario, resolution, driver, healer } = input;
   const healBudget = input.healBudget ?? 3;
   const platform = driver.platform;
+
+  /**
+   * Refusé avant tout geste, comme un cache incohérent : rejouée sur un autre
+   * pilote, une résolution web serait réparée avec des cibles iOS puis
+   * réécrite encore marquée « web » ; un parcours sans étape ici finirait vert
+   * sans avoir rien joué. La suite en fait l'erreur du parcours.
+   */
+  const refused = platformIssue(scenario, platform, resolution);
+  if (refused !== null) throw new Error(formatIssue(refused));
+
   const startedAt = new Date().toISOString();
   const started = Date.now();
 
@@ -557,10 +568,6 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     secrets,
   };
   let aborted = false;
-
-  const scenarioApplies =
-    scenario.platforms === undefined ||
-    scenario.platforms.some((declared) => platformMatches(declared, platform));
 
   for (const step of scenario.steps) {
     const intent = intentFor(step, platform);
@@ -600,7 +607,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       aborted = true;
     };
 
-    if (aborted || !scenarioApplies || !appliesTo(step, platform)) {
+    if (aborted || !appliesTo(step, platform)) {
       steps.push({ stepId: step.id, intent, status: 'skipped', failures: [], durationMs: 0 });
       continue;
     }

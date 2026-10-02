@@ -121,3 +121,30 @@ export function resolveAgainstBase(value: string, baseUrl: string | undefined): 
 export function checkBaseFor(platform: Platform, baseUrl: string | undefined): string | undefined {
   return platform === 'web' ? baseUrl : undefined;
 }
+
+/**
+ * Une navigation qui se passe de base : « . » ou « / » (relancer), ou un lien
+ * profond — un schéma suivi d'autre chose qu'un port. « localhost:3000/x » a la
+ * forme d'un schéma, mais c'est une adresse web recopiée sans « http:// ».
+ *
+ * Hors du web, c'est la seule forme qui désigne quelque chose : la génération
+ * la refuse au modèle, la cohérence la refuse au cache.
+ */
+export function isBaselessNavigation(to: string): boolean {
+  const trimmed = to.trim();
+  return trimmed === '.' || trimmed === '/' || /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(trimmed);
+}
+
+/**
+ * Ce que partagent toutes les adresses de l'application, hors du web.
+ *
+ * Là, `location` vaut « <identifiant d'application>/<écran> » : tout ce qui
+ * tient dans « <identifiant>/ » est vrai sur chaque écran, et un `urlContains`
+ * de cette forme affirmerait « on est sur l'écran X » sans pouvoir échouer.
+ * Sur le web, rien : l'équivalent — l'adresse absolue — y est déjà refusé.
+ */
+export function screenAgnosticPrefix(platform: Platform, location: string): string | undefined {
+  if (platform === 'web') return undefined;
+  const cut = location.indexOf('/');
+  return cut === -1 ? `${location}/` : location.slice(0, cut + 1);
+}

@@ -888,6 +888,99 @@ describe('IosDriver', () => {
       }
     }
 
+    /** Un modèle factice qui propose tour à tour, puis répète sa dernière proposition. */
+    class SequenceProvider implements ModelProvider {
+      readonly name = 'sequence';
+      calls = 0;
+      readonly #outputs: Record<string, unknown>[];
+
+      constructor(outputs: Record<string, unknown>[]) {
+        this.#outputs = outputs;
+      }
+
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        const output = this.#outputs[Math.min(this.calls, this.#outputs.length - 1)] ?? {};
+        this.calls += 1;
+        return { output, usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    }
+
+    /**
+     * Le modèle est guidé pour le web : un chemin relatif ou un survol doit
+     * lui revenir en rejet, avec une reprise — pas tomber au moment d'agir,
+     * où l'étape échouait sans reprise et arrêtait la génération.
+     */
+    it('rejects a relative navigate or an unsupported gesture before acting, and lets the model retry', async () => {
+      const click = { actions: [{ kind: 'click', target: SIGN_IN }], captures: {}, assertions: {} };
+      for (const [refused, reason] of [
+        [{ kind: 'navigate', to: '/orders' }, /navigate "\/orders" is a relative path, which means nothing on ios/],
+        [{ kind: 'hover', target: SIGN_IN }, /"hover" is not supported on ios/],
+        [{ kind: 'expectDialog', response: 'accept' }, /"expectDialog" is not supported on ios/],
+      ] as const) {
+        fake.calls.length = 0;
+        const provider = new SequenceProvider([{ ...click, actions: [refused] }, click]);
+        const result = await generateResolution({
+          scenario: { id: 'login', title: 'Sign in', steps: [{ id: 's1', do: 'sign in' }] },
+          driver,
+          provider,
+          attemptsPerStep: 2,
+        });
+        assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+        assert.equal(result.steps[0]?.attempts, 2);
+        assert.match(result.steps[0]?.rejections.join('\n') ?? '', reason);
+        assert.deepEqual(result.resolution.steps['s1']?.actions, click.actions);
+        assert.equal(fake.commands().some((command) => /mobile: (deepLink|terminateApp)/.test(command)), false);
+      }
+    });
+
+    it('refuses a journey with no step on iOS, before asking the model anything', async () => {
+      for (const scenario of [
+        { id: 'web', title: 'Web only', platforms: ['web'], steps: [{ id: 's1', do: 'hover the card' }] },
+        { id: 'web', title: 'Web only', steps: [{ id: 's1', do: 'hover the card', only: ['web'] }] },
+      ] satisfies Scenario[]) {
+        fake.calls.length = 0;
+        const provider = new SequenceProvider([{ actions: [{ kind: 'click', target: SIGN_IN }] }]);
+        await assert.rejects(
+          generateResolution({ scenario, driver, provider }),
+          /no step of this journey runs on ios/,
+        );
+        assert.equal(provider.calls, 0);
+        assert.deepEqual(fake.calls, []);
+      }
+    });
+
+    /**
+     * Toute adresse iOS commence par l'identifiant d'application : un
+     * `urlContains` qui n'en dit pas plus est vrai sur chaque écran.
+     */
+    it('refuses a urlContains that only names the app, true on every screen', async () => {
+      const at = (value: string) =>
+        generateResolution({
+          scenario: {
+            id: 'login',
+            title: 'Sign in',
+            steps: [{ id: 's1', expect: ['on the sign-in screen'] }],
+          },
+          driver,
+          provider: new SequenceProvider([
+            { captures: {}, assertions: { 'on the sign-in screen': { check: 'urlContains', value } } },
+          ]),
+          attemptsPerStep: 2,
+        });
+      for (const value of ['com.example.acme', 'acme', 'com.example.acme/', '']) {
+        const result = await at(value);
+        assert.equal(result.status, 'incomplete', value);
+        assert.match(
+          result.steps[0]?.rejections.join('\n') ?? '',
+          /only names the application \("com\.example\.acme\/"\), which every screen shares/,
+        );
+      }
+      for (const value of ['Sign In', 'acme/Sign']) {
+        const result = await at(value);
+        assert.equal(result.status, 'complete', `${value}: ${JSON.stringify(result.steps)}`);
+      }
+    });
+
     it('refuses to record a network check the driver cannot observe', async () => {
       const provider = new FixedProvider({
         actions: [{ kind: 'click', target: SIGN_IN }],

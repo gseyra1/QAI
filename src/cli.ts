@@ -26,7 +26,7 @@ import { OBSERVATION_VERSION } from './resolution/types.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
-import { matchesTags, parseTags } from './scenario/types.ts';
+import { matchesTags, parseTags, runsOn } from './scenario/types.ts';
 import type { StateProvider } from './state/types.ts';
 
 const USAGE = `qai — QA agent
@@ -281,13 +281,32 @@ export async function main(argv: string[]): Promise<number> {
   const loaded: { path: string; scenario: Scenario }[] = [];
   for (const path of paths) loaded.push({ path, scenario: await loadScenario(path) });
 
-  const selected = loaded.filter((item) => matchesTags(item.scenario, settings.tags));
-  if (selected.length === 0) {
+  const tagged = loaded.filter((item) => matchesTags(item.scenario, settings.tags));
+  if (tagged.length === 0) {
     // Sortir en 0 ferait qu'un tag mal orthographié rende un job de CI vert
     // sans avoir rien joué — exactement le mode de panne que l'outil existe
     // pour éviter.
     process.stderr.write(`no scenario carries the requested tags (${settings.tags.join(', ')})
 `);
+    return 1;
+  }
+
+  /**
+   * Un parcours qui n'a rien à jouer ici est écarté, et dit l'être.
+   *
+   * Joué, il sautait chacune de ses étapes et sortait vert : une suite mixte
+   * lancée sur iOS comptait ses parcours web comme réussis. Écarté en
+   * silence, il disparaîtrait du compte sans que personne le sache. Et une
+   * sélection qui n'en garde aucun échoue, comme un tag qui ne trouve rien.
+   */
+  const selected = tagged.filter((item) => runsOn(item.scenario, platform));
+  for (const { scenario } of tagged) {
+    if (!runsOn(scenario, platform)) {
+      process.stderr.write(`${scenario.id}: skipped, no step runs on ${platform} ("platforms" or "only")\n`);
+    }
+  }
+  if (selected.length === 0) {
+    process.stderr.write(`no selected scenario runs on ${platform}\n`);
     return 1;
   }
   if (values.resolution !== undefined && selected.length > 1) {
@@ -369,7 +388,9 @@ export async function main(argv: string[]): Promise<number> {
           baseDir: dirname(path),
           // Ramène une navigation absolue à un chemin : sinon la résolution
           // porte le port de développement et ne rejoue que sur cette machine.
-          // Web seulement : sur iOS, l'entrée est un bundle, pas une base.
+          // Web seulement : sur iOS, l'entrée est un bundle, pas une base. La
+          // génération l'ignore déjà hors du web (`checkBaseFor`, relativisation
+          // web seule) ; ceci n'est qu'une seconde garde, sans effet observable.
           ...(platform === 'web' ? { baseUrl } : {}),
           ...(settings.attempts !== undefined ? { attemptsPerStep: settings.attempts } : {}),
         });

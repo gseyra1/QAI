@@ -170,6 +170,26 @@ steps:
     assert.match(formatIssue(issues[0] as (typeof issues)[number]), /written for another platform \(web ≠ ios\)/);
   });
 
+  /**
+   * Un parcours sans étape ici serait cohérent avec n'importe quel cache, même
+   * vide : il passerait sans rien jouer.
+   */
+  it('refuse un parcours dont aucune étape ne vaut sur la plateforme', () => {
+    const empty = { scenario: 't', platform: 'ios' as const, recordedAt: '', steps: {} };
+    const scenarios = [
+      'id: t\ntitle: t\nplatforms: [web]\nsteps:\n  - id: s1\n    do: agir\n',
+      'id: t\ntitle: t\nsteps:\n  - id: s1\n    do: agir\n    only: [web]\n  - id: s2\n    expect: vu\n    only: [web]\n',
+    ];
+    for (const yaml of scenarios) {
+      const issues = checkConsistency(parseScenario(yaml), empty, 'ios');
+      assert.deepEqual(issues, [{ kind: 'not-on-platform', stepId: '*', detail: 'ios' }]);
+      assert.match(formatIssue(issues[0] as ConsistencyIssue), /no step of this journey runs on ios/);
+    }
+    // `mobile` couvre iOS : le même parcours y est jouable.
+    const mobile = parseScenario('id: t\ntitle: t\nplatforms: [mobile]\nsteps:\n  - id: s1\n    do: agir\n');
+    assert.deepEqual(checkConsistency(mobile, empty, 'ios'), [{ kind: 'missing-step', stepId: 's1' }]);
+  });
+
   it('refuse hors du web une navigation par chemin relatif, sans URL de base', () => {
     const scenario = parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    do: agir\n');
     const navigations = ['/cart', '.', '/', 'acme://orders', 'localhost:3000/x'].map((to) => ({

@@ -1,7 +1,14 @@
 import type { Platform } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
+import { isBaselessNavigation } from '../resolution/url.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, isEmptyOn, isVerificationOnly } from '../scenario/types.ts';
+import {
+  appliesTo,
+  expectationsOf,
+  isEmptyOn,
+  isVerificationOnly,
+  runsOn,
+} from '../scenario/types.ts';
 
 export type IssueKind =
   | 'missing-step'
@@ -12,6 +19,7 @@ export type IssueKind =
   | 'unexpected-actions'
   | 'empty-step'
   | 'platform-mismatch'
+  | 'not-on-platform'
   | 'relative-navigate';
 
 export interface ConsistencyIssue {
@@ -47,6 +55,28 @@ export function actionsIssue(
 }
 
 /**
+ * Ce qui interdit de jouer le parcours sur cette plateforme, avant toute étape.
+ *
+ * Une résolution est propre à une plateforme : ses cibles décrivent un arbre
+ * précis. Rejouer une résolution web sur iOS ferait réparer, puis réécrire,
+ * un fichier qui resterait marqué « web ». Et un parcours dont aucune étape ne
+ * vaut ici serait vert sans avoir rien joué. Partagé avec le rejeu et la
+ * génération, comme `actionsIssue` : aucun des deux ne doit compter sur un
+ * contrôle préalable pour refuser ces cas.
+ */
+export function platformIssue(
+  scenario: Scenario,
+  platform: Platform,
+  resolution?: Resolution,
+): ConsistencyIssue | null {
+  if (resolution !== undefined && resolution.platform !== platform) {
+    return { kind: 'platform-mismatch', stepId: '*', detail: `${resolution.platform} ≠ ${platform}` };
+  }
+  if (!runsOn(scenario, platform)) return { kind: 'not-on-platform', stepId: '*', detail: platform };
+  return null;
+}
+
+/**
  * Vérifie qu'un scénario et sa résolution parlent bien du même parcours.
  *
  * C'est le contrôle qui détecte la dérive silencieuse : une étape ajoutée sans
@@ -62,15 +92,9 @@ export function checkConsistency(
   const issues: ConsistencyIssue[] = [];
   const known = new Set<string>();
 
-  /**
-   * Une résolution est propre à une plateforme : ses cibles décrivent un
-   * arbre précis. Rejouer une résolution web sur iOS ferait réparer, puis
-   * réécrire, un fichier qui resterait marqué « web ». Le refus est global :
-   * le reste du contrôle n'aurait aucun sens sur l'autre plateforme.
-   */
-  if (resolution.platform !== platform) {
-    return [{ kind: 'platform-mismatch', stepId: '*', detail: `${resolution.platform} ≠ ${platform}` }];
-  }
+  // Refus global : le reste du contrôle n'aurait aucun sens.
+  const refused = platformIssue(scenario, platform, resolution);
+  if (refused !== null) return [refused];
 
   for (const step of scenario.steps) {
     if (!appliesTo(step, platform)) continue;
@@ -90,9 +114,7 @@ export function checkConsistency(
     // après des gestes déjà faits sur l'appareil.
     if (platform !== 'web') {
       for (const action of cached.actions) {
-        if (action.kind !== 'navigate') continue;
-        const to = action.to.trim();
-        if (to === '.' || to === '/' || /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(to)) continue;
+        if (action.kind !== 'navigate' || isBaselessNavigation(action.to)) continue;
         issues.push({ kind: 'relative-navigate', stepId: step.id, detail: action.to });
       }
     }
@@ -135,6 +157,8 @@ export function formatIssue(issue: ConsistencyIssue): string {
       return `step "${issue.stepId}": verification-only step, but the cached resolution still has ${issue.detail} action(s) — regenerate with "qai resolve"`;
     case 'platform-mismatch':
       return `the resolution was written for another platform (${issue.detail ?? ''}): regenerate it with "qai resolve"`;
+    case 'not-on-platform':
+      return `no step of this journey runs on ${issue.detail ?? ''} ("platforms" or "only" exclude them all): it would pass without playing anything`;
     case 'relative-navigate':
       return `step "${issue.stepId}": navigate "${issue.detail ?? ''}" is a relative path, which has no meaning without a base URL — use a deep link, "." or "/"`;
   }
