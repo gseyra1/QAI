@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ScenarioReport, StepReport } from '../engine/run.ts';
 import type { SuiteReport } from '../engine/suite.ts';
-import { formatSuite } from './text.ts';
+import { formatReport, formatSuite } from './text.ts';
 
 function step(partial: Partial<StepReport> & Pick<StepReport, 'stepId'>): StepReport {
   return {
@@ -83,5 +83,45 @@ describe('formatSuite', () => {
     assert.match(output, /All green\./);
     assert.doesNotMatch(output, /open the cart/, 'une étape verte silencieuse n\'a rien à montrer');
     assert.doesNotMatch(output, /warning\(s\)/);
+  });
+
+  // Une étape qui ne fait que vérifier n'a pas d'intention : une ligne vide
+  // après son identifiant laisserait croire à un scénario tronqué.
+  it('nomme une étape qui ne fait que vérifier', () => {
+    const output = formatSuite(
+      suite(
+        scenario({
+          status: 'failed',
+          steps: [
+            step({
+              stepId: 's2',
+              intent: '',
+              status: 'failed',
+              failures: [{ assertion: 'the order is listed', reason: 'no element matches the target' }],
+            }),
+          ],
+        }),
+        'failed',
+      ),
+    );
+
+    assert.match(output, /✖ s2 {3}\(verification only\)/);
+    assert.match(output, /the order is listed → no element matches the target/);
+  });
+
+  it('ne nomme pas « vérification » une étape sautée sans intention', () => {
+    // Le rapport d'un scénario montre aussi les étapes sautées.
+    const output = formatReport(
+      scenario({
+        status: 'failed',
+        steps: [
+          step({ stepId: 's1', status: 'failed', error: 'boom' }),
+          step({ stepId: 's2', intent: '', status: 'skipped' }),
+        ],
+      }),
+    );
+
+    assert.match(output, /⊘ s2/);
+    assert.doesNotMatch(output, /verification only/);
   });
 });

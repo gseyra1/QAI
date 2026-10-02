@@ -33,9 +33,41 @@ describe('schéma de scénario', () => {
     );
   });
 
-  it('exige une intention sur chaque étape', async () => {
+  it('refuse une étape qui n\'agit ni ne vérifie', async () => {
     const validate = await validator();
     assert.equal(validate({ id: 't', title: 't', steps: [{ id: 's1' }] }), false);
+    assert.equal(validate({ id: 't', title: 't', steps: [{ id: 's1', only: ['web'] }] }), false);
+    assert.equal(validate({ id: 't', title: 't', steps: [{ id: 's1', expect: [] }] }), false);
+  });
+
+  it('accepte une étape qui ne fait que vérifier, comme le chargeur', async () => {
+    const validate = await validator();
+    const doc = {
+      id: 't',
+      title: 't',
+      steps: [
+        { id: 's1', do: 'payer' },
+        { id: 's2', expect: 'la commande figure dans l\'historique' },
+        { id: 's3', capture: { numero: 'le numéro de commande' } },
+        { id: 's4', expect: ['a', 'b'], only: ['web'] },
+      ],
+    };
+    assert.equal(validate(doc), true, JSON.stringify(validate.errors, null, 2));
+  });
+
+  it('refuse une intention vide, comme le chargeur', async () => {
+    const validate = await validator();
+    const steps = [
+      { id: 's1', do: '', expect: 'x' },
+      { id: 's1', do: '  ', expect: 'x' },
+      { id: 's1', per_platform: {}, expect: 'x' },
+      { id: 's1', per_platform: { web: '' }, expect: 'x' },
+      { id: 's1', per_platform: { webb: 'cliquer' }, expect: 'x' },
+      { id: 's1', do: 'agir', expect: ' ' },
+    ];
+    for (const step of steps) {
+      assert.equal(validate({ id: 't', title: 't', steps: [step] }), false, JSON.stringify(step));
+    }
   });
 
   it('refuse un scénario sans étape', async () => {

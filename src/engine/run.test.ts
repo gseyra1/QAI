@@ -393,7 +393,7 @@ describe('runScenario', () => {
     const report = await runScenario({
       driver,
       assertTimeoutMs: 5000,
-      scenario: scenario([{ id: 's1', do: 'lire le panier', expect: 'le panier affiche 1' }]),
+      scenario: scenario([{ id: 's1', expect: 'le panier affiche 1' }]),
       resolution: resolution({
         s1: {
           actions: [],
@@ -417,7 +417,7 @@ describe('runScenario', () => {
     const report = await runScenario({
       driver,
       assertTimeoutMs: 400,
-      scenario: scenario([{ id: 's1', do: 'lire le panier', expect: 'le panier affiche 1' }]),
+      scenario: scenario([{ id: 's1', expect: 'le panier affiche 1' }]),
       resolution: resolution({
         s1: {
           actions: [],
@@ -497,7 +497,7 @@ describe('runScenario', () => {
     const report = await runScenario({
       driver,
       scenario: scenario([
-        { id: 's1', do: 'lire le prix', capture: { prix: 'le prix affiché' } },
+        { id: 's1', capture: { prix: 'le prix affiché' } },
         { id: 's2', do: 'recopier le prix' },
       ]),
       resolution: resolution({
@@ -630,7 +630,9 @@ describe('runScenario', () => {
         scenario: scenario([
           { id: 's1', do: 'ouvrir la liste', ...(assertions ? { expect: Object.keys(assertions) } : {}) },
         ]),
-        resolution: resolution({ s1: { actions: [], ...(assertions ? { assertions } : {}) } }),
+        resolution: resolution({
+          s1: { actions: [{ kind: 'press', key: 'Enter' }], ...(assertions ? { assertions } : {}) },
+        }),
       });
 
     it('fait échouer l\'étape sur une requête en échec, en la nommant', async () => {
@@ -727,5 +729,144 @@ describe('runScenario', () => {
     } finally {
       delete process.env['QAI_TEST_PASS'];
     }
+  });
+});
+
+/** Un écran figé à une adresse choisie : seule l'adresse compte ici. */
+class LocatedDriver extends FakeDriver {
+  readonly #location: string;
+
+  constructor(location: string, root: UINode = TREE) {
+    super(root);
+    this.#location = location;
+  }
+
+  override async observe(): Promise<UISnapshot> {
+    return { ...(await super.observe()), location: this.#location };
+  }
+}
+
+/**
+ * v3 : une étape peut ne faire que vérifier, et une adresse attendue relative
+ * se résout contre la base de l'exécution.
+ */
+describe('runScenario — format v3', () => {
+  it('rejoue une étape sans action : aucun geste, puis captures et assertions', async () => {
+    const driver = new FakeDriver(TREE);
+    const healer = new SpyHealer({ healed: false, reason: 'jamais appelé' });
+    const report = await runScenario({
+      driver,
+      healer,
+      scenario: scenario([
+        { id: 's1', do: 'ajouter au panier' },
+        { id: 's2', expect: 'le panier affiche 1', capture: { prix: 'le prix affiché' } },
+      ]),
+      resolution: resolution({
+        s1: { actions: [{ kind: 'click', target: CLICK }] },
+        s2: {
+          actions: [],
+          captures: { prix: { from: { role: 'text', name: { contains: '€' } }, extract: 'number' } },
+          assertions: {
+            'le panier affiche 1': { check: 'textEquals', target: { role: 'text', name: '1' }, value: '1' },
+          },
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'passed');
+    assert.equal(driver.acted.length, 1, 'seul le geste de s1 est joué');
+    assert.equal(healer.calls.length, 0);
+    assert.equal(report.captures['prix'], '129');
+    assert.equal(report.steps[1]?.intent, '');
+    assert.equal(report.steps[1]?.status, 'passed');
+  });
+
+  /**
+   * Un harnais qui n'appelle pas `checkConsistency` ne doit pas pour autant
+   * rejouer les gestes d'une version antérieure de l'étape, ni compter comme
+   * vert une intention sans geste ou une étape qui ne prouve rien.
+   */
+  it('refuse lui-même un cache dont les gestes contredisent l\'étape', async () => {
+    const shown = { check: 'textEquals' as const, target: { role: 'text' as const, name: '1' }, value: '1' };
+    const cases: [Scenario['steps'][number], Resolution['steps'][string], RegExp][] = [
+      [
+        { id: 's1', expect: 'le panier affiche 1' },
+        { actions: [{ kind: 'click', target: CLICK }], assertions: { 'le panier affiche 1': shown } },
+        /verification-only step, but the cached resolution still has 1 action/,
+      ],
+      [{ id: 's1', do: 'ajouter au panier' }, { actions: [] }, /no actions, but the step has an intent/],
+      [{ id: 's1', per_platform: { ios: 'toucher Payer' } }, { actions: [] }, /nothing to verify on web/],
+    ];
+    for (const [step, cached, message] of cases) {
+      const driver = new FakeDriver(TREE);
+      const report = await runScenario({
+        driver,
+        scenario: scenario([step]),
+        resolution: resolution({ s1: cached }),
+      });
+
+      assert.equal(report.status, 'failed', String(message));
+      assert.match(report.steps[0]?.error ?? '', message);
+      assert.equal(driver.acted.length, 0, 'aucun geste périmé n\'est joué');
+    }
+  });
+
+  it('échoue sur une assertion fausse d\'une étape sans action, sans rien réparer', async () => {
+    const healer = new SpyHealer({ healed: false, reason: 'jamais appelé' });
+    const report = await runScenario({
+      driver: new FakeDriver(TREE),
+      healer,
+      assertTimeoutMs: 0,
+      scenario: scenario([{ id: 's1', expect: 'le panier affiche 2' }]),
+      resolution: resolution({
+        s1: {
+          actions: [],
+          assertions: {
+            'le panier affiche 2': { check: 'textEquals', target: { role: 'text', name: '1' }, value: '2' },
+          },
+        },
+      }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.equal(healer.calls.length, 0);
+  });
+
+  const parcours = (driver: Driver, baseUrl?: string) =>
+    runScenario({
+      driver,
+      assertTimeoutMs: 0,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+      scenario: scenario([{ id: 's1', expect: "l'historique est ouvert" }]),
+      resolution: resolution({
+        s1: {
+          actions: [],
+          assertions: { "l'historique est ouvert": { check: 'urlEquals', value: 'orders?tab=history' } },
+        },
+      }),
+    });
+
+  it('résout un urlEquals relatif contre la base, quel que soit le port', async () => {
+    for (const port of [5173, 41234]) {
+      const base = `http://127.0.0.1:${port}/app`;
+      const report = await parcours(new LocatedDriver(`${base}/orders?tab=history`), base);
+      assert.equal(report.status, 'passed', JSON.stringify(report.steps[0]?.failures));
+    }
+  });
+
+  it('compare brut sans base, et l\'échec dit pourquoi', async () => {
+    const report = await parcours(new LocatedDriver('http://127.0.0.1:5173/app/orders?tab=history'));
+
+    assert.equal(report.status, 'failed');
+    assert.match(report.steps[0]?.failures[0]?.reason ?? '', /no base URL is known/);
+  });
+
+  it('ignore la base hors du web : une adresse y est un identifiant d\'écran', async () => {
+    class MobileDriver extends LocatedDriver {
+      override readonly platform: Platform = 'android';
+    }
+    const report = await parcours(new MobileDriver('orders?tab=history'), 'monapp://accueil');
+
+    assert.equal(report.status, 'passed', JSON.stringify(report.steps[0]?.failures));
   });
 });

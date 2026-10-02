@@ -1,5 +1,6 @@
 import type { StepReport } from '../engine/run.ts';
 import type { SuiteEntry, SuiteReport } from '../engine/suite.ts';
+import { intentLabel } from './text.ts';
 
 export interface JUnitOptions {
   /**
@@ -122,7 +123,10 @@ function testsuite(entry: SuiteEntry, strict: boolean): string[] {
     // Le nom du cas porte l'intention, pas seulement l'identifiant : c'est ce
     // qu'un développeur lit dans l'onglet « Tests » de sa CI, et « s4 » ne lui
     // apprend rien.
-    const label = step.intent === '' ? step.stepId : `${step.stepId} — ${step.intent}`;
+    // Un libellé vide (étape sautée sans intention ici) garde le nom nu
+    // d'avant la v3 : le nom du cas est son identité dans l'historique de la CI.
+    const shown = intentLabel(step);
+    const label = shown === '' ? step.stepId : `${step.stepId} — ${shown}`;
     const body = stepBody(step, strict);
     const head = `    <testcase name="${attribute(label)}" classname="${name}" time="${seconds(step.durationMs)}"`;
 

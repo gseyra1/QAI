@@ -17,6 +17,9 @@ address" or "log in" map to several primitive gestures. Assertions and captures
 are evaluated after the step's last gesture, and **re-evaluated while false**
 within a bounded window (`--assert-timeout`, 5 s default).
 
+A verification-only step (no intent) has an empty list: no gesture, then the
+same settle, assertion window and captures.
+
 The window relaxes nothing: the assertion is never rewritten or widened — it is
 given time to become true. It exists because network idle does not mean
 rendering is done: a 3D scene, an entry animation, or a lazily loaded module
@@ -47,11 +50,20 @@ which has nothing to assert about the screen it lands on except where it landed.
 
 ```json
 { "check": "urlContains", "value": "/login" }
-{ "check": "urlEquals", "value": "https://app.example.com/login?next=/admin" }
+{ "check": "urlEquals", "value": "/login?next=/admin" }
 ```
 
-The comparison is **raw**: neither trailing slash, nor query string, nor
-fragment is normalised. Erasing them would make a redirect to
+A relative `urlEquals` value (`"."`, `"orders?id=3"`, `"/login"`) is resolved
+against the run's base URL (`--base-url`, normalised with a trailing slash)
+with standard URL parsing, then compared strictly. That is what lets the check
+replay on another host or port; resolving writes it in that form. An empty or
+blank value is never resolved (it would become the base itself) and fails. An
+absolute value is compared as is. Without a base (mobile, or `runScenario`
+called without `baseUrl`) the value is compared raw, and a relative one cannot
+pass — the failure says so. `urlContains` stays a raw substring.
+
+The comparison is **strict**: neither trailing slash, nor query string, nor
+fragment is normalised away. Erasing them would make a redirect to
 `/login?next=/admin` look like a redirect to `/login`, when that difference is
 precisely what an access-rights journey sets out to prove. `urlContains` covers
 the common case where only the path matters.
@@ -144,7 +156,11 @@ application state has diverged; continuing would only produce noise.
 `checkConsistency()` compares a scenario and its resolution before running
 anything. It catches silent drift: a step added without regenerating the cache,
 a reworded assertion whose machine form still points at the old text, an
-orphan resolution left behind by a deleted step.
+orphan resolution left behind by a deleted step, a step with an intent but no
+actions, a verification-only step whose cache still carries actions, a step
+that neither acts nor verifies on that platform. `runScenario` refuses those
+last three on its own, so an embedding harness that skips the check does not
+replay stale gestures.
 
 None of these breaks at runtime — they produce false greens, which is worse.
 Run the check in CI before replay.

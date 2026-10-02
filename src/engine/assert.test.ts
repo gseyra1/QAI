@@ -185,6 +185,99 @@ describe('evaluateCheck', () => {
     );
   });
 
+  /**
+   * v3 : une valeur relative se résout contre la base de l'exécution, puis se
+   * compare strictement. C'est ce qui rend l'assertion rejouable sur un autre
+   * port sans rien céder sur ce qu'elle affirme.
+   */
+  describe('urlEquals relatif à la base', () => {
+    const at = (location: string, baseUrl?: string, bag: Record<string, string> = {}) => ({
+      ...on(tree, bag, location),
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    });
+
+    it('résout sous une base à préfixe, barre finale absente comprise', () => {
+      const ici = at('http://127.0.0.1:9000/ecole/eleves/42', 'http://127.0.0.1:9000/ecole');
+      assert.deepEqual(evaluateCheck({ check: 'urlEquals', value: 'eleves/42' }, ici), { ok: true });
+      assert.deepEqual(evaluateCheck({ check: 'urlEquals', value: '/ecole/eleves/42' }, ici), { ok: true });
+    });
+
+    it('garde la requête et le fragment dans ce qui est affirmé', () => {
+      const ici = at('http://127.0.0.1:9000/app/orders?id=3#top', 'http://127.0.0.1:9000/app/');
+      assert.deepEqual(evaluateCheck({ check: 'urlEquals', value: 'orders?id=3#top' }, ici), { ok: true });
+
+      const sansFragment = evaluateCheck({ check: 'urlEquals', value: 'orders?id=3' }, ici);
+      assert.equal(sansFragment.ok, false);
+      // La raison montre l'adresse résolue : c'est elle qui a été comparée.
+      assert.match(
+        sansFragment.ok === false ? sansFragment.reason : '',
+        /expected URL "http:\/\/127\.0\.0\.1:9000\/app\/orders\?id=3"/,
+      );
+      assert.equal(evaluateCheck({ check: 'urlEquals', value: 'orders?id=4#top' }, ici).ok, false);
+    });
+
+    it('lit « . » comme la base elle-même, barre finale comprise', () => {
+      const base = 'http://127.0.0.1:9000/app';
+      assert.deepEqual(evaluateCheck({ check: 'urlEquals', value: '.' }, at(`${base}/`, base)), { ok: true });
+      assert.equal(evaluateCheck({ check: 'urlEquals', value: '.' }, at(`${base}/x`, base)).ok, false);
+    });
+
+    it('compare une valeur absolue telle quelle, base ou pas', () => {
+      const ici = at('http://app.test/panier/', 'http://autre.test/');
+      assert.deepEqual(evaluateCheck({ check: 'urlEquals', value: 'http://app.test/panier/' }, ici), { ok: true });
+      assert.equal(evaluateCheck({ check: 'urlEquals', value: 'http://app.test/panier' }, ici).ok, false);
+    });
+
+    it('compare brut sans base, et dit pourquoi une valeur relative ne peut pas passer', () => {
+      const result = evaluateCheck({ check: 'urlEquals', value: 'orders' }, at('http://app.test/orders'));
+      assert.equal(result.ok, false);
+      assert.match(result.ok === false ? result.reason : '', /no base URL is known/);
+    });
+
+    /**
+     * Une capture revenue vide ne doit pas devenir « on est à la racine » :
+     * l'analyse d'URL résoudrait « » en la base elle-même.
+     */
+    it('fait échouer une valeur vide ou bordée de blancs au lieu de la lire comme la base', () => {
+      const base = 'http://h:2/app';
+      const racine = at('http://h:2/app/', base, { vide: '', blanc: ' ' });
+      for (const value of ['{{vide}}', '{{blanc}}', '']) {
+        const result = evaluateCheck({ check: 'urlEquals', value }, racine);
+        assert.equal(result.ok, false, value);
+        assert.match(result.ok === false ? result.reason : '', /empty value/);
+      }
+      const commandes = at('http://h:2/app/orders', base);
+      assert.equal(evaluateCheck({ check: 'urlEquals', value: 'orders\n' }, commandes).ok, false);
+    });
+
+    it('laisse urlContains en sous-chaîne brute', () => {
+      const ici = at('http://127.0.0.1:9000/app/orders', 'http://127.0.0.1:9000/app/');
+      assert.deepEqual(evaluateCheck({ check: 'urlContains', value: 'orders' }, ici), { ok: true });
+      // « . » n'est pas résolu : une sous-chaîne n'a pas de base.
+      assert.equal(evaluateCheck({ check: 'urlContains', value: './orders' }, ici).ok, false);
+    });
+
+    it('masque l\'adresse attendue quand elle puise dans l\'environnement', () => {
+      process.env['QAI_TEST_SEGMENT'] = 'jeton-secret-123';
+      try {
+        const ici = at('http://127.0.0.1:9000/app/autre', 'http://127.0.0.1:9000/app/');
+        const result = evaluateCheck({ check: 'urlEquals', value: 'clef/{{env.QAI_TEST_SEGMENT}}' }, ici);
+        assert.equal(result.ok, false);
+        const reason = result.ok === false ? result.reason : '';
+        assert.match(reason, /expected URL "\*\*\*"/);
+        assert.doesNotMatch(reason, /jeton-secret-123/);
+
+        const ok = at('http://127.0.0.1:9000/app/clef/jeton-secret-123', 'http://127.0.0.1:9000/app/');
+        assert.deepEqual(
+          evaluateCheck({ check: 'urlEquals', value: 'clef/{{env.QAI_TEST_SEGMENT}}' }, ok),
+          { ok: true },
+        );
+      } finally {
+        delete process.env['QAI_TEST_SEGMENT'];
+      }
+    });
+  });
+
   it('échoue clairement quand la cible n\'existe pas', () => {
     const result = evaluateCheck({ check: 'textEquals', target: { role: 'text', name: 'inconnu' }, value: 'x' }, on(tree));
     assert.equal(result.ok, false);

@@ -21,8 +21,21 @@ function seconds(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+/**
+ * Le libellé d'une étape dans un rapport.
+ *
+ * Une étape jouée sans intention ne fait que vérifier : une ligne vide après
+ * son identifiant laisserait croire à un scénario tronqué. Une étape SAUTÉE
+ * sans intention n'est pas une vérification — elle n'existe pas sur cette
+ * plateforme — et garde son libellé vide.
+ */
+export function intentLabel(step: { intent: string; status: string }): string {
+  if (step.intent !== '') return step.intent;
+  return step.status === 'skipped' ? '' : '(verification only)';
+}
+
 function formatStep(step: StepReport): string[] {
-  const lines = [`  ${MARK[step.status]} ${step.stepId.padEnd(4)} ${step.intent}`];
+  const lines = [`  ${MARK[step.status]} ${step.stepId.padEnd(4)} ${intentLabel(step)}`];
 
   if (step.error !== undefined) lines.push(`        ${step.error}`);
   for (const failure of step.failures) {

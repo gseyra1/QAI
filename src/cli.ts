@@ -16,10 +16,10 @@ import { loadConfig } from './config.ts';
 import { artifactWriter } from './report/artifacts.ts';
 import { formatJUnit } from './report/junit.ts';
 import { formatMarkdown } from './report/markdown.ts';
-import { formatSuite } from './report/text.ts';
+import { formatSuite, intentLabel } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
-import { RESOLUTION_VERSION } from './resolution/types.ts';
+import { OBSERVATION_VERSION } from './resolution/types.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
@@ -285,7 +285,9 @@ export async function main(argv: string[]): Promise<number> {
           // d'une : sans lui, une consigne qui se dégrade — donc un besoin
           // croissant de reprises — serait absorbée en silence par le budget.
           const tries = step.attempts > 1 ? `  (${step.attempts} attempts)` : '';
-          process.stdout.write(`  ${mark} ${step.stepId.padEnd(4)} ${step.intent}${tries}\n`);
+          process.stdout.write(
+            `  ${mark} ${step.stepId.padEnd(4)} ${intentLabel(step)}${tries}\n`,
+          );
           for (const rejection of step.rejections) {
             process.stdout.write(`        attempt rejected: ${rejection}\n`);
           }
@@ -345,11 +347,13 @@ export async function main(argv: string[]): Promise<number> {
     // mais ses cibles ont pu être calculées sur des noms accessibles que ce
     // moteur ne produit plus à l'identique : le rejeu peut passer au rouge sans
     // qu'aucune régression n'existe. On le dit clairement plutôt que de laisser
-    // deviner — régénérer avec « qai resolve » réaligne le cache.
+    // deviner — régénérer avec « qai resolve » réaligne le cache. Le seuil est
+    // la version d'observation, pas celle du format : une montée de format qui
+    // ne touche pas l'observation ne périme aucun fichier.
     const version = resolution.version ?? 1;
-    if (version < RESOLUTION_VERSION) {
+    if (version < OBSERVATION_VERSION) {
       process.stderr.write(
-        `${scenario.id}: resolution is v${version}, this QAI observes v${RESOLUTION_VERSION} — ` +
+        `${scenario.id}: resolution is v${version}, this QAI observes v${OBSERVATION_VERSION} — ` +
           `regenerate with "qai resolve" if assertions fail unexpectedly (${resolutionPath})\n`,
       );
     }
