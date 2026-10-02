@@ -1,8 +1,8 @@
 {
   "name": "tilmiqai",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
-  "description": "Agentic QA — scenarios written as intent, replayed on the web today and on mobile next",
+  "description": "Agentic QA — scenarios written as intent, replayed on the web, and on iOS (experimental, not yet validated on a device)",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",
@@ -31,7 +31,8 @@
     "dist",
     "schema",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
@@ -52,6 +53,8 @@
     "e2e",
     "end-to-end",
     "playwright",
+    "ios",
+    "appium",
     "ai",
     "agent",
     "self-healing",

@@ -1,8 +1,9 @@
-import { readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
+import { capabilitiesProblem } from './driver/ios/capabilities.ts';
 import { isAppPath, isBundleId } from './driver/ios/entry.ts';
 import { IosDriver } from './driver/ios/IosDriver.ts';
 import type { Driver, Platform } from './driver/types.ts';
@@ -45,6 +46,10 @@ Options
   --app <id|path>       iOS app under test: bundle id, or a .app/.ipa path
   --device <udid|name>  iOS device or simulator (default: Appium's choice)
   --appium-url <url>    Appium server (default http://127.0.0.1:4723)
+  --platform-version <v> iOS version to run on (appium:platformVersion)
+  --capabilities <json> extra Appium session capabilities, as a JSON object
+                        (e.g. '{"appium:noReset": true}'); merged over the
+                        "capabilities" of qai.config.json, key by key
   --states <module>     module default-exporting a StateProvider, used to
                         install the state declared by "given"
   --provider <module>   module default-exporting a ModelProvider, and
@@ -66,6 +71,7 @@ Options
   --json                alias for --format json
   --strict              a repair fails the command
   --headed              show the browser
+  --version             print the QAI version
 
 Exit codes: 0 passed or healed, 1 failed or inconsistent.
 `;
@@ -92,8 +98,37 @@ async function expand(paths: string[]): Promise<string[]> {
   return found;
 }
 
+/**
+ * Erreurs d'import qui disent « ce module n'est pas lu comme ESM », pas « ce
+ * module est faux » : un `.ts` dans un projet `"type": "commonjs"` (le défaut
+ * de `npm init`) échoue sur « Unexpected token 'export' », et un Node
+ * antérieur à 22.18 ne sait pas ouvrir un `.ts` du tout.
+ */
+const FORMAT_ERRORS: ReadonlySet<string> = new Set(['ERR_REQUIRE_ESM', 'ERR_UNKNOWN_FILE_EXTENSION']);
+
+/**
+ * Le message brut de Node ne nomme ni la cause ni la sortie : l'utilisateur
+ * qui suit le guide avec un `provider.ts` voit un jeton inattendu et rien
+ * d'autre. Le message d'origine est gardé, l'indice s'y ajoute.
+ */
+async function importModule(path: string): Promise<Record<string, unknown>> {
+  try {
+    return (await import(pathToFileURL(resolvePath(path)).href)) as Record<string, unknown>;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!(error instanceof SyntaxError) && (code === undefined || !FORMAT_ERRORS.has(code))) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${path}: ${message}\n` +
+        'hint: the module is loaded as ESM: name it .mts or .mjs, or set "type": "module" in its package.json; ' +
+        `a .ts/.mts module needs Node >= 22.18 (this is ${process.versions.node})`,
+      { cause: error },
+    );
+  }
+}
+
 async function loadModule<T>(path: string, kind: string): Promise<{ value: T; pricing?: Pricing }> {
-  const module: Record<string, unknown> = await import(pathToFileURL(resolvePath(path)).href);
+  const module = await importModule(path);
   const exported = module['default'];
   const value = (typeof exported === 'function' ? await exported() : exported) as T;
   if (value === undefined || value === null) {
@@ -102,6 +137,23 @@ async function loadModule<T>(path: string, kind: string): Promise<{ value: T; pr
   const pricing = module['pricing'] as Pricing | undefined;
   return pricing === undefined ? { value } : { value, pricing };
 }
+
+/**
+ * La version du paquet, lue dans le `package.json` voisin.
+ *
+ * `../package.json` vaut depuis `src/cli.ts` comme depuis `dist/cli.js` : les
+ * deux sont à un cran de la racine du paquet, et npm publie toujours
+ * `package.json`. Lu à l'exécution plutôt qu'importé : aucun bundle ne peut
+ * figer une version qui ne serait pas celle installée.
+ */
+async function packageVersion(): Promise<string> {
+  const raw = await readFile(new URL('../package.json', import.meta.url), 'utf8');
+  const version = (JSON.parse(raw) as { version?: unknown }).version;
+  if (typeof version !== 'string') throw new Error('package.json carries no version');
+  return version;
+}
+
+const FORMATS: ReadonlySet<string> = new Set(['text', 'json', 'markdown', 'junit']);
 
 export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -113,6 +165,8 @@ export async function main(argv: string[]): Promise<number> {
       app: { type: 'string' },
       device: { type: 'string' },
       'appium-url': { type: 'string' },
+      'platform-version': { type: 'string' },
+      capabilities: { type: 'string' },
       resolution: { type: 'string' },
       states: { type: 'string' },
       provider: { type: 'string' },
@@ -131,8 +185,16 @@ export async function main(argv: string[]): Promise<number> {
       strict: { type: 'boolean', default: false },
       headed: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
+      version: { type: 'boolean', default: false },
     },
   });
+
+  // Avant la configuration : savoir quelle QAI tourne doit rester possible
+  // quand c'est justement le fichier de configuration qui est en cause.
+  if (values.version === true) {
+    process.stdout.write(`${await packageVersion()}\n`);
+    return 0;
+  }
 
   const [command, ...scenarioArgs] = positionals;
   const { config } = await loadConfig(values.config);
@@ -156,6 +218,7 @@ export async function main(argv: string[]): Promise<number> {
     app: values.app ?? config.app,
     device: values.device ?? config.device,
     appiumUrl: values['appium-url'] ?? config.appiumUrl,
+    platformVersion: values['platform-version'] ?? config.platformVersion,
   };
 
   const requested = scenarioArgs.length > 0 ? scenarioArgs : (config.scenarios ?? []);
@@ -183,6 +246,7 @@ export async function main(argv: string[]): Promise<number> {
     ['--app', values.app],
     ['--device', values.device],
     ['--appium-url', values['appium-url']],
+    ['--platform-version', values['platform-version']],
   ];
   for (const [flag, raw] of bruts) {
     if (raw !== undefined && raw.trim() === '') return invalide(flag, 'a non-empty value');
@@ -200,6 +264,37 @@ export async function main(argv: string[]): Promise<number> {
   if (assertTimeout !== undefined && (!Number.isFinite(assertTimeout) || assertTimeout < 0)) {
     return invalide('--assert-timeout', 'a number of milliseconds ≥ 0');
   }
+  // « --format xml » écrivait le rapport texte en l'annonçant « xml » : un
+  // job qui attend du JUnit recevait autre chose sans que rien ne casse ici.
+  if (values.format !== undefined && !FORMATS.has(values.format)) {
+    return invalide('--format', 'text, json, markdown or junit');
+  }
+
+  /**
+   * Les capacités du drapeau complètent celles du fichier clé par clé : le
+   * fichier porte ce qui vaut pour l'équipe (signature), le drapeau ce qui
+   * vaut pour ce lancement. Une valeur illisible arrête la commande, comme un
+   * réglage numérique ; une clé que QAI pose lui-même aussi.
+   */
+  let flagCapabilities: Record<string, unknown> | undefined;
+  if (values.capabilities !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(values.capabilities);
+    } catch {
+      parsed = undefined;
+    }
+    const problem = parsed === undefined ? 'must be a JSON object' : capabilitiesProblem(parsed);
+    if (problem !== undefined) {
+      process.stderr.write(`--capabilities ${problem}, e.g. '{"appium:noReset": true}'\n`);
+      return 1;
+    }
+    flagCapabilities = parsed as Record<string, unknown>;
+  }
+  const capabilities =
+    config.capabilities === undefined && flagCapabilities === undefined
+      ? undefined
+      : { ...config.capabilities, ...flagCapabilities };
 
   /**
    * La plateforme se valide avant tout chargement, comme les réglages
@@ -215,6 +310,8 @@ export async function main(argv: string[]): Promise<number> {
       ['--app', values.app],
       ['--device', values.device],
       ['--appium-url', values['appium-url']],
+      ['--platform-version', values['platform-version']],
+      ['--capabilities', values.capabilities],
     ];
     for (const [flag, given] of iosOnly) {
       if (given !== undefined) return invalide(flag, '--platform ios');
@@ -319,6 +416,8 @@ export async function main(argv: string[]): Promise<number> {
       ? new IosDriver({
           ...(settings.appiumUrl !== undefined ? { serverUrl: settings.appiumUrl } : {}),
           ...(settings.device !== undefined ? { device: settings.device } : {}),
+          ...(settings.platformVersion !== undefined ? { platformVersion: settings.platformVersion } : {}),
+          ...(capabilities !== undefined ? { capabilities } : {}),
         })
       : new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
 
@@ -407,6 +506,9 @@ export async function main(argv: string[]): Promise<number> {
           );
           for (const rejection of step.rejections) {
             process.stdout.write(`        attempt rejected: ${rejection}\n`);
+          }
+          for (const warning of step.warnings) {
+            process.stdout.write(`        warning: ${warning}\n`);
           }
         }
 

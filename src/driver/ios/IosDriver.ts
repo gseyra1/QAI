@@ -14,6 +14,7 @@ import type {
 } from '../types.ts';
 import { matchNodes } from '../../engine/match.ts';
 import { AppiumClient, AppiumError, ELEMENT_KEY } from './appium.ts';
+import { capabilitiesProblem } from './capabilities.ts';
 import { isAppPath, isBundleId, isUdid } from './entry.ts';
 import type { Screen } from './source.ts';
 import { readScreen } from './source.ts';
@@ -35,6 +36,7 @@ export type IosDriverErrorCode =
   | 'unsupported'
   | 'unresolved'
   | 'invalid-entry'
+  | 'invalid-capabilities'
   | 'blocked-by-alert';
 
 export class IosDriverError extends Error {
@@ -53,6 +55,12 @@ export interface IosDriverOptions {
   /** UDID ou nom d'appareil ; absent, Appium choisit. */
   device?: string;
   platformVersion?: string;
+  /**
+   * Capacités ajoutées à la session (`appium:noReset`, signature de
+   * WebDriverAgent sur un appareil réel…). Celles que QAI pose lui-même sont
+   * refusées : voir `capabilities.ts`.
+   */
+  capabilities?: Record<string, unknown>;
   /** Délai par commande, hors création de session. Défaut : 60 s. */
   commandTimeoutMs?: number;
 }
@@ -76,15 +84,19 @@ const SPRINGBOARD = 'com.apple.springboard';
  * Touches que `press` sait produire, en caractères tapés.
  *
  * XCUITest n'a pas d'API de touche nommée hors clavier matériel : la touche
- * passe par la saisie de texte sur l'élément actif, où « \n » est Retour et
- * « \b » l'effacement — les caractères que XCTest traduit en touches.
+ * passe par la saisie de texte sur l'élément actif, où « \n » est Retour.
+ *
+ * L'effacement est la paire U+0008 U+007F, pas « \b » seul : c'est la
+ * séquence que WebDriverAgent tape lui-même pour vider un champ
+ * (`backspaceDeleteSequence`, XCUIElement+FBTyping.m). Reprendre la sienne
+ * plutôt qu'en deviner une autre : c'est la seule éprouvée sur appareil.
  */
 const KEYS: Readonly<Record<string, string>> = {
   Enter: '\n',
   Return: '\n',
   Tab: '\t',
-  Backspace: '\b',
-  Delete: '\b',
+  Backspace: '\u0008\u007F',
+  Delete: '\u0008\u007F',
   Space: ' ',
 };
 
@@ -168,6 +180,7 @@ export class IosDriver implements Driver {
   readonly #client: AppiumClient;
   readonly #device: string | undefined;
   readonly #platformVersion: string | undefined;
+  readonly #extra: Readonly<Record<string, unknown>>;
   #session: string | null = null;
   #bundleId = '';
 
@@ -175,6 +188,11 @@ export class IosDriver implements Driver {
     this.#client = new AppiumClient(options.serverUrl ?? DEFAULT_APPIUM_URL, options.commandTimeoutMs ?? 60_000);
     this.#device = options.device;
     this.#platformVersion = options.platformVersion;
+    // Refusé à la construction, avant toute session : une capacité qui
+    // contredit --app ou --device ne doit rien lancer sur l'appareil.
+    const problem = options.capabilities === undefined ? undefined : capabilitiesProblem(options.capabilities);
+    if (problem !== undefined) throw new IosDriverError(`capabilities: ${problem}`, 'invalid-capabilities');
+    this.#extra = { ...options.capabilities };
   }
 
   get #path(): string {
@@ -215,7 +233,10 @@ export class IosDriver implements Driver {
       );
     }
 
-    const capabilities: Record<string, string> = {
+    // Les capacités ajoutées d'abord : celles de QAI ne peuvent pas être
+    // remplacées, et le constructeur a déjà refusé toute collision.
+    const capabilities: Record<string, unknown> = {
+      ...this.#extra,
       platformName: 'iOS',
       'appium:automationName': 'XCUITest',
     };

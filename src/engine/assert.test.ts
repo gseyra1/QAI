@@ -382,3 +382,16 @@ describe('evaluateCheck', () => {
     assert.match(result.ok === false ? result.reason : '', /expected 42, observed 7/);
   });
 });
+
+describe('textContains vide', () => {
+  it('échoue plutôt que d\'être vrai sur tout texte', () => {
+    const root = node('group', 'page', [node('text', 'Commande CMD-1')]);
+    const check = { check: 'textContains', target: { role: 'text' }, value: '{{numero}}' } as const;
+    const result = evaluateCheck(check, on(root, { numero: '' }));
+    assert.deepEqual(result, {
+      ok: false,
+      reason: 'textContains value is empty: every text contains it, so it proves nothing',
+    });
+    assert.deepEqual(evaluateCheck(check, on(root, { numero: 'CMD-1' })), { ok: true });
+  });
+});

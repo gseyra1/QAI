@@ -11,10 +11,7 @@
       "actions": [
         {
           "kind": "fill",
-          "target": {
-            "primary": { "role": "searchbox", "name": "Rechercher un produit" },
-            "fallback": { "testId": "search-input" }
-          },
+          "target": { "primary": { "role": "searchbox", "name": "Rechercher un produit" } },
           "value": "chaise de bureau"
         },
         { "kind": "press", "key": "Enter" }
@@ -33,8 +30,7 @@
         {
           "kind": "click",
           "target": {
-            "primary": { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } },
-            "fallback": { "testId": "product-card" }
+            "primary": { "role": "link", "nth": 0, "within": { "role": "list", "name": "Résultats" } }
           }
         }
       ],
@@ -57,11 +53,7 @@
       "assertions": {
         "l'indicateur du panier affiche 1 article": {
           "check": "textEquals",
-          "target": {
-            "role": "text",
-            "name": "1",
-            "within": { "role": "link", "name": { "contains": "Panier" } }
-          },
+          "target": { "role": "text", "within": { "role": "link", "name": { "contains": "Panier" } } },
           "value": "1"
         }
       },
@@ -176,4 +168,3 @@
     }
   }
 }
-

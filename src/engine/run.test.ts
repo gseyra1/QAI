@@ -426,6 +426,34 @@ describe('runScenario', () => {
   });
 
   /**
+   * « Ne survivra pas au portage mobile » n'a de sens que vu du web : sur un
+   * appareil, le portage est fait, et l'avertissement parlait d'autre chose
+   * que de ce qui menace vraiment le ciblage.
+   */
+  it('formule l\'avertissement de repli selon la plateforme', async () => {
+    const VIA_FALLBACK: ResolveOutcome = { found: true, node: BUTTON, usedFallback: true };
+    class IosStubDriver extends FakeDriver {
+      override readonly platform: Platform = 'ios';
+    }
+    const warningOn = async (driver: FakeDriver): Promise<string> => {
+      const report = await runScenario({
+        driver,
+        scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+        resolution: { ...resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }), platform: driver.platform },
+      });
+      assert.equal(report.status, 'passed');
+      return report.steps[0]?.warnings?.[0] ?? '';
+    };
+
+    const web = await warningOn(new FakeDriver(TREE, () => VIA_FALLBACK));
+    assert.match(web, /only reached through its technical fallback: .* will not survive the mobile port/);
+
+    const ios = await warningOn(new IosStubDriver(TREE, () => VIA_FALLBACK));
+    assert.match(ios, /only reached through its technical fallback: .* now rests on a technical identifier alone/);
+    assert.doesNotMatch(ios, /mobile port/);
+  });
+
+  /**
    * Rejouer une résolution web sur un autre pilote la ferait réparer avec
    * des cibles de cet autre arbre, puis réécrire encore marquée « web ».
    */

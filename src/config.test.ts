@@ -158,4 +158,32 @@ describe('configuration file', () => {
     await writeFile(path, JSON.stringify({ platform: 'iso' }));
     await assert.rejects(() => loadConfig(path), /platform must be "web" or "ios"/);
   });
+
+  it('reads the iOS session capabilities and platform version', async () => {
+    const path = join(dir, 'capabilities.json');
+    const capabilities = { 'appium:noReset': true, 'appium:newCommandTimeout': 300 };
+    await writeFile(path, JSON.stringify({ platform: 'ios', platformVersion: '18.2', capabilities }));
+    const { config } = await loadConfig(path);
+    assert.equal(config.platformVersion, '18.2');
+    assert.deepEqual(config.capabilities, capabilities);
+  });
+
+  /**
+   * Ignorer un bloc illisible ferait courir la session sans `noReset` ni
+   * signature, et remplacer `automationName` ferait piloter autre chose que
+   * ce que le rapport annonce : les deux arrêtent le chargement.
+   */
+  it('rejects capabilities that are not an object, or that override what QAI sets', async () => {
+    const cases: [unknown, RegExp][] = [
+      ['appium:noReset', /capabilities must be a JSON object/],
+      [[{ 'appium:noReset': true }], /capabilities must be a JSON object/],
+      [{ platformName: 'Android' }, /capabilities "platformName" is set by QAI/],
+      [{ 'appium:automationName': 'Espresso' }, /capabilities "appium:automationName" is set by QAI/],
+    ];
+    for (const [capabilities, expected] of cases) {
+      const path = join(dir, 'bad-capabilities.json');
+      await writeFile(path, JSON.stringify({ capabilities }));
+      await assert.rejects(() => loadConfig(path), expected);
+    }
+  });
 });

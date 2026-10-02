@@ -401,6 +401,12 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   const shown = secret ? '***' : expected;
 
   if (check.check === 'textContains') {
+    // Même garde que pour urlContains : tout texte contient la chaîne vide, et
+    // une capture revenue vide au rejeu ferait de « contient {{x}} » un vert
+    // inconditionnel.
+    if (expected === '') {
+      return { ok: false, reason: 'textContains value is empty: every text contains it, so it proves nothing' };
+    }
     return matched.some((node) => textOf(node).includes(expected))
       ? { ok: true }
       : { ok: false, reason: `"${shown}" not found in "${textOf(matched[0] as UINode)}"` };

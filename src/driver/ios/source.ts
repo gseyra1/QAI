@@ -381,8 +381,17 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     // L'identifiant d'accessibilité n'est un identifiant de test que s'il
     // diffère du libellé : WebDriverAgent recopie le libellé dans `name`
     // quand aucun identifiant n'est posé, et ce n'est alors rien de plus.
+    // La barre de navigation fait exception : UIKit lui donne pour
+    // identifiant le titre de l'écran, sans libellé. « #Sign In » passerait
+    // pour un identifiant stable alors que c'est un texte affiché, qui change
+    // avec la langue et la copie.
     const rawName = element.attributes['name'];
-    if (rawName !== undefined && rawName !== '' && rawName !== (element.attributes['label'] ?? '')) {
+    if (
+      type !== 'NavigationBar' &&
+      rawName !== undefined &&
+      rawName !== '' &&
+      rawName !== (element.attributes['label'] ?? '')
+    ) {
       node.testId = rawName;
     }
 

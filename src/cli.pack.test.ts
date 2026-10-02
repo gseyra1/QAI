@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { exec, execFile } from 'node:child_process';
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -63,6 +63,21 @@ describe('the packaged binary', () => {
   it('also starts through its real path', async () => {
     const { stdout } = await run('node', [resolve('dist/cli.js'), '--help']);
     assert.match(stdout, /qai — QA agent/);
+  });
+
+  /**
+   * La version est lue à côté du module, à `../package.json` : vrai depuis
+   * `src/cli.ts`, et ce test prouve que ça l'est encore depuis le bundle,
+   * appelé par le lien que npm installe.
+   */
+  it('prints the package version, through the symlink too', async (t) => {
+    const { version } = JSON.parse(await readFile(resolve('package.json'), 'utf8')) as { version: string };
+    const direct = await run('node', [resolve('dist/cli.js'), '--version']);
+    assert.equal(direct.stdout, `${version}\n`);
+    const bin = link;
+    if (bin === null) return t.skip('symlinks unavailable on this machine');
+    const linked = await run('node', [bin, '--version']);
+    assert.equal(linked.stdout, `${version}\n`);
   });
 
   it('returns code 1 without arguments, so a CI job cannot pass silently', async (t) => {

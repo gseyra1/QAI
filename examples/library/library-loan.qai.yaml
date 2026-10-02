@@ -1,3 +1,8 @@
+# Parcours sur la médiathèque de démonstration, pas sur la boutique : il vit
+# dans son propre dossier pour que `run examples/` ne vise qu'une application.
+#   npm run demo -- --app library --port 8896
+#   npm run qai -- run examples/library/ --base-url http://127.0.0.1:8896/
+
 id: library-loan
 title: Un adhérent emprunte un ouvrage
 tags: [critical-path]

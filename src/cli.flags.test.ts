@@ -81,6 +81,9 @@ describe('platform flag validation', () => {
     ['--base-url on iOS', ['run', 'x.qai.yaml', '--platform', 'ios', '--app', 'com.example.app', '--base-url', 'http://x'], /--base-url requires --platform web/],
     ['a non-http --appium-url', ['run', 'x.qai.yaml', '--platform', 'ios', '--app', 'com.example.app', '--appium-url', 'localhost:4723'], /--appium-url requires an http\(s\) URL/],
     ['several workers on iOS', ['run', 'x.qai.yaml', '--platform', 'ios', '--app', 'com.example.app', '--workers', '2'], /--workers requires 1 with --platform ios/],
+    ['--platform-version on the web', ['run', 'x.qai.yaml', '--platform-version', '18.2'], /--platform-version requires --platform ios/],
+    ['--capabilities on the web', ['run', 'x.qai.yaml', '--capabilities', '{"appium:noReset":true}'], /--capabilities requires --platform ios/],
+    ['an empty --platform-version', ['run', 'x.qai.yaml', '--platform', 'ios', '--app', 'com.example.app', '--platform-version', ''], /--platform-version requires a non-empty value/],
   ];
 
   for (const [nom, argv, attendu] of refuses) {
@@ -122,6 +125,102 @@ describe('platform flag validation', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * Un format inconnu écrivait le rapport texte en l'annonçant sous le nom
+ * demandé : « xml report written to r.out », sortie 0.
+ */
+describe('--format validation', () => {
+  for (const format of ['xml', 'JSON', '']) {
+    it(`rejects --format "${format}"`, async () => {
+      const { code, err } = await qai(['run', 'x.qai.yaml', '--format', format]);
+      assert.equal(code, 1);
+      assert.match(err, /--format requires text, json, markdown or junit/);
+    });
+  }
+
+  it('accepts each documented format', async () => {
+    for (const format of ['text', 'json', 'markdown', 'junit']) {
+      // « schema » ne contient aucun scénario : l'échec attendu est « aucun
+      // scénario trouvé », pas un refus de validation.
+      const { code, err } = await qai(['run', 'schema', '--format', format]);
+      assert.equal(code, 1);
+      assert.doesNotMatch(err, /requires/);
+      assert.match(err, /no scenarios/);
+    }
+  });
+});
+
+/**
+ * Sans version affichable, un rapport de bogue ne dit pas quelle QAI a
+ * tourné — or 0.3 et 0.4 ne lisent pas les mêmes résolutions.
+ */
+describe('--version', () => {
+  it('prints the package version and exits 0', async () => {
+    const pkg = JSON.parse(await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as {
+      version: string;
+    };
+    const { code, out } = await cli(['--version']);
+    assert.equal(code, 0);
+    assert.equal(out, `${pkg.version}\n`);
+  });
+
+  it('answers even when the configuration file is broken', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qai-version-'));
+    try {
+      await writeFile(join(dir, 'qai.config.json'), '{ not json');
+      const { code, out } = await cli(['--version'], dir);
+      assert.equal(code, 0);
+      assert.match(out, /^\d+\.\d+\.\d+/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Un module d'état ou de modèle écrit en TypeScript, dans un projet que
+ * `npm init` a déclaré CommonJS, échouait sur « Unexpected token 'export' »
+ * sans dire pourquoi ni comment s'en sortir.
+ */
+describe('module loading hint', () => {
+  let dir: string;
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'qai-esm-'));
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'app', type: 'commonjs' }));
+    await writeFile(join(dir, 'login.qai.yaml'), LOGIN_SCENARIO);
+    const module = 'export default { async prepare() { return {}; } };\n';
+    await writeFile(join(dir, 'states.ts'), module);
+    await writeFile(join(dir, 'states.mts'), module);
+  });
+
+  after(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('says the module must be ESM when it cannot be read as one', async () => {
+    const { code, err } = await cli(['check', 'login.qai.yaml', '--states', './states.ts'], dir);
+    assert.equal(code, 1);
+    assert.match(err, /\.\/states\.ts: /);
+    assert.match(err, /hint: the module is loaded as ESM: name it \.mts or \.mjs, or set "type": "module"/);
+    assert.match(err, /needs Node >= 22\.18/);
+  });
+
+  it('loads the same module once it is ESM, without the hint', async () => {
+    const { err } = await cli(['check', 'login.qai.yaml', '--states', './states.mts'], dir);
+    assert.doesNotMatch(err, /hint:/);
+    // Le chargement est passé : la commande s'arrête plus loin, sur la
+    // résolution absente.
+    assert.match(err, /login: no resolution/);
+  });
+
+  it('leaves an error that is not about the module format untouched', async () => {
+    const { code, err } = await cli(['check', 'login.qai.yaml', '--states', './missing.mjs'], dir);
+    assert.equal(code, 1);
+    assert.doesNotMatch(err, /hint:/);
   });
 });
 
@@ -201,6 +300,56 @@ describe('iOS command line', () => {
     assert.doesNotMatch(err, /--workers requires/);
     assert.match(err, /"workers": 4 from qai\.config\.json is ignored on iOS/);
     assert.match(err, /no scenarios/);
+  });
+
+  it('refuses --capabilities that is not a JSON object, or that overrides what QAI sets', async () => {
+    const ios = ['run', 'x.qai.yaml', '--platform', 'ios', '--app', 'com.example.app'];
+    const cases: [string, RegExp][] = [
+      ['appium:noReset', /--capabilities must be a JSON object/],
+      ['[1]', /--capabilities must be a JSON object/],
+      ['', /--capabilities must be a JSON object/],
+      ['{"platformName":"Android"}', /--capabilities "platformName" is set by QAI/],
+      ['{"appium:bundleId":"com.other"}', /--capabilities "appium:bundleId" is set by QAI \(use --app\)/],
+    ];
+    for (const [raw, expected] of cases) {
+      const { code, err } = await cli([...ios, '--capabilities', raw]);
+      assert.equal(code, 1, raw);
+      assert.match(err, expected);
+    }
+    assert.deepEqual(fake.calls, []);
+  });
+
+  /**
+   * Le fichier porte ce qui vaut pour l'équipe, le drapeau ce qui vaut pour ce
+   * lancement : les deux arrivent dans la session, le drapeau l'emportant clé
+   * par clé.
+   */
+  it('sends the capabilities of the file and the flag, and the platform version, to the session', async () => {
+    const suite = join(dir, 'capabilities');
+    await mkdir(join(suite, '.qai', 'resolutions'), { recursive: true });
+    await writeFile(join(suite, 'login.qai.yaml'), LOGIN_SCENARIO);
+    await writeFile(join(suite, '.qai', 'resolutions', 'login.ios.json'), iosResolution('ios'));
+    const config = join(suite, 'qai.config.json');
+    await writeFile(
+      config,
+      JSON.stringify({ capabilities: { 'appium:noReset': false, 'appium:xcodeOrgId': 'ABCDE12345' }, platformVersion: '17.5' }),
+    );
+    const { code, out, err } = await cli([
+      'run', join(suite, 'login.qai.yaml'), '--config', config,
+      '--platform', 'ios', '--app', 'com.example.acme', '--appium-url', fake.url,
+      '--platform-version', '18.2', '--capabilities', '{"appium:noReset":true,"appium:newCommandTimeout":300}',
+      '--artifacts', join(dir, 'artifacts'),
+    ]);
+    assert.equal(code, 0, `${out}\n${err}`);
+    assert.deepEqual((fake.calls[0]?.body as { capabilities: { alwaysMatch: unknown } }).capabilities.alwaysMatch, {
+      'appium:noReset': true,
+      'appium:xcodeOrgId': 'ABCDE12345',
+      'appium:newCommandTimeout': 300,
+      platformName: 'iOS',
+      'appium:automationName': 'XCUITest',
+      'appium:bundleId': 'com.example.acme',
+      'appium:platformVersion': '18.2',
+    });
   });
 
   it('refuses a resolution written for another platform', async () => {

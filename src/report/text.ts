@@ -1,5 +1,5 @@
 import type { SuiteReport } from '../engine/suite.ts';
-import { warningCount } from '../engine/suite.ts';
+import { warningCount, watchdogsApply } from '../engine/suite.ts';
 import type { ScenarioReport, StepReport, StepStatus } from '../engine/run.ts';
 import type { ConsistencyIssue } from '../engine/consistency.ts';
 import { formatIssue } from '../engine/consistency.ts';
@@ -139,7 +139,11 @@ export function formatSuite(report: SuiteReport): string {
   if (failures > 0) lines.push(`${failures} journey(s) failed.`);
   if (heals > 0) lines.push(`${heals} repair(s): review the resolution diffs before merging.`);
   if (warnings > 0) {
-    lines.push(`${warnings} warning(s): a watchdog set to "warn" reports without failing.`);
+    lines.push(
+      watchdogsApply(report)
+        ? `${warnings} warning(s): a watchdog set to "warn" reports without failing.`
+        : `${warnings} warning(s): reported without failing the run.`,
+    );
   }
   // « All green » ne doit pas couvrir un avertissement : annoncer le vert
   // complet sur une exécution qui en porte est précisément ce qui rend le

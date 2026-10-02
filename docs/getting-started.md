@@ -48,7 +48,7 @@ without it, QAI refuses to run a journey that requires one (see
 [state.md](state.md)).
 
 ```
-1 journey(s) — PASSED   1.6 s
+1 journey(s) — PASSED   1.5 s
 
   ✓ checkout-guest         PASSED  1.2 s
 
@@ -80,7 +80,7 @@ npm run qai -- run examples/checkout-guest.qai.yaml \
 ```
 
 ```
-1 journey(s) — FAILED   6.8 s
+1 journey(s) — FAILED   6.7 s
 
   ✖ checkout-guest         FAILED  6.4 s
     ✖ s8   payer avec la carte de test
@@ -139,7 +139,7 @@ accepting it.
 ```bash
 npm run qai -- resolve my-journey.qai.yaml \
   --base-url http://localhost:3000 \
-  --provider ./my-provider.ts \
+  --provider ./my-provider.mts \
   --max-cost 2
 ```
 
@@ -161,7 +161,7 @@ npm run demo -- --bug rename-guest --port 8897
 npm run qai -- run examples/checkout-guest.qai.yaml \
   --base-url http://127.0.0.1:8897/ \
   --states ./examples/states-example.ts \
-  --heal --provider ./my-provider.ts --max-cost 1
+  --heal --provider ./my-provider.mts --max-cost 1
 ```
 
 ```
@@ -190,10 +190,11 @@ npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./exampl
 ```
 
 ```
-2 journey(s) — PASSED   1.7 s
+3 journey(s) — PASSED   1.8 s
 
+  ✓ cart-confirmation      PASSED  866 ms
   ✓ checkout-guest         PASSED  1.2 s
-  ✓ compte-connecte        PASSED  534 ms
+  ✓ compte-connecte        PASSED  538 ms
 
 All green.
 ```
@@ -205,6 +206,30 @@ between journeys, and the startup cost is the price of isolation.
 [state.md](state.md). Without it, `compte-connecte` fails: it requires an open
 session.
 
+A directory is not recursive: one folder per demo app. `examples/library/`
+holds a journey on a second demo app, a library whose vocabulary never reached
+the model's prompt:
+
+```bash
+npm run demo -- --app library --port 8896
+```
+
+```bash
+npm run qai -- run examples/library/ --base-url http://127.0.0.1:8896/
+```
+
+```
+1 journey(s) — PASSED   1.2 s
+
+  ✓ library-loan           PASSED  886 ms
+
+All green.
+```
+
 ## Not there yet
 
-- **Mobile drivers.** CI integration does exist: see [ci.md](ci.md).
+- **iOS is experimental**: never run on a device or simulator — see
+  [driver.md](driver.md#ios-driver--experimental).
+- **Android**: not started.
+
+CI integration does exist: see [ci.md](ci.md).

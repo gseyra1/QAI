@@ -63,6 +63,21 @@ describe('formatSuite', () => {
     assert.match(output, /1 warning\(s\)/);
   });
 
+  /**
+   * Sur iOS, les garde-fous sont refusés avant de lancer : un avertissement y
+   * vient d'ailleurs (repli technique, secret trop court). L'attribuer à un
+   * garde-fou « warn » enverrait chercher un réglage qui n'existe pas.
+   */
+  it('n\'attribue pas les avertissements à un garde-fou hors du web', () => {
+    const warned = [step({ stepId: 's3', warnings: ['"Track parcel" was only reached through its technical fallback'] })];
+    const ios = formatSuite(suite(scenario({ platform: 'ios', steps: warned })));
+    assert.match(ios, /1 warning\(s\): reported without failing the run\./);
+    assert.doesNotMatch(ios, /watchdog/);
+
+    const web = formatSuite(suite(scenario({ steps: warned })));
+    assert.match(web, /1 warning\(s\): a watchdog set to "warn" reports without failing\./);
+  });
+
   it('cesse d\'annoncer « All green » quand l\'exécution porte un avertissement', () => {
     // Le palier `warn` sert à jauger avant de passer à `fail`. Un verdict qui
     // proclame le vert complet au-dessus d'avertissements rend cette mesure

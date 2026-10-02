@@ -9,10 +9,11 @@ anywhere in the repo.
   "scenarios": ["qa/"],
   "tags": [],
   "baseUrl": "http://localhost:3000",
-  "states": "./qa/states.ts",
-  "provider": "./qa/provider.ts",
+  "states": "./qa/states.mts",
+  "provider": "./qa/provider.mts",
   "workers": 4,
   "maxCost": 2,
+  "attempts": 5,
   "assertTimeout": 5000,
   "artifacts": ".qai/artifacts",
   "strict": false,
@@ -27,14 +28,26 @@ For iOS (experimental, see [docs/driver.md](driver.md#ios-driver--experimental))
   "platform": "ios",
   "app": "com.example.app",
   "device": "iPhone 16",
-  "appiumUrl": "http://127.0.0.1:4723"
+  "appiumUrl": "http://127.0.0.1:4723",
+  "platformVersion": "18.2",
+  "capabilities": { "appium:noReset": true, "appium:newCommandTimeout": 300 }
 }
 ```
 
 `platform` is `web` (default) or `ios` — `--platform`. `app` is a bundle id or
 a `.app`/`.ipa` path, resolved relative to the file — `--app`, the iOS
 counterpart of `baseUrl`. `device` is a UDID or a device name — `--device`.
-`appiumUrl` is the Appium server — `--appium-url`. **An unknown `platform`
+`appiumUrl` is the Appium server — `--appium-url`. `platformVersion` is the iOS
+version to run on (`appium:platformVersion`) — `--platform-version`.
+`capabilities` adds Appium session capabilities QAI cannot guess: WebDriverAgent
+signing on a real device (`appium:xcodeOrgId`, `appium:xcodeSigningId`),
+`appium:noReset`, `appium:newCommandTimeout`. `--capabilities '<json>'` is
+merged over it, key by key, the flag winning. **Keys QAI sets itself are
+refused**, with or without the `appium:` prefix and inside `appium:options`:
+`platformName`, `automationName`, `app`, `bundleId`, `udid`, `deviceName`,
+`platformVersion` — the error names the flag to use instead. A precedence rule
+would let a capability contradict `--app` with nobody knowing which won. The
+iOS flags are refused on the web. **An unknown `platform`
 stops the command**: falling back to the web would replay the web suite while
 you believe you are testing the app.
 
@@ -101,6 +114,11 @@ Behaviour in detail in [docs/engine.md](engine.md).
 **Paths resolve relative to the file**, not the current directory. Otherwise,
 running QAI from a subfolder would silently break the resolution of `states`
 and `provider`.
+
+**`states` and `provider` are loaded as ESM**: name them `.mts` or `.mjs`, or
+set `"type": "module"` in their `package.json`. A `.ts`/`.mts` module needs
+Node ≥ 22.18. A module that fails to load as ESM stops the command with this
+hint.
 
 **An unknown key is silently ignored.** `assertTimeout` only exists since
 0.1.0: set in a project running an older version, it produces no error and no

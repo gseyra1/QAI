@@ -6,7 +6,7 @@ tier 3 — the product's entry point, and the only moment a test is created.
 ```bash
 npm run qai -- resolve my-journey.qai.yaml \
   --base-url http://localhost:3000 \
-  --provider ./my-provider.ts \
+  --provider ./my-provider.mts \
   --max-cost 2
 ```
 
@@ -26,10 +26,19 @@ Each step goes through two verification phases.
 | No match | "no element matches this target" |
 | Multiple matches | "ambiguous target, N elements match — disambiguate with `within` or `nth`" |
 | Only the technical fallback worked | "the semantic targeting is wrong" |
+| The fallback names another element | "fallback "x" is the identifier of another element" |
+| The fallback names nothing | "fallback "x" designates no element on this screen" |
 
-The last one matters: a target that only works through its `data-testid` is not
-portable to mobile. It is refused at resolving time rather than discovered in
-phase 2.
+A target that only works through its `data-testid` is not portable to mobile.
+It is refused at resolving time rather than discovered in phase 2.
+
+**A fallback must designate the element the primary locator found.** Its
+`testId`/`accessibilityId` is compared with that element's own identifier. A
+fallback is only used the day the primary stops matching; pointing at a
+neighbour — the cell around a button, seen with a real model on iOS — the
+gesture would then land elsewhere with no error, and the next check could
+still pass. Repairs go through the same check. `fallback.selector` is not
+checked.
 
 **Phase B — captures and assertions, after acting.** A capture must match
 exactly one element and extract a readable value. An assertion must **pass on
@@ -90,12 +99,19 @@ An absolute URL to **another** origin is kept as is. That is a deliberate
 navigation out of the application, not an address copied by accident.
 
 Both rewrites are web only. On iOS a `navigate` is a deep link or a relaunch
-and a URL check compares the screen identifier: both are kept as written.
+and a URL check compares the screen identifier: both are kept as written. The
+model's instructions follow the platform: on iOS it is told to navigate by deep
+link (or `"."` to relaunch) and that the location is
+`"<bundle id>/<navigation bar title>"`.
 
 **A generated `urlEquals` is rewritten the same way.** Same bug, same fix, same
 rules (shared code): a literal absolute URL on the base origin becomes relative
 to the base — `"orders?id=3"`, `"/login"` outside the base path, `"."` for the
-base itself. Replay resolves it against its own base and compares strictly, so
+base itself. A path-absolute value is rewritten too, as `navigate` is: resolved
+at replay against a prefixed base, `"/"` would mean the origin root, not the
+app. Generated under `http://host/`, `"/"` becomes `"."` and `"/orders"`
+becomes `"orders"`; under `http://host/app/`, `"/app/orders"` becomes
+`"orders"` and `"/login"` stays as is. `urlContains` is never rewritten. Replay resolves it against its own base and compares strictly, so
 the asserted address is unchanged. Templates (`{{…}}`) and other origins are
 kept. The rewrite happens **before** verification, so the stored value is the
 one proven against the screen. Without `--base-url` (a harness calling
@@ -112,6 +128,36 @@ fragment it stands behind.
 So is a `urlContains` that **cannot fail**: one naming the host (`localhost:4173/orders`
 pins this host and port), or one contained in the base itself (`""`, `/`,
 `localhost`), which every page of the application shares.
+
+**A target located by the value it asserts is reported, not refused.**
+`textEquals "1"` on `{ "role": "text", "name": "1" }` compares nothing: once
+found, the element's text *is* its name. It still fails when the value changes
+(assertion targets are never repaired), but as "no element matches" instead of
+"expected 1, observed 2", and today's data is frozen in the file. Applies when
+the target's own `name` contains the expected value (or, for `numberEquals`,
+the same number); containers' names and fields compared by their value are
+exempt.
+
+**A capture located by the value it reads is reported too.** Reading
+`{ "role": "text", "name": "39,00 €" }` returns 39,00 € by construction: the
+first price change breaks it. Applies when the locator's name fully determines
+the value read; a partial label (`contains: "Référence"`) reads something and
+is not reported.
+
+Why not refuse: measured with a real model, refusing made things worse. It
+dropped the value for a `visible` on a structural target — green when the
+displayed status was wrong — captured the wrong element, or stopped converging
+within 5 attempts. Both show up as warnings in the `qai resolve` output; the
+model never sees them.
+
+**Every proposal is checked key by key against the shape
+[schema/resolution.schema.json](../schema/resolution.schema.json) allows.** A
+locator takes `role`, `name`, `nth` and `within` only; checks, actions,
+gestures and captures take exactly their own fields. A missing field is named
+(`textContains needs a "value"`) rather than surfacing later as `"undefined"
+not found`. Two shapes the schema allows are refused because they prove
+nothing: a `value` on `visible`/`absent` (never compared — the reviewer would
+believe it was) and `countAtLeast 0` (true on any screen).
 
 **A verification-only step gets no actions; a step with an intent gets at least
 one.** For a step with no intent on the platform being resolved, phase A is

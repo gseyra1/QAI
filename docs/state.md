@@ -27,19 +27,27 @@ export default {
 ```
 
 ```bash
-npm run qai -- run qa/ --base-url $URL --states ./qa/states.ts
+npm run qai -- run qa/ --base-url $URL --states ./qa/states.mts
 ```
 
 Start from [examples/states-example.ts](../examples/states-example.ts).
 
+The module is loaded as **ESM**: name it `.mts` or `.mjs`, or set
+`"type": "module"` in its `package.json`. A `.ts`/`.mts` module needs
+Node ≥ 22.18.
+
 ## What you can return
 
-| Field | Effect on web | Planned mobile equivalent |
+| Field | Effect on web | Effect on iOS (experimental) |
 |---|---|---|
-| `cookies` | set on the browser context | webview storage |
-| `cookies[].secure` · `.sameSite` | attributes of the cookie | carried by the webview |
-| `storage` | written to `localStorage`, before and after navigation | application preferences |
-| `entry` | forced entry point | deep link |
+| `cookies` | set on the browser context | refused when non-empty |
+| `cookies[].secure` · `.sameSite` | attributes of the cookie | — |
+| `storage` | written to `localStorage`, before and after navigation | refused when non-empty |
+| `entry` | forced entry point | opened as a deep link |
+
+On iOS there is no cookie jar or local storage to write: a session must come
+from a deep link your app understands. Refusing beats ignoring — a journey
+that believes it is logged in but is not fails far from the cause.
 
 This is why the contract's top level says **prepared state**, not "cookies": the vocabulary must stay expressible on mobile.
 

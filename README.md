@@ -26,7 +26,7 @@ here French. The tool speaks English.)
 - ⚡ **Free to replay** — the normal path makes **zero model calls**. You only pay when your UI actually changes.
 - 🩹 **Self-healing, auditable** — a renamed button is repaired and lands as a **4-line diff** in your PR, with the reason attached.
 - 🛡️ **Never touches assertions** — repairs can change *how* an element is reached, never *what* is asserted. Two independent barriers enforce it.
-- 📱 **Write once, run on mobile later** — scenarios contain no selectors, so the same file will replay on iOS and Android.
+- 📱 **Write once, replay on web and iOS** — scenarios contain no selectors; the same file gets one resolution per platform. iOS is experimental, Android next.
 - 🔌 **Bring your own model** — no vendor SDK bundled. Implement one method, set a spend cap.
 - 💬 **Talks to the developer** — posts the report as a pull-request comment and updates it in place.
 
@@ -44,7 +44,7 @@ yarn add -D tilmiqai && yarn playwright install chromium
 pnpm add -D tilmiqai && pnpm exec playwright install chromium
 ```
 
-Requires **Node.js ≥ 22**.
+Requires **Node.js ≥ 22** (≥ 22.18 to load a `.ts` provider or states module).
 
 ## Quick start
 
@@ -66,7 +66,7 @@ steps:
 **2.** Let QAI resolve it against your running app. It proposes, then **verifies every target against the real page** before accepting it:
 
 ```bash
-npx qai resolve qa/checkout.qai.yaml --base-url http://localhost:3000 --provider ./qa/provider.ts
+npx qai resolve qa/checkout.qai.yaml --base-url http://localhost:3000 --provider ./qa/provider.mts
 ```
 
 **3.** Replay it — no model involved, so this costs nothing and runs on every commit:
@@ -76,6 +76,8 @@ npx qai run qa/ --base-url http://localhost:3000
 ```
 
 Commit both files. The scenario is reviewed like code; the resolution is the cache that makes repairs auditable.
+
+`--provider` and `--states` modules are loaded as **ESM**: name them `.mts` or `.mjs`, or set `"type": "module"` in their `package.json` (`npm init -y` writes `"commonjs"`). A `.ts`/`.mts` module needs Node ≥ 22.18.
 
 ## How it works
 
@@ -104,6 +106,8 @@ Three execution tiers:
 qai run     <scenarios…> --base-url <url> [--heal --provider <module>]
 qai check   <scenarios…>
 qai resolve <scenarios…> --base-url <url> --provider <module>
+
+iOS (experimental): --platform ios --app <bundle-id|path.app> instead of --base-url
 ```
 
 `<scenarios…>` accepts files, directories or a shell glob. Everything can also live in `qai.config.json`.
@@ -111,18 +115,31 @@ qai resolve <scenarios…> --base-url <url> --provider <module>
 | Option | Default | Description |
 | --- | --- | --- |
 | `--base-url <url>` | — | Root of the application under test. |
-| `--provider <module>` | — | Module default-exporting a `ModelProvider`. Required for `resolve` and `--heal`. |
+| `--platform <p>` | `web` | `web` or `ios` (experimental, needs Appium). |
+| `--app <id\|path>` | — | iOS (experimental): bundle id, or a `.app`/`.ipa` path. |
+| `--device <udid\|name>` | Appium's choice | iOS (experimental): device or simulator. |
+| `--appium-url <url>` | `http://127.0.0.1:4723` | iOS (experimental): Appium server. |
+| `--platform-version <v>` | — | iOS (experimental): iOS version to run on (`appium:platformVersion`). |
+| `--capabilities <json>` | — | iOS (experimental): extra Appium session capabilities, as a JSON object. Merged over the config's `capabilities`, key by key. Keys QAI sets itself are refused. |
 | `--states <module>` | — | Module default-exporting a `StateProvider`, for the `given` block. |
-| `--config <path>` | `qai.config.json` | Looked up by walking parent directories. |
-| `--workers <n>` | `4` | Journeys replayed in parallel. Each gets a fresh browser. |
-| `--assert-timeout <ms>` | `5000` | Window in which a still-false assertion is re-evaluated. Never loosens what is asserted — it only allows for rendering that finishes after network idle. |
+| `--provider <module>` | — | Module default-exporting a `ModelProvider`, and exporting `pricing` when `--max-cost` is set. Required for `resolve` and `--heal`. |
+| `--tags <a,b>` | — | Only the journeys carrying at least one of these tags. |
+| `--workers <n>` | `4` | Journeys replayed in parallel. Each gets a fresh browser. 1 on iOS. |
 | `--heal` | `false` | Repair stale targets and rewrite the resolutions. |
 | `--max-cost <n>` | — | Spend cap, in your model's pricing units. |
+| `--attempts <n>` | `5` | Attempts per step during `resolve`. |
+| `--assert-timeout <ms>` | `5000` | Window in which a still-false assertion is re-evaluated. Never loosens what is asserted — it only allows for rendering that finishes after network idle. |
+| `--resolution <path>` | `.qai/resolutions/` next to the scenario | Force the resolution path. Single scenario only. |
+| `--config <path>` | `qai.config.json` | Looked up by walking parent directories. |
 | `--artifacts <dir>` | `.qai/artifacts` | Where failure screenshots are written. |
-| `--format <f>` | `text` | `text`, `json` or `markdown`. |
+| `--format <f>` | `text` | `text`, `json`, `markdown` or `junit`. Anything else exits 1. |
 | `--out <path>` | stdout | Write the report to a file. |
+| `--run-url <url>` | — | Link to the CI run, inserted into the markdown report. |
+| `--json` | — | Alias for `--format json`. |
 | `--strict` | `false` | A repair fails the command instead of passing. |
-| `--headed` | `false` | Show the browser. |
+| `--headed` | `false` | Show the browser. Refused on iOS. |
+| `--version` | — | Print the QAI version. |
+| `--help` | — | Print the usage. |
 
 **Exit codes:** `0` passed or repaired, `1` failed or inconsistent.
 
@@ -136,7 +153,7 @@ qai resolve <scenarios…> --base-url <url> --provider <module>
 
 Replays the suite, uploads failure screenshots as an artifact, posts the report as a PR comment — updating the existing one instead of stacking a new comment per run — and propagates the exit code.
 
-Add `heal: 'true'` to repair stale targets, `strict: 'true'` to block the merge on a repair. Full reference: [docs/ci.md](docs/ci.md).
+Add `heal: 'true'` with `provider: ./qa/provider.mts` to repair stale targets, `strict: 'true'` to block the merge on a repair. Full reference: [docs/ci.md](docs/ci.md).
 
 ## Bring your own model
 
@@ -173,8 +190,8 @@ See [docs/model.md](docs/model.md) and [examples/provider-example.ts](examples/p
 {
   "scenarios": ["qa/"],
   "baseUrl": "http://localhost:3000",
-  "provider": "./qa/provider.ts",
-  "states": "./qa/states.ts",
+  "provider": "./qa/provider.mts",
+  "states": "./qa/states.mts",
   "workers": 4,
   "maxCost": 2
 }
@@ -214,7 +231,7 @@ expect(checkConsistency(scenario, resolution, 'web')).toEqual([]);
 const driver = new PlaywrightWebDriver(() => chromium.launch());
 
 await driver.launch({ entry: 'http://localhost:3000/' });
-// Required since resolution format v3: relative URL checks resolve against it.
+// Optional, but needed for relative urlEquals checks (format v3): without it they fail.
 const report = await runScenario({ scenario, resolution, driver, baseUrl: 'http://localhost:3000/' });
 await driver.dispose();
 
@@ -236,10 +253,14 @@ expect(report.status).toBe('passed'); // 'healed' and 'failed' are the other two
 | [Starting state](docs/state.md) | `given`, sessions and fixtures |
 | [Model](docs/model.md) | Plugging your own model and capping spend |
 | [CI](docs/ci.md) · [Config](docs/configuration.md) | Pull-request integration and `qai.config.json` |
+| [iOS driver](docs/driver.md#ios-driver--experimental) | Experimental: prerequisites, session, limits |
+| [Changelog](CHANGELOG.md) | Breaking changes and upgrade steps |
 
 ## Status
 
-Web is implemented and covered by 123 tests, including full journeys driven through a real browser. **Mobile drivers are not built yet** — the scenario format and driver contract are designed for them, nothing more.
+- **Web** — implemented, covered by the test suite (`npm test`), including full journeys driven through a real browser.
+- **iOS** — **experimental**. Tested against a fake Appium server that checks every HTTP call; **never run on a device or simulator**. Expect rough edges, and please report device results.
+- **Android** — not started.
 
 `resolve` and `--heal` are verified end to end against a real application using scripted models: the loop, the verification, the produced file and the resulting diff. The *quality* of a real model's proposals depends on the model you plug in and is not measured here.
 
@@ -252,9 +273,14 @@ npm test
 ```
 
 ```bash
-npm run demo          # demo shop on :8899
+npm run demo                                  # demo shop on :8899
 npm run qai -- run examples/ --base-url http://127.0.0.1:8899/ --states ./examples/states-example.ts
+
+npm run demo -- --app library --port 8896     # demo library on :8896
+npm run qai -- run examples/library/ --base-url http://127.0.0.1:8896/
 ```
+
+One folder per demo app: `examples/` targets the shop, `examples/library/` the library.
 
 Issues and pull requests welcome at [github.com/gseyra1/QAI](https://github.com/gseyra1/QAI/issues).
 

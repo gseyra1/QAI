@@ -82,6 +82,21 @@ describe('XCUITest page source → UINode tree', () => {
     assert.equal(named(root, 'link', 'Forgot password?').testId, undefined);
   });
 
+  /**
+   * UIKit donne à la barre de navigation le titre de l'écran pour
+   * identifiant, sans libellé : « #Sign In » s'offrait au modèle comme repli
+   * stable alors que c'est du texte affiché.
+   */
+  it('never takes a navigation bar title for a test id', () => {
+    for (const [file, title] of [['login.xml', 'Sign In'], ['orders.xml', 'Orders']] as const) {
+      const screen = readScreen(fixture(file), { mode: 'complete' });
+      const bar = flatten(screen.root).filter((node) => node.role === 'group' && node.name === title);
+      assert.equal(bar.length, 1, `${file}: one navigation bar named "${title}"`);
+      assert.equal(bar[0]?.testId, undefined, file);
+      assert.equal(flatten(screen.root).some((node) => node.testId === title), false, file);
+    }
+  });
+
   it('leaves the keyboard out of the tree', () => {
     const names = flatten(root).map((node) => node.name);
     assert.equal(names.includes('q'), false);

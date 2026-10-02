@@ -359,8 +359,15 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
           });
           context.healCount += 1;
         } else {
+          // La portabilité mobile n'est une menace que vue du web : sur un
+          // appareil, annoncer qu'un ciblage « ne survivra pas au portage
+          // mobile » parle d'un portage déjà fait.
+          const consequence =
+            driver.platform === 'web'
+              ? 'this targeting will not survive the mobile port'
+              : 'this targeting now rests on a technical identifier alone';
           warnings.push(
-            `"${label}" was only reached through its technical fallback: the application's accessibility has degraded and this targeting will not survive the mobile port`,
+            `"${label}" was only reached through its technical fallback: the application's accessibility has degraded and ${consequence}`,
           );
         }
       }

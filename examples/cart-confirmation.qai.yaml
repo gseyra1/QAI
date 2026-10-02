@@ -25,7 +25,7 @@ steps:
   - id: s4
     do: open the cart
     expect:
-      - the cart holds one item
+      - the cart holds at least one item
       - no network call fails
       - the console stays clean
 
