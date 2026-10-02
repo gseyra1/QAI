@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { RESOLUTION_VERSION } from './resolution/types.ts';
+import { OBSERVATION_VERSION, RESOLUTION_VERSION } from './resolution/types.ts';
 
 const run = promisify(execFile);
 const CLI = fileURLToPath(new URL('./cli.ts', import.meta.url));
@@ -46,13 +46,14 @@ describe('avertissement de résolution périmée', () => {
   before(() => {
     dir = mkdtempSync(join(tmpdir(), 'qai-version-'));
     mkdirSync(join(dir, '.qai', 'resolutions'), { recursive: true });
-    for (const id of ['perimee', 'courante']) {
+    for (const id of ['perimee', 'v2', 'courante']) {
       writeFileSync(
         join(dir, `${id}.qai.yaml`),
         `id: ${id}\ntitle: Version\nsteps:\n  - id: s1\n    do: open the home page\n`,
       );
     }
     writeResolution('perimee', 1);
+    writeResolution('v2', 2);
     writeResolution('courante', RESOLUTION_VERSION);
   });
 
@@ -62,7 +63,7 @@ describe('avertissement de résolution périmée', () => {
     const { err } = await qai(['check', join(dir, 'perimee.qai.yaml')]);
 
     assert.match(err, /resolution is v1/);
-    assert.match(err, new RegExp(`observes v${RESOLUTION_VERSION}`));
+    assert.match(err, new RegExp(`observes v${OBSERVATION_VERSION}`));
     // Le remède doit être dans le message : sans lui, l'utilisateur sait qu'il
     // y a un problème sans savoir quoi en faire.
     assert.match(err, /qai resolve/);
@@ -72,6 +73,18 @@ describe('avertissement de résolution périmée', () => {
     const { err } = await qai(['check', join(dir, 'courante.qai.yaml')]);
 
     assert.doesNotMatch(err, /resolution is v/);
+  });
+
+  /**
+   * La v3 change le sens de deux champs, pas l'observation : un fichier v2 est
+   * un fichier v3 valide. L'avertir pousserait à régénérer pour rien — et
+   * apprendrait à ignorer l'avertissement le jour où il comptera.
+   */
+  it('se tait sur une résolution v2 : l\'observation n\'a pas changé depuis', async () => {
+    const { err, code } = await qai(['check', join(dir, 'v2.qai.yaml')]);
+
+    assert.doesNotMatch(err, /resolution is v/);
+    assert.equal(code, 0);
   });
 
   it('n\'empêche pas la commande d\'aboutir : c\'est un avertissement', async () => {

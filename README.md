@@ -196,14 +196,24 @@ second one.
 
 ```typescript
 import { chromium } from 'playwright';
-import { loadScenario, loadResolution, runScenario, PlaywrightWebDriver } from 'tilmiqai';
+import {
+  checkConsistency,
+  loadScenario,
+  loadResolution,
+  runScenario,
+  PlaywrightWebDriver,
+} from 'tilmiqai';
 
 const scenario = await loadScenario('qa/checkout.qai.yaml');
 const resolution = await loadResolution('qa/.qai/resolutions/checkout.web.json');
+// Drift between the scenario and its cached resolution is a false green.
+expect(checkConsistency(scenario, resolution, 'web')).toEqual([]);
+
 const driver = new PlaywrightWebDriver(() => chromium.launch());
 
 await driver.launch({ entry: 'http://localhost:3000/' });
-const report = await runScenario({ scenario, resolution, driver });
+// Required since resolution format v3: relative URL checks resolve against it.
+const report = await runScenario({ scenario, resolution, driver, baseUrl: 'http://localhost:3000/' });
 await driver.dispose();
 
 expect(report.status).toBe('passed'); // 'healed' and 'failed' are the other two

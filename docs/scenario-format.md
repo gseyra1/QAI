@@ -115,6 +115,38 @@ resolves to `{ "check": "urlContains", "value": "/login" }`. The scenario still
 mentions no URL: it states an intent, and the exact path stays a resolution
 detail — it will change without the scenario moving.
 
+### Verification-only steps
+
+A step may omit `do` and `per_platform` when it has `expect` and/or `capture`.
+It performs no gesture and verifies the screen left by the previous step:
+
+```yaml
+  - id: s8
+    do: payer avec la carte de test
+  - id: s9
+    expect: la commande apparaît dans l'historique
+```
+
+Without this, the only way to state s9 was to invent a gesture — which then got
+replayed and versioned as if it proved something.
+
+- Its resolution has `"actions": []`. That is guaranteed at resolving time: the
+  model is not asked for actions, and a proposal carrying some is refused.
+- A step **with** an intent always has at least one action; zero is refused.
+- It is decided per platform: a step with no intent **on the platform being
+  run** only verifies there. `per_platform: { mobile: … }` without `do` acts on
+  mobile and only verifies on the web — so it needs an `expect` or `capture`,
+  or `only: [mobile]` if it simply does not exist on the web.
+- A step that neither acts nor verifies is refused: at load when it has no
+  `do`, `per_platform`, `expect` or `capture`; otherwise, per platform, by
+  `qai resolve`, `qai check` and `qai run`. It would be a green proving nothing.
+- An empty intent is refused at load (`do: ""`, `per_platform: {}`, an empty
+  or unknown `per_platform` entry): ignored, it would silently turn the step
+  into a verification.
+- `qai check` and `qai run` refuse a verification-only step whose cached
+  resolution still has actions (a leftover from an earlier version of the
+  step).
+
 ### `given` — the starting state
 
 A scenario does not build its own context by clicking through the app: it

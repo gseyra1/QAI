@@ -5,7 +5,11 @@ export type TargetPlatform = Platform | 'mobile';
 
 export interface Step {
   id: string;
-  /** L'intention par défaut, valable sur toutes les plateformes. */
+  /**
+   * L'intention par défaut, valable sur toutes les plateformes. Quand ni elle
+   * ni `per_platform` ne donnent d'intention pour une plateforme, l'étape n'y
+   * fait que vérifier : voir `isVerificationOnly`.
+   */
   do?: string;
   /** Reformulation quand le geste diffère réellement. Jamais `on` : YAML 1.1 en ferait un booléen. */
   per_platform?: Partial<Record<TargetPlatform, string>>;
@@ -53,9 +57,37 @@ export function intentFor(step: Step, platform: Platform): string {
   return step.do ?? '';
 }
 
+/**
+ * Une étape sans intention sur cette plateforme ne fait que vérifier.
+ *
+ * Défini par plateforme, pas par étape : `per_platform: { web: … }` sans `do`
+ * agit sur le web et ne fait que vérifier sur mobile. Sa résolution n'a alors
+ * aucune action, et c'est garanti à la génération, pas demandé au modèle.
+ */
+export function isVerificationOnly(step: Step, platform: Platform): boolean {
+  return intentFor(step, platform) === '';
+}
+
 export function expectationsOf(step: Step): string[] {
   if (step.expect === undefined) return [];
   return Array.isArray(step.expect) ? step.expect : [step.expect];
+}
+
+/** L'étape affirme ou lit quelque chose de l'écran. */
+export function verifies(step: Step): boolean {
+  return expectationsOf(step).length > 0 || Object.keys(step.capture ?? {}).length > 0;
+}
+
+/**
+ * Ni geste ni vérification sur cette plateforme : l'étape n'y prouve rien.
+ *
+ * Le chargeur ne peut pas l'exclure seul — il ignore la plateforme jouée, et
+ * `per_platform: { mobile: … }` sans `expect` est légitime sur mobile. C'est
+ * donc à la génération, au contrôle de cohérence et au rejeu de la refuser :
+ * résolue avec zéro action et zéro assertion, elle compterait comme un vert.
+ */
+export function isEmptyOn(step: Step, platform: Platform): boolean {
+  return isVerificationOnly(step, platform) && !verifies(step);
 }
 
 /**

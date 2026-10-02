@@ -54,7 +54,9 @@ Rules for assertions:
 - When the assertion speaks of the address — a redirect, a denied access, a
   navigation — use "urlContains" (a stable fragment, e.g. "/login") or
   "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
-  bear on no element at all.
+  bear on no element at all. A "urlEquals" address of the application itself
+  is stored relative to its root, so the test replays on another host or port;
+  a "urlContains" value is a fragment, never the full address.
 
 Rules for what the application DOES, which is not visible on screen:
 - When the assertion speaks of network calls — "no call breaks", "the search
@@ -149,9 +151,16 @@ export function checksMessage(input: {
   expectations: string[];
   captures: Record<string, string>;
   availableCaptures: Record<string, string>;
+  /**
+   * L'étape n'a pas d'intention. Le dire évite que le modèle cherche quels
+   * gestes ont mené là ; le refus d'éventuelles actions, lui, est dans le code.
+   */
+  verificationOnly?: boolean;
 }): string {
   const parts = [
-    `The actions have been executed. Here is the resulting screen (${input.location}):`,
+    input.verificationOnly === true
+      ? `This step has no gesture: it only verifies the current screen (${input.location}). Return captures and assertions, no actions:`
+      : `The actions have been executed. Here is the resulting screen (${input.location}):`,
     '',
     input.tree,
     '',

@@ -111,6 +111,8 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
       ...(input.captureArtifact !== undefined ? { captureArtifact: input.captureArtifact } : {}),
       ...(item.baseDir !== undefined ? { baseDir: item.baseDir } : {}),
       ...(input.watchdogs !== undefined ? { watchdogs: input.watchdogs } : {}),
+      // La base de lancement est aussi celle des vérifications d'URL relatives.
+      baseUrl: input.baseUrl,
     });
   } catch (error) {
     entry.error = error instanceof Error ? error.message : String(error);
