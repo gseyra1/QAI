@@ -314,6 +314,11 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
     const interpolated = interpolate(check.value, bag);
     const observed = context.location;
     if (check.check === 'urlContains') {
+      // Toute adresse contient la chaîne vide : une capture revenue vide au
+      // rejeu ferait de cette vérification un vert inconditionnel.
+      if (interpolated === '') {
+        return { ok: false, reason: 'urlContains value is empty: every URL contains it, so it proves nothing' };
+      }
       const shown = usesEnv(check.value) ? '***' : interpolated;
       return observed.includes(interpolated)
         ? { ok: true }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { checkBaseFor, relativeToBase, resolveAgainstBase } from './url.ts';
+import { checkBaseFor, relativeToBase, resolveAgainstBase, screenAgnosticPrefix } from './url.ts';
 
 /**
  * L'écriture et la lecture partagent ces règles : ce que `relativeToBase`
@@ -61,5 +61,20 @@ describe('adresses relatives à la base', () => {
   it('ne vaut que sur le web : ailleurs, une adresse est un identifiant d\'écran', () => {
     assert.equal(checkBaseFor('web', 'http://h:1/'), 'http://h:1/');
     assert.equal(checkBaseFor('android', 'monapp://accueil'), undefined);
+  });
+});
+
+/**
+ * Sur le web, toute page de l'application commence par la base : ce qu'elle
+ * contient est vrai partout, comme l'identifiant d'application hors du web.
+ */
+describe('préfixe commun à toutes les adresses', () => {
+  it('vaut la base normalisée sur le web, rien sans base', () => {
+    assert.equal(screenAgnosticPrefix('web', 'http://h:1/app/x', 'http://h:1/app'), 'http://h:1/app/');
+    assert.equal(screenAgnosticPrefix('web', 'http://h:1/app/x', undefined), undefined);
+  });
+
+  it('vaut l\'identifiant d\'application hors du web, base ignorée', () => {
+    assert.equal(screenAgnosticPrefix('ios', 'com.acme/Orders', 'http://h:1/'), 'com.acme/');
   });
 });

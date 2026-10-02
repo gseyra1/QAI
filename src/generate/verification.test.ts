@@ -340,6 +340,36 @@ steps:
     assert.equal(stored, undefined, 'rien n\'est versionné, surtout pas « orders »');
   });
 
+  /**
+   * Sans schéma, une valeur échappe à la réécriture des adresses absolues —
+   * mais elle peut épingler l'hôte, ou tenir dans la base et donc être vraie
+   * sur chaque page de l'application.
+   */
+  it('rend au modèle un urlContains lié à l\'hôte ou contenu dans la base', async () => {
+    const cases: [string, RegExp][] = [
+      ['127.0.0.1:5173/ecole/orders', /names the host "127\.0\.0\.1:5173"/],
+      ['', /only names the application/],
+      ['/', /only names the application/],
+      ['/ecole', /only names the application/],
+      ['127.0.0.1', /only names the application/],
+    ];
+    for (const [value, reason] of cases) {
+      const { result, stored } = await generate(
+        'http://127.0.0.1:5173/ecole/orders',
+        'http://127.0.0.1:5173/ecole/',
+        { check: 'urlContains', value },
+        { check: 'urlContains', value: '/orders' },
+      );
+
+      assert.equal(result.status, 'complete', value);
+      assert.deepEqual(stored, { check: 'urlContains', value: '/orders' }, value);
+      assert.ok(
+        result.steps[0]?.rejections.some((rejection) => reason.test(rejection)),
+        `${value}: ${result.steps[0]?.rejections.join(' | ')}`,
+      );
+    }
+  });
+
   it('garde une adresse d\'une autre origine telle quelle', async () => {
     const url = 'https://auth.example.com/login';
     const { stored } = await generate(url, 'http://127.0.0.1:5173/', { check: 'urlEquals', value: url });

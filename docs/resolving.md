@@ -109,6 +109,10 @@ and the start of the path; any relative form loses that anchor —
 the very redirect an access check must catch. The model picks `urlEquals` or a
 fragment it stands behind.
 
+So is a `urlContains` that **cannot fail**: one naming the host (`localhost:4173/orders`
+pins this host and port), or one contained in the base itself (`""`, `/`,
+`localhost`), which every page of the application shares.
+
 **A verification-only step gets no actions; a step with an intent gets at least
 one.** For a step with no intent on the platform being resolved, phase A is
 skipped: the model is only asked for captures and assertions on the current

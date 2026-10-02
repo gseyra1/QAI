@@ -463,9 +463,42 @@ function screenAgnosticChecks(
   for (const [key, check] of Object.entries(assertions)) {
     if (check.check !== 'urlContains') continue;
     const value: unknown = check.value;
-    if (typeof value !== 'string' || value.includes('{{') || !prefix.includes(value)) continue;
+    // Une adresse absolue est déjà rendue au modèle par portableChecks : la
+    // signaler deux fois noierait le motif.
+    if (typeof value !== 'string' || value.includes('{{') || isAbsoluteUrl(value)) continue;
+    if (!prefix.includes(value)) continue;
     errors.push(
       `assertion "${key}": urlContains "${value}" only names the application ("${prefix}"), which every screen shares, so it can never fail — use urlEquals on the whole location, or urlContains with the screen title`,
+    );
+  }
+  return errors;
+}
+
+/**
+ * Refuse un `urlContains` qui épingle l'hôte de développement.
+ *
+ * « localhost:4173/commandes » n'a pas de schéma : il échappe donc à la
+ * réécriture des adresses absolues, mais il fixe l'hôte et le port tout aussi
+ * sûrement. Vert sur la machine qui l'a écrit, rouge partout ailleurs — et ce
+ * rouge-là accuse l'application, pas le fichier.
+ */
+function hostBoundChecks(assertions: Record<string, Check>, baseUrl: string | undefined): string[] {
+  if (baseUrl === undefined) return [];
+  let host: string;
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    return [];
+  }
+  if (host === '') return [];
+  const errors: string[] = [];
+  for (const [key, check] of Object.entries(assertions)) {
+    if (check.check !== 'urlContains') continue;
+    const value: unknown = check.value;
+    if (typeof value !== 'string' || value.includes('{{') || isAbsoluteUrl(value)) continue;
+    if (!value.includes(host)) continue;
+    errors.push(
+      `assertion "${key}": urlContains "${value}" names the host "${host}", which only matches on this host and port — use urlEquals (stored relative to the root), or a fragment of the path`,
     );
   }
   return errors;
@@ -684,10 +717,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         platform === 'web' ? warn : () => {},
       );
       const checks = { captures: candidate.captures, assertions: portable.assertions };
-      const agnostic = screenAgnosticChecks(
-        portable.assertions,
-        screenAgnosticPrefix(platform, screen.location),
-      );
+      const agnostic = [
+        ...screenAgnosticChecks(
+          portable.assertions,
+          screenAgnosticPrefix(platform, screen.location, checkBase),
+        ),
+        ...hostBoundChecks(portable.assertions, checkBase),
+      ];
       const verified = verifyChecks(
         screen.root,
         screen.location,

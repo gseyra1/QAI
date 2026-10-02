@@ -136,15 +136,28 @@ export function isBaselessNavigation(to: string): boolean {
 }
 
 /**
- * Ce que partagent toutes les adresses de l'application, hors du web.
+ * Ce que partagent toutes les adresses de l'application.
  *
- * Là, `location` vaut « <identifiant d'application>/<écran> » : tout ce qui
- * tient dans « <identifiant>/ » est vrai sur chaque écran, et un `urlContains`
- * de cette forme affirmerait « on est sur l'écran X » sans pouvoir échouer.
- * Sur le web, rien : l'équivalent — l'adresse absolue — y est déjà refusé.
+ * Hors du web, `location` vaut « <identifiant d'application>/<écran> » : tout
+ * ce qui tient dans « <identifiant>/ » est vrai sur chaque écran. Sur le web,
+ * c'est la base elle-même : chaque page de l'application commence par elle,
+ * donc « localhost:4173 », « / » ou une valeur vide y sont vrais partout.
+ * Dans les deux cas, un `urlContains` de cette forme affirmerait « on est sur
+ * l'écran X » sans pouvoir échouer.
  */
-export function screenAgnosticPrefix(platform: Platform, location: string): string | undefined {
-  if (platform === 'web') return undefined;
+export function screenAgnosticPrefix(
+  platform: Platform,
+  location: string,
+  baseUrl?: string,
+): string | undefined {
+  if (platform === 'web') {
+    if (baseUrl === undefined) return undefined;
+    try {
+      return normalizedBase(baseUrl).href;
+    } catch {
+      return undefined;
+    }
+  }
   const cut = location.indexOf('/');
   return cut === -1 ? `${location}/` : location.slice(0, cut + 1);
 }
