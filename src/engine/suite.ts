@@ -65,6 +65,15 @@ export function warningCount(report: SuiteReport): number {
   );
 }
 
+/**
+ * Les garde-fous n'existent que là où le pilote observe réseau et console :
+ * le web. Sur une suite jouée ailleurs, attribuer les avertissements à un
+ * garde-fou « warn » parlerait d'un réglage que la ligne de commande refuse.
+ */
+export function watchdogsApply(report: SuiteReport): boolean {
+  return report.entries.some((entry) => entry.report?.platform === 'web');
+}
+
 async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
   // Rejouer sans l'état déclaré ferait démarrer le parcours anonyme et le
   // verdict ne prouverait rien — vert compris. Le refus doit être explicite,

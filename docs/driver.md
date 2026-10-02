@@ -104,8 +104,8 @@ The options are read in one go before choosing, rather than trying and catching
 the error: a failed `selectOption` burns a full timeout — thirty seconds per
 `select` on resolutions written by value.
 
-A mobile driver will apply the same rule to its own native picker: what is
-targeted is the label read on screen.
+The iOS driver applies the same rule to its native picker: what is targeted is
+the label read on screen (see `select` below).
 
 ## Role mapping
 
@@ -180,7 +180,7 @@ None of these is a QAI dependency — like a browser for the web driver:
 
 ```bash
 qai run qa/ --platform ios --app com.example.app --device "iPhone 16"
-qai resolve qa/login.qai.yaml --platform ios --app build/Acme.app --provider ./qa/provider.ts
+qai resolve qa/login.qai.yaml --platform ios --app build/Acme.app --provider ./qa/provider.mts
 ```
 
 Resolutions land in `.qai/resolutions/<id>.ios.json`, next to the web ones. A
@@ -188,11 +188,13 @@ resolution written for another platform is refused by `check` and `run`. One
 device plays one journey at a time: `--workers` must be 1 (a `workers` value
 from `qai.config.json` is brought down to 1). `--headed` is refused.
 
-`qai resolve` on iOS is as experimental as the driver: the model is prompted
-for the web and may propose a relative `navigate`, a `hover` or an
-`expectDialog`; each is rejected before any gesture and the model retries. So is
-a `urlContains` that only names the app (`com.example.app`): every location
-starts with it, so it would be true on every screen. A step with no intent on
+`qai resolve` on iOS is as experimental as the driver. The model's
+instructions follow the platform: `navigate` takes a deep link, or `"."` to
+relaunch the app; the location is `"<bundle id>/<navigation bar title>"`; `swipe`
+is offered. A relative `navigate`, a `hover` or an `expectDialog` is still
+rejected before any gesture and the model retries. So is a `urlContains` that
+only names the app (`com.example.app`): every location starts with it, so it
+would be true on every screen. A step with no intent on
 iOS (verification only) is resolved and replayed with no gesture, as on the web.
 
 A journey with no step for iOS (`platforms: [web]`, or `only: [web]` on every
@@ -209,8 +211,29 @@ reads that path **on the server host**: a relative path is resolved from the
 current directory, and refused when `--appium-url` is not on this machine — pass
 an absolute path on the server host, or a URL. After an install, the bundle id
 is read from `mobile: activeAppInfo`; SpringBoard in the foreground is refused.
-`--device` is a UDID (`appium:udid`) or a device name (`appium:deviceName`). The
-session uses `platformName: iOS` and `appium:automationName: XCUITest`.
+`--device` is a UDID (`appium:udid`) or a device name (`appium:deviceName`).
+`--platform-version` sets `appium:platformVersion`. The session uses
+`platformName: iOS` and `appium:automationName: XCUITest`.
+
+`--capabilities '<json>'` (or `capabilities` in `qai.config.json`, merged key
+by key, the flag winning) adds what QAI cannot guess:
+
+```bash
+qai run qa/ --platform ios --app com.example.app --device <udid> \
+  --capabilities '{"appium:xcodeOrgId":"TEAMID","appium:xcodeSigningId":"Apple Development","appium:noReset":true}'
+```
+
+- a real device needs WebDriverAgent signed: `appium:xcodeOrgId` and
+  `appium:xcodeSigningId`, or a preinstalled WDA;
+- `appium:noReset` defaults to `false`: the app's data is wiped at every
+  session, so a logged-in state must come from a deep-link `entry`;
+- `appium:newCommandTimeout` (60 s by default) can end the session while a
+  slow model answers during `resolve`.
+
+Keys QAI sets itself are refused rather than overridden — `platformName`,
+`automationName`, `app`, `bundleId`, `udid`, `deviceName`, `platformVersion`,
+prefixed or not, and inside `appium:options`. `IosDriver` refuses them too
+(`IosDriverError`, code `invalid-capabilities`).
 `dispose()` deletes the session and never throws on a session already gone.
 
 ### What is observed
@@ -221,6 +244,8 @@ normalized tree with the role table above, and:
 - **name** — the accessibility label; for an empty text field, its
   placeholder; then the `name` attribute (identifier, else label);
 - **testId** — the accessibility identifier, when it differs from the label.
+  Never on a navigation bar: UIKit gives it the screen title as identifier,
+  which is displayed text, not a stable id.
   `fallback.accessibilityId` and `fallback.testId` both target it, and are
   counted like the primary locator: an identifier carried by several elements
   is ambiguous. `fallback.selector` is web-only and ignored;
@@ -248,7 +273,7 @@ the same element to the model and to the driver.
 | `click` | find the node by XPath, then W3C Element Click |
 | `fill` | find the node by XPath, then element click, clear, send keys |
 | `select` | send the **displayed label** to the `PickerWheel` (XCTest `adjustToPickerWheelValue`) |
-| `press` | send `Enter`/`Return`, `Tab`, `Backspace`/`Delete`, `Space` or one character to the active element |
+| `press` | send `Enter`/`Return`, `Tab`, `Backspace`/`Delete`, `Space` or one character to the active element; `Backspace`/`Delete` send `\u0008\u007F`, the sequence WebDriverAgent itself types to delete |
 | `swipe` | `mobile: swipe` with the direction |
 | `scrollTo` | `mobile: scrollToElement` on the node when it is off screen, then a re-read: still off screen fails |
 | `navigate` | an absolute URL opens as `mobile: deepLink` into the app; `.` and `/` relaunch it (`mobile: terminateApp` + `mobile: launchApp`); any other path — and `host:port` without a scheme — is refused, at `check` time too |

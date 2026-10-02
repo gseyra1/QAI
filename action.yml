@@ -17,8 +17,12 @@ inputs:
     description: Module exporting a StateProvider, for state declared by "given"
     required: false
     default: ''
+  provider:
+    description: Module exporting a ModelProvider, required by heal unless qai.config.json names one
+    required: false
+    default: ''
   heal:
-    description: Repair stale targets and rewrite the resolutions
+    description: Repair stale targets and rewrite the resolutions (needs a provider)
     required: false
     default: 'false'
   strict:
@@ -72,6 +76,7 @@ runs:
         BASE_URL: ${{ inputs.base-url }}
         CONFIG: ${{ inputs.config }}
         STATES: ${{ inputs.states }}
+        PROVIDER: ${{ inputs.provider }}
         HEAL: ${{ inputs.heal }}
         STRICT: ${{ inputs.strict }}
       run: |
@@ -83,6 +88,7 @@ runs:
         args+=(--base-url "$BASE_URL")
         [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
         [ -n "$STATES" ] && args+=(--states "$STATES")
+        [ -n "$PROVIDER" ] && args+=(--provider "$PROVIDER")
         [ "$HEAL" = "true" ] && args+=(--heal)
         [ "$STRICT" = "true" ] && args+=(--strict)
         args+=(--format markdown --out "$RUNNER_TEMP/qai-report.md" --run-url "$RUN_URL")

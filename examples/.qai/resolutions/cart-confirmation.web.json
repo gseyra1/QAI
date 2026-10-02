@@ -55,7 +55,7 @@
         }
       ],
       "assertions": {
-        "the cart holds one item": {
+        "the cart holds at least one item": {
           "check": "countAtLeast",
           "target": { "role": "listitem", "within": { "role": "list", "name": "Articles du panier" } },
           "value": 1

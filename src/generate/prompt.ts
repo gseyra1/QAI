@@ -1,4 +1,6 @@
-export const SYSTEM_PROMPT = `You translate a user's intent into machine gestures on an interface.
+import type { Platform } from '../driver/types.ts';
+
+const TEMPLATE = `You translate a user's intent into machine gestures on an interface.
 
 You are given the tree of the current screen, indented, where each line is:
   <role> "<accessible name>" [state] #test-id
@@ -27,21 +29,21 @@ Targeting rules, no exceptions:
   that passes today and fails tomorrow.
 - "The first in the list" translates to a position — "nth": 0 in the list's
   "within" — not to the name of the element that happens to be first today.
-- To open a page whose path is known, prefer "navigate" to a click: less
-  fragile than a link whose label can change. Its "to" is a PATH relative to
-  the application root — "/" or "/cart" — never a full URL: the host and port
-  belong to the machine running the test, not to the test.
+{{NAVIGATION}}
 - If several elements match, disambiguate with "within" (the container) by
   preference, otherwise with "nth". An ambiguous target is refused: the
   engine is not allowed to choose in your place.
-- When the targeted line carries #id, add "fallback": { "testId":
-  "id" } — that is the safety net if the label changes. Otherwise, no
-  fallback.
+- When the targeted line itself carries #id, add "fallback": { "testId":
+  "id" } — that is the safety net if the label changes. Never the #id of
+  another line, such as its container: it would act on another element.
+  Otherwise, no fallback.
 
 Rules for captures:
 - A capture's target is located by its structure, NEVER by the value it
   extracts: targeting the text "129,00 €" to capture a price breaks at the
-  first price change.
+  first price change. The same holds for a compared assertion: a target found
+  by the value it asserts proves nothing — use "visible", or a target found by
+  its label or container.
 - An amount, a total, a quantity are captured with "extract": "number",
   not "text": that is what makes them comparable.
 
@@ -52,11 +54,8 @@ Rules for assertions:
 - A value can reference a capture with {{name}}, including in the name of a
   target.
 - When the assertion speaks of the address — a redirect, a denied access, a
-  navigation — use "urlContains" (a stable fragment, e.g. "/login") or
-  "urlEquals" (the whole URL, compared as-is). Neither takes a "target": they
-  bear on no element at all. A "urlEquals" address of the application itself
-  is stored relative to its root, so the test replays on another host or port;
-  a "urlContains" value is a fragment, never the full address.
+  navigation — use "urlContains" or "urlEquals". Neither takes a "target":
+  they bear on no element at all. {{ADDRESS}}
 
 Rules for what the application DOES, which is not visible on screen:
 - When the assertion speaks of network calls — "no call breaks", "the search
@@ -92,6 +91,36 @@ Rule for native confirmations:
 An intent often translates into several gestures: "fill in the address" or
 "sign in" are several actions, in order — but all on the screen you are
 shown: every target is verified against this screen before any execution.`;
+
+/**
+ * Ce qui diffère réellement d'une plateforme à l'autre : ce qu'est une
+ * adresse. Le reste de la consigne vaut partout. Décrire un CHEMIN sur iOS
+ * poussait le modèle vers une navigation refusée, puis vers un tour perdu.
+ */
+const NAVIGATION: Record<'web' | 'mobile', string> = {
+  web: `- To open a page whose path is known, prefer "navigate" to a click: less
+  fragile than a link whose label can change. Its "to" is a PATH relative to
+  the application root — "/" or "/cart" — never a full URL: the host and port
+  belong to the machine running the test, not to the test.`,
+  mobile: `- There are no paths here. "navigate" takes an absolute deep link
+  ("myapp://orders") or "." to relaunch the app; otherwise reach the screen
+  with gestures. "swipe" scrolls or pages by direction.`,
+};
+
+const ADDRESS: Record<'web' | 'mobile', string> = {
+  web: `"urlContains" takes a stable fragment
+  (e.g. "/login"), never the full address. "urlEquals" takes the whole URL,
+  compared as-is; an address of the application is stored relative to its
+  root, so the test replays on another host or port.`,
+  mobile: `The location is "<bundle id>/<navigation
+  bar title>": "urlContains" takes the title, never the bundle id alone, which
+  every screen shares; "urlEquals" takes the whole location.`,
+};
+
+export function systemPrompt(platform: Platform): string {
+  const family = platform === 'web' ? 'web' : 'mobile';
+  return TEMPLATE.replace('{{NAVIGATION}}', NAVIGATION[family]).replace('{{ADDRESS}}', ADDRESS[family]);
+}
 
 export interface StepPromptInput {
   intent: string;

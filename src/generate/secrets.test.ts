@@ -11,7 +11,8 @@ import type {
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { node } from '../engine/fixtures.ts';
-import { generateResolution } from './generate.ts';
+// Confronté au schéma publié à chaque appel : voir conformance.ts.
+import { generateResolution } from './conformance.ts';
 
 const SECRET = 's3cr3t-TOKEN-abc123';
 
@@ -172,7 +173,7 @@ describe('navigation portable', () => {
       driver: new NavigatingDriver(),
       provider: new NavigateProvider('http://127.0.0.1:8940/cart'),
     });
-    const rejets = result.steps.find((s) => s.stepId === 's1')?.rejections ?? [];
+    const rejets = result.steps.find((s) => s.stepId === 's1')?.warnings ?? [];
     assert.ok(rejets.some((r) => r.includes('pass baseUrl')), JSON.stringify(rejets));
   });
 

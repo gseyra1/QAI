@@ -7,7 +7,7 @@ resolution file. The developer reviews the diff and merges.
 ```bash
 npm run qai -- run my-journey.qai.yaml \
   --base-url https://preview-42.mon-app.dev \
-  --heal --provider ./my-provider.ts --max-cost 1
+  --heal --provider ./my-provider.mts --max-cost 1
 ```
 
 Same loop as resolving, applied to a single target — observe, propose, verify
@@ -43,6 +43,9 @@ warns when it cannot:
   the application's accessibility has degraded and this targeting will
   not survive the mobile port
 ```
+
+On iOS the run is already on mobile, so the last line reads "this targeting
+now rests on a technical identifier alone".
 
 ## The diff is the whole argument
 

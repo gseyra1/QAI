@@ -1,6 +1,6 @@
 import type { StepReport } from '../engine/run.ts';
 import type { SuiteReport } from '../engine/suite.ts';
-import { warningCount } from '../engine/suite.ts';
+import { warningCount, watchdogsApply } from '../engine/suite.ts';
 import { intentLabel } from './text.ts';
 
 /**
@@ -135,7 +135,9 @@ export function formatMarkdown(report: SuiteReport, options: MarkdownOptions = {
   }
   if (warnings > 0) {
     lines.push(
-      `> ${warnings} warning(s) from watchdogs set to \`warn\`: reported, not failing. Raise them to \`fail\` once the list is empty.`,
+      watchdogsApply(report)
+        ? `> ${warnings} warning(s) from watchdogs set to \`warn\`: reported, not failing. Raise them to \`fail\` once the list is empty.`
+        : `> ${warnings} warning(s): reported, not failing.`,
     );
   }
   if (options.runUrl !== undefined && options.artifactName !== undefined) {

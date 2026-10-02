@@ -9,5 +9,5 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/engine/fixtures.ts", "src/driver/ios/fake-appium.ts"]
+  "exclude": ["src/**/*.test.ts", "src/engine/fixtures.ts", "src/driver/ios/fake-appium.ts", "src/generate/conformance.ts"]
 }

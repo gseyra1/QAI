@@ -133,6 +133,66 @@ describe('ModelHealer', () => {
       assert.match(feedback.text, /no element matches/);
     });
 
+    /**
+     * Le repli ne sert que le jour où `primary` se perd : s'il porte
+     * l'identifiant d'un autre élément, ce jour-là le geste part ailleurs sans
+     * erreur. La vérification de `primary` seule ne le voit pas.
+     */
+    it('rejette un repli qui n\'est pas l\'identifiant de la cible, puis accepte la correction', async () => {
+      const { report, provider } = await run('rename-guest', [
+        {
+          target: {
+            primary: { role: 'button', name: 'Continuer sans compte' },
+            fallback: { testId: 'cart-count' },
+          },
+          note: 'Le libellé du bouton a changé.',
+        },
+        {
+          target: { primary: { role: 'button', name: 'Continuer sans compte' } },
+          note: 'Le libellé du bouton a changé.',
+        },
+      ]);
+
+      assert.equal(report.status, 'healed');
+      assert.equal(provider.seen.length, 2);
+      const feedback = provider.seen[1]?.messages.at(-1)?.content[0];
+      assert.ok(feedback !== undefined && feedback.type === 'text');
+      assert.match(
+        feedback.text,
+        /fallback "cart-count" is the identifier of another element \(the targeted element carries none\)/,
+      );
+      assert.deepEqual(report.heals[0]?.target, {
+        primary: { role: 'button', name: 'Continuer sans compte' },
+      });
+    });
+
+    it('rejette une cible mal formée en nommant la clé fautive', async () => {
+      const { report, provider } = await run('rename-guest', [
+        {
+          target: {
+            primary: {
+              role: 'button',
+              name: 'Continuer sans compte',
+              fallback: { testId: 'guest-checkout' },
+            },
+          },
+          note: 'Le libellé du bouton a changé.',
+        },
+        {
+          target: { primary: { role: 'button', name: 'Continuer sans compte' } },
+          note: 'Le libellé du bouton a changé.',
+        },
+      ]);
+
+      assert.equal(report.status, 'healed');
+      const feedback = provider.seen[1]?.messages.at(-1)?.content[0];
+      assert.ok(feedback !== undefined && feedback.type === 'text');
+      assert.match(
+        feedback.text,
+        /target\.primary has an unknown key "fallback": a locator only takes role, name, nth, within/,
+      );
+    });
+
     it('échoue plutôt que de réparer avec une cible ambiguë', async () => {
       const { report } = await run('rename-guest', [
         { target: { primary: { role: 'link' } }, note: "n'importe quel lien" },

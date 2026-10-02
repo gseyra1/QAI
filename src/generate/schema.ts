@@ -1,4 +1,4 @@
-import type { Role } from '../driver/types.ts';
+import type { Platform, Role } from '../driver/types.ts';
 
 const ROLES: readonly Role[] = [
   'button', 'link', 'text', 'heading', 'image', 'textbox', 'searchbox', 'combobox',
@@ -45,7 +45,7 @@ export function targetSchema(): Record<string, unknown> {
         type: 'object',
         properties: { testId: { type: 'string' }, selector: { type: 'string' } },
         additionalProperties: false,
-        description: 'technical fallback, only if the page exposes a test id',
+        description: "technical fallback: only the targeted line's own #id, never a container's",
       },
     },
     required: ['primary'],
@@ -84,6 +84,18 @@ function captures(): Record<string, unknown> {
 }
 
 /**
+ * Ce que vaut une adresse dépend de la plateforme : une URL relative à la
+ * racine sur le web, « <bundle>/<titre de la barre de navigation> » sur iOS.
+ * Décrire la forme web sur iOS poussait le modèle à écrire un chemin qui n'y
+ * désigne rien.
+ */
+function urlValueDescription(platform: Platform): string {
+  return platform === 'web'
+    ? 'urlContains: a fragment of the address (e.g. "/login"), never the full address. urlEquals: the whole URL, compared as-is, trailing slash and query included; an address of the application is stored relative to its root.'
+    : 'the location is "<bundle id>/<navigation bar title>". urlContains: the title, never the bundle id alone (every screen shares it). urlEquals: the whole location.';
+}
+
+/**
  * Deux branches, parce que ce sont deux formes réellement différentes.
  *
  * Une vérification d'URL n'a pas de cible. Rendre `target` facultatif partout
@@ -91,7 +103,7 @@ function captures(): Record<string, unknown> {
  * branche stricte est ce qui laisse l'erreur détectable au décodage, plutôt
  * qu'à l'exécution six étapes plus loin.
  */
-function assertions(): Record<string, unknown> {
+function assertions(platform: Platform): Record<string, unknown> {
   return {
     type: 'object',
     description: 'key = exact text of the scenario assertion, value = its machine form',
@@ -117,8 +129,7 @@ function assertions(): Record<string, unknown> {
             check: { enum: URL_CHECKS },
             value: {
               type: 'string',
-              description:
-                'urlContains: a fragment of the address (e.g. "/login"), never the full address. urlEquals: the whole URL, compared as-is, trailing slash and query included; an address of the application is stored relative to its root.',
+              description: urlValueDescription(platform),
             },
           },
           required: ['check', 'value'],
@@ -149,10 +160,10 @@ function assertions(): Record<string, unknown> {
  * Second tour : les actions sont déjà exécutées et validées, on ne reprend que
  * les captures et les assertions contre l'écran réellement obtenu.
  */
-export function checksProposalSchema(): Record<string, unknown> {
+export function checksProposalSchema(platform: Platform = 'web'): Record<string, unknown> {
   return {
     type: 'object',
-    properties: { captures: captures(), assertions: assertions() },
+    properties: { captures: captures(), assertions: assertions(platform) },
     additionalProperties: false,
   };
 }
@@ -164,7 +175,7 @@ export function checksProposalSchema(): Record<string, unknown> {
  * il exige cet objet, ce qui rend l'échec du modèle visible immédiatement, en
  * validation, plutôt que six étapes plus loin.
  */
-export function stepProposalSchema(): Record<string, unknown> {
+export function stepProposalSchema(platform: Platform = 'web'): Record<string, unknown> {
   return {
     type: 'object',
     properties: {
@@ -177,13 +188,28 @@ export function stepProposalSchema(): Record<string, unknown> {
         description: 'the primitive gestures that carry out the intent, in order',
         items: {
           oneOf: [
-            action('navigate', { to: { type: 'string' } }, ['to']),
+            action(
+              'navigate',
+              {
+                to: {
+                  type: 'string',
+                  description:
+                    platform === 'web'
+                      ? 'a path relative to the application root, never a full URL'
+                      : 'an absolute deep link (myapp://…), or "." to relaunch the app',
+                },
+              },
+              ['to'],
+            ),
             action('click', { target: targetSchema() }, ['target']),
             action('fill', { target: targetSchema(), value: { type: 'string' } }, ['target', 'value']),
             action('select', { target: targetSchema(), option: { type: 'string' } }, ['target', 'option']),
             action('press', { key: { type: 'string' } }, ['key']),
             action('scrollTo', { target: targetSchema() }, ['target']),
             action('hover', { target: targetSchema() }, ['target']),
+            // Proposé partout : un pilote qui ne sait pas glisser le refuse à la
+            // vérification des gestes, avec un motif que le modèle peut lire.
+            action('swipe', { direction: { enum: ['up', 'down', 'left', 'right'] } }, ['direction']),
             action(
               'upload',
               {
@@ -210,7 +236,7 @@ export function stepProposalSchema(): Record<string, unknown> {
         },
       },
       captures: captures(),
-      assertions: assertions(),
+      assertions: assertions(platform),
     },
     required: ['actions'],
     additionalProperties: false,

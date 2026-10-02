@@ -31,6 +31,61 @@ function isIntent(value: unknown): value is string {
 
 const TARGET_PLATFORMS = new Set(['web', 'mobile', 'ios', 'android']);
 
+/**
+ * Les seules clés admises, à chaque niveau — celles du schéma publié.
+ *
+ * Une clé inconnue n'est pas ignorée : depuis qu'une étape peut ne faire que
+ * vérifier, `Do:` ou `does:` à côté d'un `expect` ne laisse pas une étape
+ * invalide, mais une étape valide SANS son geste. Le geste disparaît sans un
+ * mot, et la vérification passe sur l'écran laissé par l'étape précédente.
+ * Le schéma le refusait déjà ; le chargeur doit dire la même chose que lui.
+ */
+const SCENARIO_KEYS = ['id', 'title', 'tags', 'platforms', 'given', 'steps'];
+const STEP_KEYS = ['id', 'do', 'per_platform', 'only', 'expect', 'capture'];
+const GIVEN_KEYS = ['fixtures', 'state'];
+
+/** Distance d'édition, pour suggérer la clé voulue derrière une faute de frappe. */
+function distance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        (previous[j] as number) + 1,
+        (current[j - 1] as number) + 1,
+        (previous[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length] as number;
+}
+
+function assertKnownKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  where: string,
+  path: string,
+): void {
+  for (const key of Object.keys(value)) {
+    if (allowed.includes(key)) continue;
+    const lowered = key.toLowerCase();
+    let near: string | undefined;
+    let best = 3;
+    for (const candidate of allowed) {
+      const d = distance(lowered, candidate);
+      if (d < best) {
+        best = d;
+        near = candidate;
+      }
+    }
+    throw new ScenarioError(
+      `${where}: unknown key "${key}"${near === undefined ? '' : ` — did you mean "${near}"?`} (allowed: ${allowed.join(', ')})`,
+      path,
+    );
+  }
+}
+
 function assertNoBooleanKeys(raw: string, path: string): void {
   for (const match of raw.matchAll(/^\s*([A-Za-z_]+)\s*:/gm)) {
     const key = match[1];
@@ -47,6 +102,14 @@ function parseStep(value: unknown, index: number, path: string): Step {
   if (!isRecord(value)) throw new ScenarioError(`step ${index} is not an object`, path);
 
   const id = value['id'];
+  // Avant l'id : « Id: » mal orthographié doit être nommé, pas rapporté comme
+  // un id absent.
+  assertKnownKeys(
+    value,
+    STEP_KEYS,
+    typeof id === 'string' && id.length > 0 ? `step "${id}"` : `step ${index}`,
+    path,
+  );
   if (typeof id !== 'string' || id.length === 0) {
     throw new ScenarioError(`step ${index} has no id`, path);
   }
@@ -134,6 +197,8 @@ export function parseScenario(raw: string, path = '<inline>'): Scenario {
 
   const doc: unknown = parse(raw);
   if (!isRecord(doc)) throw new ScenarioError('the document is empty or malformed', path);
+  assertKnownKeys(doc, SCENARIO_KEYS, 'scenario', path);
+  if (isRecord(doc['given'])) assertKnownKeys(doc['given'], GIVEN_KEYS, 'given', path);
 
   const id = doc['id'];
   const title = doc['title'];

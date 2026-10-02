@@ -21,8 +21,7 @@ when the model misses, the failure is a clean validation error, not erratic
 downstream behavior.
 
 **Token counting is mandatory.** `ModelResponse.usage` is not optional: cost
-control is a survival constraint for the product (see the local measurement),
-so a provider that cannot count its tokens cannot be plugged in. This is what
+control is a survival constraint for the product, so a provider that cannot count its tokens cannot be plugged in. This is what
 makes the spend cap enforceable.
 
 **Images are just another content type.** A text-only provider covers all of
@@ -61,6 +60,12 @@ In all three cases `QAI_MODEL` selects the model and the pricing follows. These
 are examples, not dependencies: the published package ships no SDK.
 
 ## Writing your own
+
+The module passed to `--provider` default-exports a provider instance
+(`export default new MyProvider()`), and exports `pricing` when `--max-cost`
+is used. It is loaded as **ESM**: name it `.mts` or `.mjs`, or
+set `"type": "module"` in its `package.json`. A `.ts`/`.mts` module needs
+Node ≥ 22.18.
 
 ```ts
 import type { ModelProvider, ModelRequest, ModelResponse } from 'tilmiqai';
@@ -137,4 +142,5 @@ How `{{env.NAME}}` is written and read: [state.md](state.md).
 
 No mandated recommendation. Price gaps between models are real, but **they
 matter less than the size of the tree you send** — that is where the bill is
-decided. Measure yours with `npm run measure -- --url <your-app>`.
+decided. To measure yours, clone the QAI repository (the script is not in
+the npm package) and run `npm run measure -- --url <your-app>`.

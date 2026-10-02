@@ -83,6 +83,25 @@ French-speaking team writes its scenarios in French with no loss: the model
 interprets the intent, not a parser. A direct advantage over the American
 tools on the market, which all assume English.
 
+### Unknown keys are refused
+
+The loader accepts only the keys of the format, at every level:
+
+| Level | Keys |
+|---|---|
+| scenario | `id`, `title`, `tags`, `platforms`, `given`, `steps` |
+| `given` | `fixtures`, `state` |
+| step | `id`, `do`, `per_platform`, `only`, `expect`, `capture` |
+
+Anything else stops the load, with the closest key when there is one:
+
+```
+step "s4": unknown key "Do" — did you mean "do"? (allowed: id, do, per_platform, only, expect, capture)
+```
+
+Ignored, a misspelled `Do:` next to an `expect` would turn the step into a
+verification-only step: its gesture silently dropped at the next `resolve`.
+
 ### `id` — the resolution's anchor
 
 Each step carries a stable identifier, assigned at creation. It **never**

@@ -13,7 +13,8 @@ import type { Resolution } from '../resolution/types.ts';
 import { RESOLUTION_VERSION } from '../resolution/types.ts';
 import { loadScenario, parseScenario } from '../scenario/load.ts';
 import type { Scenario } from '../scenario/types.ts';
-import { generateResolution } from './generate.ts';
+// Confronté au schéma publié à chaque appel : voir conformance.ts.
+import { generateResolution } from './conformance.ts';
 
 const SCENARIO = 'examples/checkout-guest.qai.yaml';
 const KNOWN_GOOD = 'examples/.qai/resolutions/checkout-guest.web.json';
@@ -85,11 +86,33 @@ class ReplayProvider implements ModelProvider {
   }
 }
 
+/**
+ * L'exemple tel qu'il était écrit avant les règles de génération de 0.4.0.
+ *
+ * Écrit à la main, il portait deux défauts : des replis « search-input » et
+ * « product-card » que la boutique n'expose nulle part, et en s4 une
+ * vérification qui retrouvait sa cible par la valeur même qu'elle affirme
+ * (`name: "1"`, `value: "1"`). Reconstruit ici pour prouver que la génération
+ * refuse le premier et signale le second.
+ */
+function withHistoricalDefects(source: Resolution): Resolution {
+  const resolution = structuredClone(source);
+  const ids: Record<string, string> = { s2: 'search-input', s3: 'product-card' };
+  for (const [stepId, testId] of Object.entries(ids)) {
+    const action = resolution.steps[stepId]?.actions[0];
+    if (action !== undefined && 'target' in action) action.target.fallback = { testId };
+  }
+  const s4 = resolution.steps['s4']?.assertions?.["l'indicateur du panier affiche 1 article"];
+  if (s4 !== undefined && s4.check === 'textEquals') s4.target = { ...s4.target, name: '1' };
+  return resolution;
+}
+
 describe('génération de résolution', () => {
   let server: Server;
   let baseUrl: string;
   let scenario: Scenario;
   let knownGood: Resolution;
+  let original: Resolution;
 
   before(async () => {
     const html = await readFile('fixtures/shop/index.html', 'utf8');
@@ -102,15 +125,16 @@ describe('génération de résolution', () => {
 
     scenario = await loadScenario(SCENARIO);
     knownGood = await loadResolution(KNOWN_GOOD);
+    original = withHistoricalDefects(knownGood);
   });
 
   after(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  async function generate(sabotage = false) {
+  async function generate(sabotage = false, source?: Resolution) {
     const driver = new PlaywrightWebDriver(() => chromium.launch());
-    const provider = new ReplayProvider(scenario, knownGood, sabotage);
+    const provider = new ReplayProvider(scenario, source ?? knownGood, sabotage);
     try {
       await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
       const result = await generateResolution({ scenario, driver, provider });
@@ -145,6 +169,41 @@ describe('génération de résolution', () => {
       );
 
     assert.deepEqual(withoutHealHistory(result.resolution), withoutHealHistory(knownGood));
+  });
+
+  /**
+   * Les deux défauts de l'exemple d'origine, proposés tels quels par le
+   * modèle. Le repli fantôme est refusé, et rien n'est versionné. La cible
+   * trouvée par sa valeur est signalée sans être refusée : refuser poussait
+   * le vrai modèle vers pire (voir `tautologicalCheck`).
+   */
+  it('refuse un repli que la page n\'expose pas, et signale une cible trouvée par sa valeur', async () => {
+    const withoutBadFallbacks = structuredClone(original);
+    for (const id of ['s2', 's3']) {
+      const action = withoutBadFallbacks.steps[id]?.actions[0];
+      if (action !== undefined && 'target' in action) delete action.target.fallback;
+    }
+
+    const fallback = await generate(false, original);
+    const s2 = fallback.result.steps.find((step) => step.stepId === 's2');
+    assert.equal(s2?.status, 'failed');
+    assert.match(
+      s2?.rejections[0] ?? '',
+      /fallback "search-input" designates no element on this screen \(the targeted element carries none\)/,
+    );
+    assert.equal(fallback.result.resolution.steps['s2'], undefined);
+
+    const value = await generate(false, withoutBadFallbacks);
+    const s4 = value.result.steps.find((step) => step.stepId === 's4');
+    assert.equal(s4?.status, 'resolved');
+    assert.match(
+      s4?.warnings.join(' | ') ?? '',
+      /assertion "l'indicateur du panier affiche 1 article" is located by the very value it asserts \("1"\)/,
+    );
+    assert.deepEqual(
+      value.result.resolution.steps['s4']?.assertions,
+      withoutBadFallbacks.steps['s4']?.assertions,
+    );
   });
 
   it('rejette une cible introuvable et corrige au tour suivant', async () => {

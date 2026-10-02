@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
+import { capabilitiesProblem } from './driver/ios/capabilities.ts';
 import { isAppPath } from './driver/ios/entry.ts';
 import type { WatchdogLevel, Watchdogs } from './engine/run.ts';
 
@@ -30,6 +31,13 @@ export interface QaiConfig {
   device?: string;
   /** Serveur Appium, pour `ios`. */
   appiumUrl?: string;
+  /** Version d'iOS demandée à Appium (`appium:platformVersion`). */
+  platformVersion?: string;
+  /**
+   * Capacités de session ajoutées sur iOS (`appium:noReset`, signature de
+   * WebDriverAgent…). `--capabilities` les complète clé par clé.
+   */
+  capabilities?: Record<string, unknown>;
 }
 
 const FILE = 'qai.config.json';
@@ -135,7 +143,7 @@ function parse(raw: string, path: string): QaiConfig {
   if (typeof tags === 'string') config.tags = [tags];
   else if (Array.isArray(tags)) config.tags = tags as string[];
 
-  for (const key of ['baseUrl', 'states', 'provider', 'artifacts', 'app', 'device', 'appiumUrl'] as const) {
+  for (const key of ['baseUrl', 'states', 'provider', 'artifacts', 'app', 'device', 'appiumUrl', 'platformVersion'] as const) {
     const value = document[key];
     if (typeof value === 'string') config[key] = value;
   }
@@ -153,6 +161,15 @@ function parse(raw: string, path: string): QaiConfig {
       throw new Error(`${path}: platform must be "web" or "ios"`);
     }
     config.platform = platform as CliPlatform;
+  }
+
+  // Refusées au chargement, comme sur la ligne de commande : une capacité qui
+  // remplace ce que QAI pose ne doit pas attendre la création de session.
+  const capabilities = document['capabilities'];
+  if (capabilities !== undefined) {
+    const problem = capabilitiesProblem(capabilities);
+    if (problem !== undefined) throw new Error(`${path}: capabilities ${problem}`);
+    config.capabilities = capabilities as Record<string, unknown>;
   }
 
   const watchdogs = document['watchdogs'];

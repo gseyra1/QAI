@@ -89,6 +89,39 @@ describe('markdown report', () => {
     assert.match(markdown, /Raise them to `fail` once the list is empty/);
   });
 
+  // Watchdogs are refused on iOS before the run: a warning there comes from
+  // elsewhere (technical fallback, short secret), and sending the reviewer to
+  // a "warn" level that cannot exist is wrong.
+  it('does not blame watchdogs for warnings outside the web', () => {
+    const markdown = formatMarkdown(
+      suite(
+        [
+          {
+            scenarioId: 'track-parcel',
+            resolutionPath: 'r.json',
+            report: scenario({
+              platform: 'ios',
+              steps: [
+                {
+                  stepId: 's3',
+                  intent: 'track the parcel',
+                  status: 'passed',
+                  failures: [],
+                  warnings: ['"Track parcel" was only reached through its technical fallback'],
+                  durationMs: 12,
+                },
+              ],
+            }),
+          },
+        ],
+        'passed',
+      ),
+    );
+
+    assert.match(markdown, /> 1 warning\(s\): reported, not failing\./);
+    assert.doesNotMatch(markdown, /watchdog/);
+  });
+
   it('details a failure, with the assertion and the screenshot', () => {
     const markdown = formatMarkdown(
       suite(

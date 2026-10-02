@@ -11,7 +11,7 @@ const EXAMPLES = [
   'examples/.qai/resolutions/checkout-guest.web.json',
   'examples/.qai/resolutions/compte-connecte.web.json',
   'examples/.qai/resolutions/cart-confirmation.web.json',
-  'examples/.qai/resolutions/library-loan.web.json',
+  'examples/library/.qai/resolutions/library-loan.web.json',
 ];
 
 function document(extra: Record<string, unknown> = {}): string {

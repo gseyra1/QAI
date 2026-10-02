@@ -48,9 +48,12 @@ The engine never writes to disk: it returns bytes and a name, the caller decides
   with:
     base-url: ${{ steps.deploy.outputs.preview-url }}
     heal: 'true'
+    provider: ./qa/provider.mts
+  env:
+    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 ```
 
-`--heal` requires a model provider: the action does not take it as an input — it comes from the `provider` key of your `qai.config.json` (and its API key, from the job's environment).
+`heal` needs a model provider: the `provider` input, or the `provider` key of your `qai.config.json`. Its API key comes from the job's environment. Without either, the run exits 1 with `--heal requires --provider`.
 
 Repaired resolutions are rewritten in the runner's working copy. What you do with them is up to you: commit them to the PR branch, or publish them as an artifact. The comment flags the repair; the diff is in the rewritten file. Add `strict: 'true'` if a repair should block the merge instead of passing.
 
@@ -62,11 +65,14 @@ Repaired resolutions are rewritten in the runner's working copy. What you do wit
 | `scenarios` | `qai.config.json` | files, directories, or glob |
 | `config` | discovered | path to the configuration file |
 | `states` | — | `StateProvider` module, for state declared by `given` |
-| `heal` | `false` | repair stale targets |
+| `provider` | — | `ModelProvider` module, required by `heal` unless `qai.config.json` names one |
+| `heal` | `false` | repair stale targets (needs a provider) |
 | `strict` | `false` | a repair fails the job |
 | `comment` | `true` | post the report |
 | `github-token` | `github.token` | token for posting the comment |
 | `version` | `latest` | QAI version |
+
+`states` and `provider` modules are loaded as ESM (`.mts`/`.mjs`, or `"type": "module"`). The action runs Node 22; a `.ts`/`.mts` module needs 22.18 or later.
 
 ## Without GitHub
 

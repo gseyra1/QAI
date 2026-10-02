@@ -21,7 +21,7 @@ const { values } = parseArgs({
 });
 
 if (values.url === undefined) {
-  process.stderr.write('usage : npm run measure -- --url <url>\n');
+  process.stderr.write('usage: npm run measure -- --url <url> [--viewport 1280x800] [--print]\n');
   process.exit(1);
 }
 
@@ -56,14 +56,14 @@ try {
     [
       `${values.url}  (${width}x${height})`,
       '',
-      `arbre complet          ${String(complete.nodes).padStart(5)} nœuds  ${String(complete.full).padStart(7)} car.`,
-      `  sans géométrie ni id ${' '.repeat(5)}         ${String(complete.lean).padStart(7)} car.`,
-      `arbre interactif seul  ${String(interactive.nodes).padStart(5)} nœuds  ${String(interactive.full).padStart(7)} car.`,
-      `  sans géométrie ni id ${' '.repeat(5)}         ${String(interactive.lean).padStart(7)} car.`,
-      `capture d'écran        ${((shot.screenshot?.byteLength ?? 0) / 1024).toFixed(0)} Kio`,
+      `full tree              ${String(complete.nodes).padStart(5)} nodes  ${String(complete.full).padStart(7)} chars`,
+      `  without rect or id   ${' '.repeat(5)}         ${String(complete.lean).padStart(7)} chars`,
+      `interactive tree only  ${String(interactive.nodes).padStart(5)} nodes  ${String(interactive.full).padStart(7)} chars`,
+      `  without rect or id   ${' '.repeat(5)}         ${String(interactive.lean).padStart(7)} chars`,
+      `screenshot             ${((shot.screenshot?.byteLength ?? 0) / 1024).toFixed(0)} KiB`,
       '',
-      'Les caractères ne sont pas des jetons : compter les jetons réels avec',
-      "l'API du fournisseur branché avant de figer un budget.",
+      'Characters are not tokens: count real tokens with your provider\'s API',
+      'before setting a budget.',
       '',
     ].join('\n'),
   );

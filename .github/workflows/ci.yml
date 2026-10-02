@@ -10,13 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # Node 22 est le plancher d'« engines » et celui de l'action : le paquet
+  # doit y tourner, pas seulement sur la version de développement. « 22 »
+  # désigne la dernière 22.x, qui retire les types sans drapeau.
+  node:
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
@@ -25,3 +33,19 @@ jobs:
       - run: npm audit signatures
       - run: npm run typecheck
       - run: npm test
+
+  # Le contrôle requis par la protection de branche s'appelle « test ». Une
+  # matrice publie « test (node 22) », « test (node 24) » : ce job porte le nom
+  # attendu et ne passe que si toute la matrice a passé. `always()` est
+  # indispensable : sans lui, un échec de la matrice SAUTERAIT ce job, et un
+  # job sauté compte comme réussi pour un contrôle requis.
+  test:
+    needs: node
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.node.result }}
+        run: |
+          echo "matrix: $RESULT"
+          [ "$RESULT" = success ]

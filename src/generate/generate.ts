@@ -9,7 +9,7 @@ import {
 } from '../engine/assert.ts';
 import { formatIssue, platformIssue } from '../engine/consistency.ts';
 import { resolveUpload } from '../engine/files.ts';
-import { matchOne } from '../engine/match.ts';
+import { matchNodes, matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
 import { supports } from '../engine/run.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
@@ -30,7 +30,15 @@ import {
   isEmptyOn,
   isVerificationOnly,
 } from '../scenario/types.ts';
-import { checksMessage, retryMessage, stepMessage, SYSTEM_PROMPT } from './prompt.ts';
+import { checksMessage, retryMessage, stepMessage, systemPrompt } from './prompt.ts';
+import {
+  actionIssue,
+  captureIssue,
+  checkIssue,
+  fallbackIssue,
+  tautologicalCapture,
+  tautologicalCheck,
+} from './proposal.ts';
 import { renderTree } from './render.ts';
 import { checksProposalSchema, stepProposalSchema } from './schema.ts';
 
@@ -64,6 +72,12 @@ export interface GenerateStepReport {
   status: 'resolved' | 'failed' | 'skipped';
   attempts: number;
   rejections: string[];
+  /**
+   * Ce qui a été accepté mais mérite d'être lu : une adresse laissée absolue,
+   * une cible retrouvée par sa propre valeur. Séparé des rejets, pour que
+   * « attempt rejected » ne décrive jamais une proposition retenue.
+   */
+  warnings: string[];
 }
 
 export interface GenerateResult {
@@ -71,11 +85,6 @@ export interface GenerateResult {
   resolution: Resolution;
   steps: GenerateStepReport[];
 }
-
-const ACTION_KINDS = new Set([
-  'navigate', 'click', 'fill', 'select', 'press', 'scrollTo', 'hover', 'swipe', 'expectDialog',
-  'upload',
-]);
 
 interface Proposal {
   actions: Action[];
@@ -90,29 +99,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const MALFORMED = 'malformed response: "actions" must be a non-empty list of known gestures';
 
 /**
- * Contrôle structurel minimal.
+ * Contrôle de forme des gestes, clé par clé.
  *
- * La validation profonde est délibérément laissée à la vérification qui suit :
- * un locator mal formé échouera à se résoudre contre l'application réelle, ce
- * qui est un signal plus sûr qu'un schéma — et le message d'erreur qui revient
- * au modèle décrit alors l'application, pas le schéma.
+ * Longtemps minimal, au motif qu'un locator mal formé échouerait de lui-même
+ * contre l'application. C'est faux pour une clé de trop : ignorée à la
+ * résolution, elle était versionnée telle quelle, dans un fichier que le
+ * schéma publié refuse. La forme est donc contrôlée ici (`proposal.ts`), et la
+ * vérification contre l'application suit.
  *
- * Rend la proposition, ou la raison de son refus. Une liste vide a son propre
- * message : sur une étape qui a une intention, zéro geste n'est pas une forme
- * mal écrite mais une intention jamais accomplie — un vert qui ne prouverait
- * rien.
+ * Rend la proposition, ou les raisons de son refus. Une liste vide a son
+ * propre message : sur une étape qui a une intention, zéro geste n'est pas une
+ * forme mal écrite mais une intention jamais accomplie — un vert qui ne
+ * prouverait rien. Captures et assertions sont contrôlées avec l'écran
+ * obtenu, dans `verifyChecks`.
  */
-function asProposal(output: unknown): Proposal | string {
-  if (!isRecord(output)) return MALFORMED;
+function asProposal(output: unknown): Proposal | string[] {
+  if (!isRecord(output)) return [MALFORMED];
   const actions = output['actions'];
-  if (!Array.isArray(actions)) return MALFORMED;
+  if (!Array.isArray(actions)) return [MALFORMED];
   if (actions.length === 0) {
-    return '"actions" is empty, but this step has an intent: propose the gestures that carry it out';
+    return ['"actions" is empty, but this step has an intent: propose the gestures that carry it out'];
   }
-  for (const action of actions) {
-    if (!isRecord(action) || typeof action['kind'] !== 'string') return MALFORMED;
-    if (!ACTION_KINDS.has(action['kind'])) return MALFORMED;
-  }
+  const issues = actions
+    .map((action, index) => actionIssue(action, `action ${index}`))
+    .filter((issue): issue is string => issue !== null);
+  if (issues.length > 0) return issues;
   return {
     actions: actions as Action[],
     captures: isRecord(output['captures']) ? (output['captures'] as Record<string, CaptureSpec>) : {},
@@ -222,7 +233,13 @@ async function verifyActions(driver: Driver, actions: Action[]): Promise<string[
         errors.push(
           `action ${index}: only the technical fallback worked, the semantic targeting is wrong`,
         );
+        continue;
       }
+      const mismatch = await fallbackIssue(target, outcome.node, async () => {
+        observed ??= (await driver.observe({ interactiveOnly: true })).root;
+        return observed;
+      });
+      if (mismatch !== null) errors.push(`action ${index}: ${mismatch}`);
       continue;
     }
     if (outcome.reason === 'ambiguous') {
@@ -244,6 +261,8 @@ async function verifyActions(driver: Driver, actions: Action[]): Promise<string[
 interface CheckOutcome {
   errors: string[];
   produced: Record<string, string>;
+  /** Rapportés à l'utilisateur si la proposition est retenue, jamais rendus au modèle. */
+  warnings?: string[];
 }
 
 /**
@@ -263,6 +282,7 @@ function verifyChecks(
   observable: boolean,
 ): CheckOutcome {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const produced: Record<string, string> = {};
   const merged: Record<string, string> = { ...bag };
 
@@ -272,8 +292,14 @@ function verifyChecks(
       errors.push(`capture "${name}" missing`);
       continue;
     }
+    const malformed = captureIssue(spec, `capture "${name}"`);
+    if (malformed !== null) {
+      errors.push(malformed);
+      continue;
+    }
     try {
-      const node = matchOne(root, interpolateLocator(spec.from, merged));
+      const from = interpolateLocator(spec.from, merged);
+      const node = matchOne(root, from);
       if (node === null) {
         errors.push(`capture "${name}": target not found or ambiguous on this screen`);
         continue;
@@ -282,6 +308,11 @@ function verifyChecks(
       if (value === null) {
         errors.push(`capture "${name}": unreadable value with extract="${spec.extract}"`);
         continue;
+      }
+      if (tautologicalCapture(from, spec.extract, node, value)) {
+        warnings.push(
+          `capture "${name}" is located by the very value it reads ("${value}"): when that value changes, replay reports "target not found" instead of reading the new one`,
+        );
       }
       produced[name] = value;
       merged[name] = value;
@@ -305,6 +336,11 @@ function verifyChecks(
       errors.push(`assertion "${expectation}" missing — copy the assertion text exactly as the key`);
       continue;
     }
+    const malformed = checkIssue(check, `assertion "${expectation}"`);
+    if (malformed !== null) {
+      errors.push(malformed);
+      continue;
+    }
     // Un pilote qui n'observe ni réseau ni console rendrait ces vérifications
     // vraies faute d'avoir regardé : les écrire figerait un vert sans preuve.
     if (!observable && isObservationCheck(check)) {
@@ -314,6 +350,16 @@ function verifyChecks(
       continue;
     }
     try {
+      if (
+        (check.check === 'textEquals' ||
+          check.check === 'textContains' ||
+          check.check === 'numberEquals') &&
+        tautological(check, root, merged)
+      ) {
+        warnings.push(
+          `assertion "${expectation}" is located by the very value it asserts ("${usesEnv(String(check.value)) ? '***' : interpolate(String(check.value), merged)}"): when that value changes, replay reports "no element" instead of "expected …, observed …"`,
+        );
+      }
       const result = evaluateCheck(check, {
         root,
         location,
@@ -340,7 +386,22 @@ function verifyChecks(
   // Un dernier passage : les erreurs de capture recopient un message de driver,
   // et un secret d'une étape antérieure a pu s'y glisser. Les raisons
   // d'assertion sont déjà masquées par evaluateCheck ; ceci couvre le reste.
-  return { errors: errors.map((error) => secrets.redact(error)), produced };
+  return {
+    errors: errors.map((error) => secrets.redact(error)),
+    produced,
+    warnings: warnings.map((warning) => secrets.redact(warning)),
+  };
+}
+
+/** Voir `tautologicalCheck` : la cible retrouvée par la valeur même qu'elle affirme. */
+function tautological(
+  check: Extract<Check, { check: 'textEquals' | 'textContains' | 'numberEquals' }>,
+  root: UINode,
+  bag: Readonly<Record<string, string>>,
+): boolean {
+  const target = interpolateLocator(check.target, bag);
+  const expected = interpolate(String(check.value), bag);
+  return tautologicalCheck(check.check, target, expected, matchNodes(root, target));
 }
 
 /**
@@ -418,9 +479,27 @@ function portableChecks(
 
   for (const [key, check] of Object.entries(assertions)) {
     out[key] = check;
+    // Une forme invalide est refusée plus loin, avec son motif : ne pas lever ici.
+    if (!isRecord(check as unknown)) continue;
     if (check.check !== 'urlEquals' && check.check !== 'urlContains') continue;
     const value: unknown = check.value;
-    if (typeof value !== 'string' || value.includes('{{') || !isAbsoluteUrl(value)) continue;
+    if (typeof value !== 'string' || value.includes('{{')) continue;
+    if (!isAbsoluteUrl(value)) {
+      /**
+       * Un chemin d'origine — « / », « /orders » — désigne la même origine, mais
+       * se résout contre la RACINE du serveur, pas contre la base : sous une
+       * base à préfixe (« …/app/ »), « / » affirmerait une page hors de
+       * l'application. Réécrit comme une adresse absolue, et par la même règle
+       * que `navigate` (« / » devient « . ») : un chemin hors du chemin de base
+       * reste un chemin d'origine. `urlContains` n'est pas touché : « /login »
+       * y est un fragment, pas une adresse.
+       */
+      if (check.check !== 'urlEquals' || !value.startsWith('/') || value.startsWith('//')) continue;
+      if (baseUrl === undefined) continue;
+      const relative = relativeToBase(value, baseUrl);
+      if (relative !== null) out[key] = { ...check, value: relative };
+      continue;
+    }
 
     if (baseUrl === undefined) {
       warn(
@@ -461,7 +540,7 @@ function screenAgnosticChecks(
   if (prefix === undefined) return [];
   const errors: string[] = [];
   for (const [key, check] of Object.entries(assertions)) {
-    if (check.check !== 'urlContains') continue;
+    if (!isRecord(check as unknown) || check.check !== 'urlContains') continue;
     const value: unknown = check.value;
     // Une adresse absolue est déjà rendue au modèle par portableChecks : la
     // signaler deux fois noierait le motif.
@@ -493,7 +572,7 @@ function hostBoundChecks(assertions: Record<string, Check>, baseUrl: string | un
   if (host === '') return [];
   const errors: string[] = [];
   for (const [key, check] of Object.entries(assertions)) {
-    if (check.check !== 'urlContains') continue;
+    if (!isRecord(check as unknown) || check.check !== 'urlContains') continue;
     const value: unknown = check.value;
     if (typeof value !== 'string' || value.includes('{{') || isAbsoluteUrl(value)) continue;
     if (!value.includes(host)) continue;
@@ -540,7 +619,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     const verificationOnly = isVerificationOnly(step, platform);
 
     if (aborted || !appliesTo(step, platform)) {
-      reports.push({ stepId: step.id, intent, status: 'skipped', attempts: 0, rejections: [] });
+      reports.push({ stepId: step.id, intent, status: 'skipped', attempts: 0, rejections: [], warnings: [] });
       continue;
     }
 
@@ -555,12 +634,14 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         rejections: [
           `no intent and nothing to verify on ${platform}: add expect or capture, or restrict the step with "only"`,
         ],
+        warnings: [],
       });
       aborted = true;
       continue;
     }
 
     const rejections: string[] = [];
+    const warnings: string[] = [];
     let used = 0;
     // Un avertissement, pas un rejet : il est rapporté une fois, quel que soit
     // le nombre de tours qui le recroisent.
@@ -568,7 +649,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     // saisi, et `qai resolve` imprime ces lignes.
     const warn = (message: string): void => {
       const redacted = secrets.redact(message);
-      if (!rejections.includes(redacted)) rejections.push(redacted);
+      if (!warnings.includes(redacted)) warnings.push(redacted);
     };
 
     await driver.settle();
@@ -602,9 +683,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       let response;
       try {
         response = await provider.complete({
-          system: SYSTEM_PROMPT,
+          system: systemPrompt(platform),
           messages: conversation,
-          responseSchema: stepProposalSchema(),
+          responseSchema: stepProposalSchema(platform),
         });
       } catch (error) {
         // Une réponse illisible est un rejet, pas une panne du moteur. Un
@@ -622,8 +703,8 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       const candidate = asProposal(response.output);
       const raw =
-        typeof candidate === 'string'
-          ? [candidate]
+        Array.isArray(candidate)
+          ? candidate
           : [
               ...verifyEnvTemplates(candidate.actions, intent),
               ...verifyGestures(driver, candidate.actions),
@@ -633,7 +714,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       // recopier un nom d'écran, et un secret d'une étape antérieure y figure.
       const errors = raw.map((error) => secrets.redact(error));
 
-      if (errors.length === 0 && typeof candidate !== 'string') {
+      if (errors.length === 0 && !Array.isArray(candidate)) {
         proposal = candidate;
         break;
       }
@@ -646,7 +727,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     if (proposal === null) {
-      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections });
+      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections, warnings });
       aborted = true;
       continue;
     }
@@ -693,7 +774,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
     } catch (error) {
       rejections.push(secrets.redact(error instanceof Error ? error.message : String(error)));
-      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections });
+      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections, warnings });
       aborted = true;
       continue;
     }
@@ -742,6 +823,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
             ...verified.errors,
           ],
           produced: verified.produced,
+          warnings: verified.warnings ?? [],
         },
       };
     };
@@ -784,9 +866,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       let response;
       try {
         response = await provider.complete({
-          system: SYSTEM_PROMPT,
+          system: systemPrompt(platform),
           messages: checksConversation,
-          responseSchema: checksProposalSchema(),
+          responseSchema: checksProposalSchema(platform),
         });
       } catch (error) {
         // Même traitement qu'en phase A : un fournisseur qui lève consomme une
@@ -830,11 +912,15 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     if (outcome.errors.length > 0) {
-      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections });
+      // Le dernier refus n'a plus de tour pour revenir au modèle, mais c'est
+      // lui qui explique l'échec : sans lui, l'étape échouait sans motif.
+      rejections.push(...outcome.errors);
+      reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections, warnings });
       aborted = true;
       continue;
     }
 
+    for (const warning of outcome.warnings ?? []) warn(warning);
     Object.assign(bag, outcome.produced);
 
     // Déjà relativisées avant l'exécution : on versionne exactement ce qui a
@@ -844,7 +930,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     if (Object.keys(checks.assertions).length > 0) resolved.assertions = checks.assertions;
     steps[step.id] = resolved;
 
-    reports.push({ stepId: step.id, intent, status: 'resolved', attempts: used, rejections });
+    reports.push({ stepId: step.id, intent, status: 'resolved', attempts: used, rejections, warnings });
   }
 
   const resolution: Resolution = {

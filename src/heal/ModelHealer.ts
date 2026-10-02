@@ -1,6 +1,7 @@
-import type { Driver, ResolvedTarget } from '../driver/types.ts';
+import type { Driver, ResolvedTarget, UINode } from '../driver/types.ts';
 import type { HealRequest, HealResult, Healer } from '../engine/run.ts';
 import { renderTree } from '../generate/render.ts';
+import { fallbackIssue, targetIssue } from '../generate/proposal.ts';
 import { healProposalSchema } from '../generate/schema.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 
@@ -20,8 +21,9 @@ Rules:
 - Preserve what made the target stable: never replace a
   { "contains": "..." } form with the exact name displayed today if that name
   contains data (a number, an amount, a date) — it will change on the next
-  replay. When the targeted line carries #some-id, keep it as
-  "fallback": { "testId": "some-id" }.
+  replay. When the targeted line itself carries #some-id, keep it as
+  "fallback": { "testId": "some-id" } — never the #id of another line, such
+  as its container.
 - If several elements match, disambiguate with "within" or "nth".
 - The note will be read by a developer in a review diff. Say what changed in
   the application — "the button label went from X to Y" — not what you did.`;
@@ -38,14 +40,23 @@ interface Proposal {
   note: string;
 }
 
-function asProposal(output: unknown): Proposal | null {
-  if (typeof output !== 'object' || output === null) return null;
+/**
+ * La proposition, ou la raison précise de son refus.
+ *
+ * La cible est contrôlée clé par clé : une clé de trop serait réinjectée
+ * telle quelle dans la résolution, puis versionnée dans un fichier que le
+ * schéma publié refuse.
+ */
+function asProposal(output: unknown): Proposal | string {
+  const malformed = 'malformed response: return "target" and "note"';
+  if (typeof output !== 'object' || output === null) return malformed;
   const record = output as Record<string, unknown>;
   const target = record['target'];
   const note = record['note'];
-  if (typeof target !== 'object' || target === null) return null;
-  if (typeof note !== 'string' || note.length === 0) return null;
-  if (!('primary' in target)) return null;
+  if (typeof note !== 'string' || note.length === 0) return malformed;
+  if (typeof target !== 'object' || target === null) return malformed;
+  const issue = targetIssue(target, 'target');
+  if (issue !== null) return issue;
   return { target: target as ResolvedTarget, note };
 }
 
@@ -109,14 +120,11 @@ export class ModelHealer implements Healer {
       });
 
       const proposal = asProposal(response.output);
-      if (proposal === null) {
-        rejections.push('malformed response');
+      if (typeof proposal === 'string') {
+        rejections.push(proposal);
         conversation.push(
           { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(response.output) }] },
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'Malformed response. Return "target" and "note".' }],
-          },
+          { role: 'user', content: [{ type: 'text', text: `Rejected: ${proposal}. Fix it.` }] },
         );
         continue;
       }
@@ -129,7 +137,18 @@ export class ModelHealer implements Healer {
         rejections.push(error instanceof Error ? error.message : String(error));
       }
 
-      if (outcome !== null && outcome.found) {
+      // Même garde qu'à la génération : un repli qui désigne un autre élément
+      // agirait sur lui, sans erreur, le jour où `primary` se perd.
+      let tree: UINode | null = null;
+      const mismatch =
+        outcome !== null && outcome.found && !outcome.usedFallback
+          ? await fallbackIssue(proposal.target, outcome.node, async () => {
+              tree ??= (await this.#driver.observe({ interactiveOnly: true })).root;
+              return tree;
+            })
+          : null;
+
+      if (outcome !== null && outcome.found && mismatch === null) {
         // Un repli technique qui sauve la mise vaut mieux qu'un échec — mais il
         // signifie que l'accessibilité de l'application s'est dégradée, et que
         // ce ciblage ne survivra pas au portage mobile. On le dit.
@@ -141,14 +160,13 @@ export class ModelHealer implements Healer {
         };
       }
 
-      const reason =
-        outcome === null
-          ? (rejections.at(-1) ?? 'invalid target')
-          : outcome.reason === 'ambiguous'
-            ? `the new target is ambiguous: ${outcome.matches} elements match — disambiguate with "within" or "nth"`
-            : outcome.reason === 'not-visible'
-              ? 'the new target exists but is not visible'
-              : 'no element matches the new target';
+      let reason: string;
+      if (outcome === null) reason = rejections.at(-1) ?? 'invalid target';
+      else if (outcome.found) reason = mismatch ?? 'invalid target';
+      else if (outcome.reason === 'ambiguous') {
+        reason = `the new target is ambiguous: ${outcome.matches} elements match — disambiguate with "within" or "nth"`;
+      } else if (outcome.reason === 'not-visible') reason = 'the new target exists but is not visible';
+      else reason = 'no element matches the new target';
 
       rejections.push(reason);
       conversation.push(

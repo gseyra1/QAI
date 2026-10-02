@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { runScenario } from '../../engine/run.ts';
-import { generateResolution } from '../../generate/generate.ts';
+// Passe par la conformité au schéma publié : tout fichier écrit ici doit le respecter.
+import { generateResolution } from '../../generate/conformance.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../../model/types.ts';
 import type { Check, Resolution } from '../../resolution/types.ts';
 import type { Scenario } from '../../scenario/types.ts';
@@ -90,6 +91,59 @@ describe('IosDriver', () => {
       });
       // Le bundle est connu : aucune question à poser au serveur.
       assert.deepEqual(fake.commands(), ['POST /session', 'DELETE ']);
+    });
+
+    /**
+     * Un appareil réel exige la signature de WebDriverAgent, et `noReset`
+     * décide si chaque session efface les données de l'application : des
+     * capacités que QAI ne peut pas deviner, transmises telles quelles.
+     */
+    it('adds the given capabilities to the session', async () => {
+      const own = new IosDriver({
+        serverUrl: fake.url,
+        capabilities: { 'appium:noReset': true, 'appium:newCommandTimeout': 300, 'appium:xcodeOrgId': 'ABCDE12345' },
+      });
+      await own.launch({ entry: 'com.example.acme' });
+      await own.dispose();
+      const created = fake.calls[0]?.body as { capabilities: { alwaysMatch: Record<string, unknown> } };
+      assert.deepEqual(created.capabilities.alwaysMatch, {
+        'appium:noReset': true,
+        'appium:newCommandTimeout': 300,
+        'appium:xcodeOrgId': 'ABCDE12345',
+        platformName: 'iOS',
+        'appium:automationName': 'XCUITest',
+        'appium:bundleId': 'com.example.acme',
+      });
+    });
+
+    /**
+     * Une capacité que QAI pose lui-même ne se remplace pas en douce : un
+     * autre `automationName` piloterait autre chose que ce que le rapport
+     * annonce, un autre `bundleId` contredirait --app. Refusé avant toute
+     * requête, y compris caché dans `appium:options`.
+     */
+    it('refuses a capability QAI sets itself, before any request', () => {
+      const owned: [Record<string, unknown>, RegExp][] = [
+        [{ platformName: 'Android' }, /"platformName" is set by QAI \(always "iOS"\)/],
+        [{ 'appium:automationName': 'Espresso' }, /"appium:automationName" is set by QAI/],
+        [{ automationName: 'Espresso' }, /"automationName" is set by QAI/],
+        [{ 'appium:bundleId': 'com.other' }, /"appium:bundleId" is set by QAI \(use --app\)/],
+        [{ 'appium:udid': 'x' }, /use --device/],
+        [{ 'appium:platformVersion': '17.0' }, /use --platform-version/],
+        [{ 'appium:options': { automationName: 'Espresso' } }, /"automationName" is set by QAI/],
+        [{ 'appium:options': 'noReset' }, /"appium:options" must be an object/],
+      ];
+      for (const [capabilities, expected] of owned) {
+        assert.throws(() => new IosDriver({ serverUrl: fake.url, capabilities }), expected);
+      }
+      assert.throws(
+        () => new IosDriver({ serverUrl: fake.url, capabilities: [] as unknown as Record<string, unknown> }),
+        /capabilities: must be a JSON object/,
+      );
+      // « constructor » n'est pas une capacité réservée : seul le tableau des
+      // clés de QAI compte, pas ce qu'hérite un objet.
+      assert.doesNotThrow(() => new IosDriver({ serverUrl: fake.url, capabilities: { constructor: 1 } }));
+      assert.deepEqual(fake.calls, []);
     });
 
     it('installs a .app by path, targets a UDID, then learns the bundle id', async () => {
@@ -433,6 +487,19 @@ describe('IosDriver', () => {
       await driver.act({ kind: 'press', key: 'Enter' });
       assert.deepEqual(fake.commands(), [NO_ALERT, 'GET /element/active', 'POST /element/el-active/value', NO_ALERT]);
       assert.deepEqual(fake.calls[2]?.body, { text: '\n' });
+    });
+
+    /**
+     * L'effacement est la séquence que WebDriverAgent tape lui-même pour vider
+     * un champ (U+0008 U+007F, XCUIElement+FBTyping.m) : « \b » seul n'est
+     * pas ce que WDA emploie, et rien ne garantit qu'il efface.
+     */
+    it('press Backspace and Delete send the sequence WebDriverAgent itself deletes with', async () => {
+      for (const key of ['Backspace', 'Delete']) {
+        fake.calls.length = 0;
+        await driver.act({ kind: 'press', key });
+        assert.deepEqual(fake.calls[2]?.body, { text: '\u0008\u007F' }, key);
+      }
     });
 
     it('press refuses a key it cannot produce, before any request', async () => {

@@ -37,6 +37,10 @@ and `1 234,56 €` compare without the scenario caring. A dot followed by three
 digits is treated as a thousands separator — the right bet for displayed
 amounts.
 
+A `textContains` with an empty value fails, like `urlContains`: every text
+contains `""`. The usual cause is a `{{capture}}` that came back empty — a
+green there would prove nothing.
+
 `evaluateCheck()` receives a context — the tree, the current address, the
 captures already known — not just the tree. That is what lets a check bear on
 something other than a node.
@@ -172,4 +176,5 @@ The healer exists ([repairing.md](repairing.md)), resolving exists
 ([resolving.md](resolving.md)), CI integration exists ([ci.md](ci.md)).
 Without a healer supplied, a missing target is simply a failure.
 
-Only the mobile drivers remain to be written.
+An experimental iOS driver exists, never yet run on a device — see
+[driver.md](driver.md#ios-driver--experimental). Android remains to be written.
