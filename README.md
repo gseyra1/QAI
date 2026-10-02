@@ -26,7 +26,7 @@ here French. The tool speaks English.)
 - ⚡ **Free to replay** — the normal path makes **zero model calls**. You only pay when your UI actually changes.
 - 🩹 **Self-healing, auditable** — a renamed button is repaired and lands as a **4-line diff** in your PR, with the reason attached.
 - 🛡️ **Never touches assertions** — repairs can change *how* an element is reached, never *what* is asserted. Two independent barriers enforce it.
-- 📱 **Write once, run on mobile later** — scenarios contain no selectors, so the same file will replay on iOS and Android.
+- 📱 **Write once, replay on web and iOS** — scenarios contain no selectors; the same file gets one resolution per platform. iOS is experimental, Android next.
 - 🔌 **Bring your own model** — no vendor SDK bundled. Implement one method, set a spend cap.
 - 💬 **Talks to the developer** — posts the report as a pull-request comment and updates it in place.
 
