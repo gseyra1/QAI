@@ -62,7 +62,11 @@ export class AppiumClient {
   constructor(serverUrl: string, timeoutMs: number) {
     // Appium 1 servait sous « /wd/hub », Appium 2 et 3 à la racine : le chemin
     // éventuel de l'URL est conservé tel quel, seule la barre finale tombe.
-    this.#base = serverUrl.replace(/\/+$/, '');
+    // Une boucle plutôt qu'une expression régulière ancrée en fin : sur une
+    // URL fournie par l'utilisateur, « /+$ » se rejoue en temps quadratique.
+    let end = serverUrl.length;
+    while (end > 0 && serverUrl[end - 1] === '/') end -= 1;
+    this.#base = serverUrl.slice(0, end);
     this.#timeoutMs = timeoutMs;
   }
 

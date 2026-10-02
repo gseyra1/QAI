@@ -181,7 +181,8 @@ describe('IosDriver', () => {
       const own = new IosDriver({ serverUrl: url });
       await assert.rejects(
         () => own.launch({ entry: 'com.example.acme' }),
-        new RegExp(`new session failed: cannot reach the Appium server at ${url.replace(/[.]/g, '\\.')}`),
+        (error: Error) =>
+          error.message.includes(`new session failed: cannot reach the Appium server at ${url}`),
       );
     });
   });
