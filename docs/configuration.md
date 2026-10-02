@@ -20,6 +20,28 @@ anywhere in the repo.
 }
 ```
 
+For iOS (experimental, see [docs/driver.md](driver.md#ios-driver--experimental)):
+
+```json
+{
+  "platform": "ios",
+  "app": "com.example.app",
+  "device": "iPhone 16",
+  "appiumUrl": "http://127.0.0.1:4723"
+}
+```
+
+`platform` is `web` (default) or `ios` — `--platform`. `app` is a bundle id or
+a `.app`/`.ipa` path, resolved relative to the file — `--app`, the iOS
+counterpart of `baseUrl`. `device` is a UDID or a device name — `--device`.
+`appiumUrl` is the Appium server — `--appium-url`. **An unknown `platform`
+stops the command**: falling back to the web would replay the web suite while
+you believe you are testing the app.
+
+On iOS, `workers` is always 1 (one device, one journey), and `watchdogs` must
+be `off`: the iOS driver does not observe network or console activity, so an
+active watchdog would pass without having looked — the run is refused.
+
 Then, from any directory:
 
 ```bash

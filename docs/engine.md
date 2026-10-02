@@ -60,7 +60,8 @@ replay on another host or port; resolving writes it in that form. An empty or
 blank value is never resolved (it would become the base itself) and fails. An
 absolute value is compared as is. Without a base (mobile, or `runScenario`
 called without `baseUrl`) the value is compared raw, and a relative one cannot
-pass — the failure says so. `urlContains` stays a raw substring.
+pass — the failure says so. `urlContains` stays a raw substring; an empty
+value fails, since every URL contains it.
 
 The comparison is **strict**: neither trailing slash, nor query string, nor
 fragment is normalised away. Erasing them would make a redirect to

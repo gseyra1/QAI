@@ -44,6 +44,23 @@ export function appliesTo(step: Step, platform: Platform): boolean {
 }
 
 /**
+ * Le parcours a quelque chose à jouer sur cette plateforme.
+ *
+ * Faux quand `platforms` l'exclut, ou quand `only` écarte chacune de ses
+ * étapes. Rejoué quand même, il ne ferait que sauter des étapes : un vert
+ * sans un geste ni une vérification sur l'appareil.
+ */
+export function runsOn(scenario: Scenario, platform: Platform): boolean {
+  if (
+    scenario.platforms !== undefined &&
+    !scenario.platforms.some((declared) => platformMatches(declared, platform))
+  ) {
+    return false;
+  }
+  return scenario.steps.some((step) => appliesTo(step, platform));
+}
+
+/**
  * L'intention retenue pour une plateforme : la reformulation la plus spécifique
  * l'emporte, puis `mobile`, puis l'intention générique.
  */

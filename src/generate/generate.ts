@@ -7,13 +7,21 @@ import {
   SecretRegistry,
   usesEnv,
 } from '../engine/assert.ts';
+import { formatIssue, platformIssue } from '../engine/consistency.ts';
 import { resolveUpload } from '../engine/files.ts';
 import { matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
+import { supports } from '../engine/run.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
-import { targetOf, valueOf, withValue } from '../resolution/types.ts';
-import { checkBaseFor, isAbsoluteUrl, relativeToBase } from '../resolution/url.ts';
+import { isObservationCheck, targetOf, valueOf, withValue } from '../resolution/types.ts';
+import {
+  checkBaseFor,
+  isAbsoluteUrl,
+  isBaselessNavigation,
+  relativeToBase,
+  screenAgnosticPrefix,
+} from '../resolution/url.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
 import {
   appliesTo,
@@ -158,6 +166,30 @@ function verifyEnvTemplates(actions: Action[], intent: string): string[] {
   return errors;
 }
 
+/**
+ * Ce que ce pilote refuserait au rejeu, refusé ici au modèle.
+ *
+ * Sans ce contrôle, le refus tombait au moment d'agir : l'étape échouait sans
+ * reprise, et la génération s'arrêtait là. Rendu en rejet, il laisse au modèle
+ * — à qui la consigne parle du web — le tour qu'il faut pour se corriger.
+ */
+function verifyGestures(driver: Driver, actions: Action[]): string[] {
+  const errors: string[] = [];
+  for (const [index, action] of actions.entries()) {
+    if (!supports(driver, action)) {
+      errors.push(`action ${index}: "${action.kind}" is not supported on ${driver.platform} — use another gesture`);
+      continue;
+    }
+    // Hors du web, il n'y a pas de base : un chemin relatif ne désigne rien.
+    if (action.kind === 'navigate' && driver.platform !== 'web' && !isBaselessNavigation(action.to)) {
+      errors.push(
+        `action ${index}: navigate "${action.to}" is a relative path, which means nothing on ${driver.platform} — use a deep link (myapp://…), "." or "/" to relaunch the app, or reach the screen with gestures`,
+      );
+    }
+  }
+  return errors;
+}
+
 /** Chaque cible est confrontée à l'application avant d'agir. */
 async function verifyActions(driver: Driver, actions: Action[]): Promise<string[]> {
   const errors: string[] = [];
@@ -228,6 +260,7 @@ function verifyChecks(
   step: Step,
   secrets: SecretRegistry,
   baseUrl: string | undefined,
+  observable: boolean,
 ): CheckOutcome {
   const errors: string[] = [];
   const produced: Record<string, string> = {};
@@ -270,6 +303,14 @@ function verifyChecks(
     const check = proposal.assertions[expectation];
     if (check === undefined) {
       errors.push(`assertion "${expectation}" missing — copy the assertion text exactly as the key`);
+      continue;
+    }
+    // Un pilote qui n'observe ni réseau ni console rendrait ces vérifications
+    // vraies faute d'avoir regardé : les écrire figerait un vert sans preuve.
+    if (!observable && isObservationCheck(check)) {
+      errors.push(
+        `assertion "${expectation}": ${check.check} cannot be observed on this platform — no network or console activity is reported here`,
+      );
       continue;
     }
     try {
@@ -402,11 +443,77 @@ function portableChecks(
   return { assertions: out, errors };
 }
 
+/**
+ * Refuse un `urlContains` vrai sur tous les écrans de l'application.
+ *
+ * Hors du web, chaque adresse commence par l'identifiant d'application : le
+ * modèle le recopie volontiers, et « on est sur l'écran des commandes »
+ * devient une sous-chaîne de ce préfixe, vraie partout. La vérification ne
+ * peut pas l'attraper — l'assertion passe ici, comme elle passera sur
+ * n'importe quel autre écran. C'est le pendant du refus de l'adresse absolue
+ * sur le web : dans les deux cas, une vérification d'adresse qui ne peut pas
+ * échouer.
+ */
+function screenAgnosticChecks(
+  assertions: Record<string, Check>,
+  prefix: string | undefined,
+): string[] {
+  if (prefix === undefined) return [];
+  const errors: string[] = [];
+  for (const [key, check] of Object.entries(assertions)) {
+    if (check.check !== 'urlContains') continue;
+    const value: unknown = check.value;
+    // Une adresse absolue est déjà rendue au modèle par portableChecks : la
+    // signaler deux fois noierait le motif.
+    if (typeof value !== 'string' || value.includes('{{') || isAbsoluteUrl(value)) continue;
+    if (!prefix.includes(value)) continue;
+    errors.push(
+      `assertion "${key}": urlContains "${value}" only names the application ("${prefix}"), which every screen shares, so it can never fail — use urlEquals on the whole location, or urlContains with the screen title`,
+    );
+  }
+  return errors;
+}
+
+/**
+ * Refuse un `urlContains` qui épingle l'hôte de développement.
+ *
+ * « localhost:4173/commandes » n'a pas de schéma : il échappe donc à la
+ * réécriture des adresses absolues, mais il fixe l'hôte et le port tout aussi
+ * sûrement. Vert sur la machine qui l'a écrit, rouge partout ailleurs — et ce
+ * rouge-là accuse l'application, pas le fichier.
+ */
+function hostBoundChecks(assertions: Record<string, Check>, baseUrl: string | undefined): string[] {
+  if (baseUrl === undefined) return [];
+  let host: string;
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    return [];
+  }
+  if (host === '') return [];
+  const errors: string[] = [];
+  for (const [key, check] of Object.entries(assertions)) {
+    if (check.check !== 'urlContains') continue;
+    const value: unknown = check.value;
+    if (typeof value !== 'string' || value.includes('{{') || isAbsoluteUrl(value)) continue;
+    if (!value.includes(host)) continue;
+    errors.push(
+      `assertion "${key}": urlContains "${value}" names the host "${host}", which only matches on this host and port — use urlEquals (stored relative to the root), or a fragment of the path`,
+    );
+  }
+  return errors;
+}
+
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
   const { scenario, driver, provider } = input;
   const attempts = input.attemptsPerStep ?? 5;
   const baseDir = input.baseDir ?? process.cwd();
   const platform = driver.platform;
+
+  // Un parcours sans étape ici produirait une résolution vide, que le rejeu
+  // jouerait en vert sans rien faire. Refusé avant le moindre appel au modèle.
+  const refused = platformIssue(scenario, platform);
+  if (refused !== null) throw new Error(formatIssue(refused));
 
   const steps: Record<string, StepResolution> = {};
   const reports: GenerateStepReport[] = [];
@@ -417,6 +524,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   const secrets = new SecretRegistry();
   // Même base qu'au rejeu pour les vérifications d'adresse : web seulement.
   const checkBase = checkBaseFor(platform, input.baseUrl);
+  // Un pilote qui ne rapporte ni réseau ni console ne peut pas prouver leur
+  // absence : les vérifications d'observation y sont refusées dès l'écriture.
+  const observable = driver.drainObservations !== undefined;
   let aborted = false;
 
   for (const step of scenario.steps) {
@@ -516,6 +626,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
           ? [candidate]
           : [
               ...verifyEnvTemplates(candidate.actions, intent),
+              ...verifyGestures(driver, candidate.actions),
               ...(await verifyActions(driver, candidate.actions)),
             ];
       // Masqué avant de rejoindre le rapport ET la conversation : un rejet peut
@@ -550,7 +661,12 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
      */
     proposal = {
       ...proposal,
-      actions: proposal.actions.map((action) => relativize(action, input.baseUrl, warn)),
+      // Web seulement : ailleurs, une navigation est un lien profond ou une
+      // relance, et l'entrée de lancement (un bundle) n'est pas une base.
+      actions:
+        platform === 'web'
+          ? proposal.actions.map((action) => relativize(action, input.baseUrl, warn))
+          : proposal.actions,
     };
 
     try {
@@ -601,6 +717,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         platform === 'web' ? warn : () => {},
       );
       const checks = { captures: candidate.captures, assertions: portable.assertions };
+      const agnostic = [
+        ...screenAgnosticChecks(
+          portable.assertions,
+          screenAgnosticPrefix(platform, screen.location, checkBase),
+        ),
+        ...hostBoundChecks(portable.assertions, checkBase),
+      ];
       const verified = verifyChecks(
         screen.root,
         screen.location,
@@ -609,11 +732,15 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         step,
         secrets,
         checkBase,
+        observable,
       );
       return {
         checks,
         outcome: {
-          errors: [...portable.errors.map((error) => secrets.redact(error)), ...verified.errors],
+          errors: [
+            ...[...portable.errors, ...agnostic].map((error) => secrets.redact(error)),
+            ...verified.errors,
+          ],
           produced: verified.produced,
         },
       };

@@ -1,7 +1,14 @@
 import type { Platform } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
+import { isBaselessNavigation } from '../resolution/url.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, isEmptyOn, isVerificationOnly } from '../scenario/types.ts';
+import {
+  appliesTo,
+  expectationsOf,
+  isEmptyOn,
+  isVerificationOnly,
+  runsOn,
+} from '../scenario/types.ts';
 
 export type IssueKind =
   | 'missing-step'
@@ -10,7 +17,10 @@ export type IssueKind =
   | 'missing-capture'
   | 'no-actions'
   | 'unexpected-actions'
-  | 'empty-step';
+  | 'empty-step'
+  | 'platform-mismatch'
+  | 'not-on-platform'
+  | 'relative-navigate';
 
 export interface ConsistencyIssue {
   kind: IssueKind;
@@ -45,6 +55,28 @@ export function actionsIssue(
 }
 
 /**
+ * Ce qui interdit de jouer le parcours sur cette plateforme, avant toute étape.
+ *
+ * Une résolution est propre à une plateforme : ses cibles décrivent un arbre
+ * précis. Rejouer une résolution web sur iOS ferait réparer, puis réécrire,
+ * un fichier qui resterait marqué « web ». Et un parcours dont aucune étape ne
+ * vaut ici serait vert sans avoir rien joué. Partagé avec le rejeu et la
+ * génération, comme `actionsIssue` : aucun des deux ne doit compter sur un
+ * contrôle préalable pour refuser ces cas.
+ */
+export function platformIssue(
+  scenario: Scenario,
+  platform: Platform,
+  resolution?: Resolution,
+): ConsistencyIssue | null {
+  if (resolution !== undefined && resolution.platform !== platform) {
+    return { kind: 'platform-mismatch', stepId: '*', detail: `${resolution.platform} ≠ ${platform}` };
+  }
+  if (!runsOn(scenario, platform)) return { kind: 'not-on-platform', stepId: '*', detail: platform };
+  return null;
+}
+
+/**
  * Vérifie qu'un scénario et sa résolution parlent bien du même parcours.
  *
  * C'est le contrôle qui détecte la dérive silencieuse : une étape ajoutée sans
@@ -60,6 +92,10 @@ export function checkConsistency(
   const issues: ConsistencyIssue[] = [];
   const known = new Set<string>();
 
+  // Refus global : le reste du contrôle n'aurait aucun sens.
+  const refused = platformIssue(scenario, platform, resolution);
+  if (refused !== null) return [refused];
+
   for (const step of scenario.steps) {
     if (!appliesTo(step, platform)) continue;
     known.add(step.id);
@@ -72,6 +108,16 @@ export function checkConsistency(
 
     const shape = actionsIssue(step, platform, cached.actions.length);
     if (shape !== null) issues.push(shape);
+
+    // Hors du web, il n'y a pas d'URL de base : un chemin relatif ne désigne
+    // rien. Le dire avant de jouer vaut mieux qu'un échec à mi-parcours,
+    // après des gestes déjà faits sur l'appareil.
+    if (platform !== 'web') {
+      for (const action of cached.actions) {
+        if (action.kind !== 'navigate' || isBaselessNavigation(action.to)) continue;
+        issues.push({ kind: 'relative-navigate', stepId: step.id, detail: action.to });
+      }
+    }
 
     for (const assertion of expectationsOf(step)) {
       if (cached.assertions?.[assertion] === undefined) {
@@ -109,5 +155,11 @@ export function formatIssue(issue: ConsistencyIssue): string {
       return `step "${issue.stepId}": no intent and nothing to verify on ${issue.detail} — add expect or capture, or restrict the step with "only"`;
     case 'unexpected-actions':
       return `step "${issue.stepId}": verification-only step, but the cached resolution still has ${issue.detail} action(s) — regenerate with "qai resolve"`;
+    case 'platform-mismatch':
+      return `the resolution was written for another platform (${issue.detail ?? ''}): regenerate it with "qai resolve"`;
+    case 'not-on-platform':
+      return `no step of this journey runs on ${issue.detail ?? ''} ("platforms" or "only" exclude them all): it would pass without playing anything`;
+    case 'relative-navigate':
+      return `step "${issue.stepId}": navigate "${issue.detail ?? ''}" is a relative path, which has no meaning without a base URL — use a deep link, "." or "/"`;
   }
 }

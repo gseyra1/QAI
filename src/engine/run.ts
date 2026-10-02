@@ -14,7 +14,7 @@ import type { Resolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import { checkBaseFor } from '../resolution/url.ts';
 import type { Scenario } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
+import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
 import {
   evaluateCheck,
   extractValue,
@@ -25,7 +25,7 @@ import {
   SecretRegistry,
   usesEnv,
 } from './assert.ts';
-import { actionsIssue, formatIssue } from './consistency.ts';
+import { actionsIssue, formatIssue, platformIssue } from './consistency.ts';
 import { resolveUpload } from './files.ts';
 import { matchOne } from './match.ts';
 import { suggestNearest } from './nearest.ts';
@@ -184,7 +184,8 @@ export interface RunInput {
   baseUrl?: string;
 }
 
-function supports(driver: Driver, action: Action): boolean {
+/** Partagé avec la génération, qui refuse au modèle ce que le rejeu refuserait. */
+export function supports(driver: Driver, action: Action): boolean {
   if (action.kind === 'hover') return driver.capabilities.hover;
   if (action.kind === 'swipe') return driver.capabilities.swipe;
   if (action.kind === 'navigate') return driver.capabilities.navigateByUrl;
@@ -471,12 +472,32 @@ function attachObservations(
  */
 function runWatchdogs(
   watchdogs: Watchdogs | undefined,
-  observations: Observations,
+  observations: Observations | null,
   secrets: SecretRegistry,
+  platform: string,
 ): { failures: string[]; warnings: string[] } {
   const failures: string[] = [];
   const warnings: string[] = [];
   if (watchdogs === undefined) return { failures, warnings };
+
+  /**
+   * Un pilote qui n'observe rien ne peut rien garder.
+   *
+   * Évaluer le garde-fou sur une liste vide le ferait passer à chaque étape :
+   * « aucune requête en échec » serait vrai faute d'avoir regardé. Le niveau
+   * demandé décide seulement de la gravité de cet aveu.
+   */
+  if (observations === null) {
+    for (const [name, level] of [
+      ['requestFailures', watchdogs.requestFailures ?? 'off'],
+      ['consoleErrors', watchdogs.consoleErrors ?? 'off'],
+    ] as const) {
+      if (level === 'off') continue;
+      const message = `watchdog ${name} cannot run on ${platform}: this driver does not observe network or console activity`;
+      (level === 'fail' ? failures : warnings).push(message);
+    }
+    return { failures, warnings };
+  }
 
   const tolerated = (text: string): boolean =>
     watchdogs.allow?.some((pattern) => text.includes(pattern)) === true;
@@ -515,6 +536,16 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const { scenario, resolution, driver, healer } = input;
   const healBudget = input.healBudget ?? 3;
   const platform = driver.platform;
+
+  /**
+   * Refusé avant tout geste, comme un cache incohérent : rejouée sur un autre
+   * pilote, une résolution web serait réparée avec des cibles iOS puis
+   * réécrite encore marquée « web » ; un parcours sans étape ici finirait vert
+   * sans avoir rien joué. La suite en fait l'erreur du parcours.
+   */
+  const refused = platformIssue(scenario, platform, resolution);
+  if (refused !== null) throw new Error(formatIssue(refused));
+
   const startedAt = new Date().toISOString();
   const started = Date.now();
 
@@ -537,10 +568,6 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
     secrets,
   };
   let aborted = false;
-
-  const scenarioApplies =
-    scenario.platforms === undefined ||
-    scenario.platforms.some((declared) => platformMatches(declared, platform));
 
   for (const step of scenario.steps) {
     const intent = intentFor(step, platform);
@@ -580,7 +607,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       aborted = true;
     };
 
-    if (aborted || !scenarioApplies || !appliesTo(step, platform)) {
+    if (aborted || !appliesTo(step, platform)) {
       steps.push({ stepId: step.id, intent, status: 'skipped', failures: [], durationMs: 0 });
       continue;
     }
@@ -715,11 +742,21 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
      * la boucle ne ferait qu'attendre pour rien, et vider le tampon à chaque
      * tour perdrait ce qu'on veut justement rapporter.
      */
-    const observations = driver.drainObservations?.() ?? NO_OBSERVATIONS;
+    const observed = driver.drainObservations?.() ?? null;
+    const observations = observed ?? NO_OBSERVATIONS;
 
     for (const assertion of expectationsOf(step)) {
       const check = cached.assertions?.[assertion];
       if (check === undefined || !isObservationCheck(check)) continue;
+      // Sans observation, « aucune requête en échec » serait vrai faute d'avoir
+      // regardé : un vert qui ne prouve rien. L'assertion échoue en le disant.
+      if (observed === null) {
+        failures.push({
+          assertion,
+          reason: `not observable on ${platform}: this driver does not report network or console activity`,
+        });
+        continue;
+      }
       const result = evaluateCheck(check, {
         root: snapshot.root,
         location: snapshot.location,
@@ -731,7 +768,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       if (!result.ok) failures.push({ assertion, reason: result.reason });
     }
 
-    const watch = runWatchdogs(input.watchdogs, observations, secrets);
+    const watch = runWatchdogs(input.watchdogs, observed, secrets, platform);
     const warnings = [...outcome.warnings, ...watch.warnings];
 
     const broken = failures.length > 0 || captureErrors.length > 0 || watch.failures.length > 0;

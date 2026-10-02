@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Acme" label="Acme" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="48213" bundleId="com.example.acme">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="Orders" enabled="true" visible="true" accessible="false" x="0" y="47" width="390" height="44" index="0" traits="">
+          <XCUIElementTypeButton type="XCUIElementTypeButton" name="BackButton" label="Back" enabled="true" visible="true" accessible="true" x="0" y="47" width="70" height="44" index="0" traits="Button"/>
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Orders" name="Orders" label="Orders" enabled="true" visible="true" accessible="true" x="165" y="58" width="60" height="22" index="1" traits="Header, StaticText"/>
+        </XCUIElementTypeNavigationBar>
+        <XCUIElementTypeTable type="XCUIElementTypeTable" name="orders_table" enabled="true" visible="true" accessible="false" x="0" y="91" width="390" height="753" index="1" traits="">
+          <XCUIElementTypeCell type="XCUIElementTypeCell" name="order_1040" enabled="true" visible="true" accessible="false" x="0" y="91" width="390" height="88" index="0" traits="">
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order #1040" name="Order #1040" label="Order #1040" enabled="true" visible="true" accessible="true" x="16" y="103" width="120" height="20" index="0" traits="StaticText"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Reorder" label="Reorder" enabled="true" visible="true" accessible="true" x="290" y="120" width="84" height="34" index="1" traits="Button"/>
+          </XCUIElementTypeCell>
+          <XCUIElementTypeCell type="XCUIElementTypeCell" name="order_1041" enabled="true" visible="true" accessible="false" x="0" y="179" width="390" height="88" index="1" traits="">
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order #1041" name="Order #1041" label="Order #1041" enabled="true" visible="true" accessible="true" x="16" y="191" width="120" height="20" index="0" traits="StaticText"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Reorder" label="Reorder" enabled="true" visible="true" accessible="true" x="290" y="208" width="84" height="34" index="1" traits="Button"/>
+          </XCUIElementTypeCell>
+          <XCUIElementTypeCell type="XCUIElementTypeCell" name="order_1042" enabled="true" visible="false" accessible="false" x="0" y="900" width="390" height="88" index="2" traits="">
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order #1042" name="Order #1042" label="Order #1042" enabled="true" visible="false" accessible="true" x="16" y="912" width="120" height="20" index="0" traits="StaticText"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Track parcel" label="Track parcel" enabled="true" visible="false" accessible="true" x="250" y="929" width="124" height="34" index="1" traits="Button"/>
+          </XCUIElementTypeCell>
+        </XCUIElementTypeTable>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>

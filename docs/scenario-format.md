@@ -178,6 +178,11 @@ Two mechanisms, both **explicit and visible in review**:
     only: [web]
 ```
 
+A scenario-level `platforms: [web]` keeps the whole journey off other
+platforms. A journey with no step for the platform being run — through
+`platforms`, or `only` on every step — is skipped by the CLI, which says so,
+never counted as passed: played, it would only skip steps and end green.
+
 The design rule: bare `do` is the normal case; `per_platform` and `only` are
 exceptions you should be able to count. A scenario riddled with them means the
 two apps have genuinely different journeys and need two scenarios — make that

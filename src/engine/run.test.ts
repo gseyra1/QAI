@@ -178,6 +178,28 @@ describe('runScenario', () => {
     assert.match(report.steps[0]?.failures[0]?.reason ?? '', /expected "3", observed "1"/);
   });
 
+  /**
+   * Un `scrollTo` vers une cible masquée part en réparation, comme tout geste
+   * autre qu'`upload`. Sur le web, laisser passer ferait attendre le délai
+   * complet de Playwright pour un élément qui ne s'affichera jamais.
+   */
+  it('envoie un scrollTo vers une cible masquée à la réparation', async () => {
+    const hidden: ResolveOutcome = { found: false, reason: 'not-visible', matches: 1 };
+    const driver = new FakeDriver(TREE, () => hidden);
+    const healer = new SpyHealer({ healed: false, reason: 'rien à proposer' });
+
+    const report = await runScenario({
+      driver,
+      healer,
+      scenario: scenario([{ id: 's1', do: 'faire défiler jusqu\'au bouton' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'scrollTo', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.deepEqual(healer.calls.map((call) => call.outcome), [hidden]);
+    assert.equal(driver.acted.length, 0);
+  });
+
   it('réessaie après repos avant d\'engager une réparation', async () => {
     const driver = new FakeDriver(TREE, (_target, call) => (call === 1 ? MISSING : FOUND));
     const healer = new SpyHealer({ healed: false, reason: 'ne doit pas arriver' });
@@ -366,11 +388,64 @@ describe('runScenario', () => {
     const driver = new FakeDriver(TREE);
     const report = await runScenario({
       driver,
-      scenario: scenario([{ id: 's1', do: 'survoler', only: ['mobile'] }]),
-      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+      scenario: scenario([
+        { id: 's1', do: 'survoler', only: ['mobile'] },
+        { id: 's2', do: 'ajouter au panier' },
+      ]),
+      resolution: resolution({ s2: { actions: [{ kind: 'click', target: CLICK }] } }),
     });
-    assert.equal(report.steps[0]?.status, 'skipped');
-    assert.equal(report.status, 'passed');
+    assert.deepEqual(
+      report.steps.map((step) => [step.stepId, step.status]),
+      [['s1', 'skipped'], ['s2', 'passed']],
+    );
+    assert.equal(driver.acted.length, 1);
+  });
+
+  /**
+   * Un parcours dont aucune étape ne vaut ici n'est pas vert : il n'a rien
+   * joué. Qu'il soit exclu par `platforms` ou par le `only` de chaque étape.
+   */
+  it('refuse un parcours dont aucune étape ne vaut sur cette plateforme', async () => {
+    const cases: Scenario[] = [
+      { ...scenario([{ id: 's1', do: 'ajouter au panier' }]), platforms: ['ios'] },
+      { ...scenario([{ id: 's1', do: 'ajouter au panier' }]), platforms: ['mobile'] },
+      scenario([{ id: 's1', do: 'survoler', only: ['mobile'] }]),
+    ];
+    for (const refused of cases) {
+      const driver = new FakeDriver(TREE);
+      await assert.rejects(
+        runScenario({
+          driver,
+          scenario: refused,
+          resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+        }),
+        /no step of this journey runs on web/,
+      );
+      assert.deepEqual(driver.acted, []);
+    }
+  });
+
+  /**
+   * Rejouer une résolution web sur un autre pilote la ferait réparer avec
+   * des cibles de cet autre arbre, puis réécrire encore marquée « web ».
+   */
+  it('refuse une résolution écrite pour une autre plateforme, avant tout geste', async () => {
+    class IosStubDriver extends FakeDriver {
+      override readonly platform: Platform = 'ios';
+    }
+    const driver = new IosStubDriver(TREE, () => MISSING);
+    const healer = new SpyHealer({ healed: true, target: CLICK, note: 'ne doit pas arriver' });
+    await assert.rejects(
+      runScenario({
+        driver,
+        healer,
+        scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+        resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+      }),
+      /written for another platform \(web ≠ ios\)/,
+    );
+    assert.deepEqual(driver.acted, []);
+    assert.equal(healer.calls.length, 0);
   });
 
   it('signale une étape sans résolution en cache', async () => {
@@ -838,12 +913,15 @@ describe('runScenario — format v3', () => {
       assertTimeoutMs: 0,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
       scenario: scenario([{ id: 's1', expect: "l'historique est ouvert" }]),
-      resolution: resolution({
-        s1: {
-          actions: [],
-          assertions: { "l'historique est ouvert": { check: 'urlEquals', value: 'orders?tab=history' } },
-        },
-      }),
+      resolution: {
+        ...resolution({
+          s1: {
+            actions: [],
+            assertions: { "l'historique est ouvert": { check: 'urlEquals', value: 'orders?tab=history' } },
+          },
+        }),
+        platform: driver.platform,
+      },
     });
 
   it('résout un urlEquals relatif contre la base, quel que soit le port', async () => {

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Acme" label="Acme" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="48213" bundleId="com.example.acme">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="Sign In" enabled="true" visible="true" accessible="false" x="0" y="47" width="390" height="96" index="0" traits="">
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Sign In" name="Sign In" label="Sign In" enabled="true" visible="true" accessible="true" x="16" y="91" width="117" height="41" index="0" traits="Header, StaticText"/>
+        </XCUIElementTypeNavigationBar>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="143" width="390" height="653" index="1" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="143" width="390" height="653" index="0" traits="">
+            <XCUIElementTypeImage type="XCUIElementTypeImage" name="logo" label="Acme logo" enabled="true" visible="true" accessible="true" x="155" y="160" width="80" height="80" index="0" traits="Image"/>
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Welcome back" name="Welcome back" label="Welcome back" enabled="true" visible="true" accessible="true" x="16" y="256" width="358" height="29" index="1" traits="Header, StaticText"/>
+            <XCUIElementTypeTextField type="XCUIElementTypeTextField" value="Email" name="email_field" label="" enabled="true" visible="true" accessible="true" x="16" y="301" width="358" height="44" index="2" placeholderValue="Email" traits=""/>
+            <XCUIElementTypeSecureTextField type="XCUIElementTypeSecureTextField" value="••••••••" name="password_field" label="Password" enabled="true" visible="true" accessible="true" x="16" y="361" width="358" height="44" index="3" placeholderValue="Password" traits=""/>
+            <XCUIElementTypeSwitch type="XCUIElementTypeSwitch" value="1" name="remember_me" label="Remember me" enabled="true" visible="true" accessible="true" x="16" y="421" width="358" height="31" index="4" traits="Button"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="login_button" label="Sign In" enabled="true" visible="true" accessible="true" x="16" y="476" width="358" height="50" index="5" traits="Button"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Create account" label="Create account" enabled="false" visible="true" accessible="true" x="16" y="542" width="358" height="44" index="6" traits="Button, NotEnabled"/>
+            <XCUIElementTypeLink type="XCUIElementTypeLink" name="Forgot password?" label="Forgot password?" enabled="true" visible="true" accessible="true" x="16" y="602" width="160" height="22" index="7" traits="Link"/>
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Terms &amp; Conditions" name="Terms &amp; Conditions" label="Terms &amp; Conditions" enabled="true" visible="true" accessible="true" x="16" y="640" width="200" height="20" index="8" traits="StaticText"/>
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Caf&#233; &#x2014; &quot;open&quot;" name="Caf&#233; &#x2014; &quot;open&quot;" label="Caf&#233; &#x2014; &quot;open&quot;" enabled="true" visible="true" accessible="true" x="16" y="664" width="200" height="20" index="9" traits="StaticText"/>
+            <XCUIElementTypePicker type="XCUIElementTypePicker" enabled="true" visible="true" accessible="false" x="16" y="690" width="358" height="100" index="10" traits="">
+              <XCUIElementTypePickerWheel type="XCUIElementTypePickerWheel" value="Standard delivery" name="delivery_picker" label="Delivery" enabled="true" visible="true" accessible="true" x="16" y="690" width="358" height="100" index="0" traits="Adjustable"/>
+            </XCUIElementTypePicker>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Ghost" label="Ghost" enabled="true" visible="false" accessible="true" x="16" y="900" width="358" height="44" index="11" traits="Button"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Collapsed" label="Collapsed" enabled="true" visible="false" accessible="true" x="16" y="900" width="0" height="0" index="12" traits="Button"/>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+        <XCUIElementTypeTabBar type="XCUIElementTypeTabBar" name="Tab Bar" label="Tab Bar" enabled="true" visible="true" accessible="false" x="0" y="761" width="390" height="83" index="2" traits="TabBar">
+          <XCUIElementTypeButton type="XCUIElementTypeButton" value="1" name="Home" label="Home" enabled="true" visible="true" accessible="true" x="2" y="762" width="193" height="48" index="0" traits="Button, Selected"/>
+          <XCUIElementTypeButton type="XCUIElementTypeButton" name="Settings" label="Settings" enabled="true" visible="true" accessible="true" x="195" y="762" width="193" height="48" index="1" traits="Button"/>
+        </XCUIElementTypeTabBar>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="1" traits="">
+      <XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" enabled="true" visible="true" accessible="false" x="0" y="553" width="390" height="291" index="0" traits="">
+        <XCUIElementTypeKey type="XCUIElementTypeKey" name="q" label="q" enabled="true" visible="true" accessible="true" x="3" y="561" width="39" height="50" index="0" traits="KeyboardKey"/>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Return" label="return" enabled="true" visible="true" accessible="true" x="292" y="776" width="95" height="50" index="1" traits="Button, KeyboardKey"/>
+      </XCUIElementTypeKeyboard>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>

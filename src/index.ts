@@ -9,6 +9,8 @@
  *
  * `PlaywrightWebDriver` est exporté d'ici : `playwright` reste externe au
  * paquet construit, l'import n'est donc pas payé par qui ne l'utilise pas.
+ * `IosDriver` n'importe rien d'autre que `fetch` : Appium reste un prérequis
+ * de l'utilisateur, jamais une dépendance du paquet.
  */
 export type {
   Action,
@@ -44,6 +46,8 @@ export { BudgetedProvider, BudgetExceededError } from './model/budget.ts';
 export type { StateProvider, StateRequest } from './state/types.ts';
 
 export type { Given, Scenario, Step, TargetPlatform } from './scenario/types.ts';
+// Ce que le CLI écarte d'une suite mixte : un harnais filtre de même avant `runSuite`.
+export { runsOn } from './scenario/types.ts';
 export type { Check, CaptureSpec, Resolution, StepResolution } from './resolution/types.ts';
 
 export type {
@@ -93,6 +97,8 @@ export { COMMENT_MARKER, formatMarkdown } from './report/markdown.ts';
 export { formatIssues, formatReport, formatSuite } from './report/text.ts';
 export { artifactWriter } from './report/artifacts.ts';
 
-// Driver web et configuration.
+// Drivers et configuration. Le pilote iOS est expérimental.
 export { PlaywrightWebDriver } from './driver/web/PlaywrightWebDriver.ts';
+export type { IosDriverErrorCode, IosDriverOptions } from './driver/ios/IosDriver.ts';
+export { IosDriver, IosDriverError } from './driver/ios/IosDriver.ts';
 export { loadConfig } from './config.ts';

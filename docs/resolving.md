@@ -89,6 +89,9 @@ versioned is what was actually played.
 An absolute URL to **another** origin is kept as is. That is a deliberate
 navigation out of the application, not an address copied by accident.
 
+Both rewrites are web only. On iOS a `navigate` is a deep link or a relaunch
+and a URL check compares the screen identifier: both are kept as written.
+
 **A generated `urlEquals` is rewritten the same way.** Same bug, same fix, same
 rules (shared code): a literal absolute URL on the base origin becomes relative
 to the base — `"orders?id=3"`, `"/login"` outside the base path, `"."` for the
@@ -105,6 +108,10 @@ and the start of the path; any relative form loses that anchor —
 `http://host/orders` turned into `orders` would match `/login?next=/orders`,
 the very redirect an access check must catch. The model picks `urlEquals` or a
 fragment it stands behind.
+
+So is a `urlContains` that **cannot fail**: one naming the host (`localhost:4173/orders`
+pins this host and port), or one contained in the base itself (`""`, `/`,
+`localhost`), which every page of the application shares.
 
 **A verification-only step gets no actions; a step with an intent gets at least
 one.** For a step with no intent on the platform being resolved, phase A is

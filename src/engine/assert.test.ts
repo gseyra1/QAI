@@ -175,6 +175,19 @@ describe('evaluateCheck', () => {
     assert.equal(evaluateCheck({ check: 'urlEquals', value: 'http://app.test/panier' }, ici).ok, false);
   });
 
+  /**
+   * Toute adresse contient la chaîne vide : une capture revenue vide au rejeu
+   * ferait de la vérification un vert inconditionnel.
+   */
+  it('refuse un urlContains vide, littéral ou interpolé', () => {
+    const ici = on(tree, { vide: '' }, 'http://app.test/connexion');
+    for (const value of ['', '{{vide}}']) {
+      const ko = evaluateCheck({ check: 'urlContains', value }, ici);
+      assert.equal(ko.ok, false, value);
+      assert.match(ko.ok === false ? ko.reason : '', /empty/, value);
+    }
+  });
+
   it('interpole une capture dans l\'URL attendue', () => {
     const ici = on(tree, { id: '42' }, 'http://app.test/eleves/42');
     assert.deepEqual(evaluateCheck({ check: 'urlContains', value: '/eleves/{{id}}' }, ici), { ok: true });

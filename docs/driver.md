@@ -90,6 +90,9 @@ becomes a step **warning**: the click succeeded but the expected dialog never
 appeared, which almost always means the confirmation disappeared from the
 application.
 
+`expectDialog` exists for dialogs outside the page tree. On iOS an app alert
+is in the tree, so it is clicked by label instead; see the iOS section.
+
 ## `select` targets the label, not the value
 
 Playwright's `selectOption("std")` matches the option's **value** — a technical
@@ -115,23 +118,23 @@ intersection of what the three platforms expose natively.
 | `link` | `link` | `.link` | `TextView` + `URLSpan` |
 | `text` | text content | `.staticText` | `TextView` |
 | `heading` | `heading` | `.staticText` + `header` trait | `AccessibilityHeading` |
-| `image` | `img` | `.image` | `ImageView` |
-| `textbox` | `textbox` | `.textField` | `EditText` |
+| `image` | `img` | `.image`, `.icon` | `ImageView` |
+| `textbox` | `textbox` | `.textField`, `.secureTextField`, `.textView` | `EditText` |
 | `searchbox` | `searchbox` | `.searchField` | `SearchView` |
 | `combobox` | `combobox` | `.pickerWheel` | `Spinner` |
 | `checkbox` | `checkbox` | `.checkBox` | `CheckBox` |
 | `radio` | `radio` | `.radioButton` | `RadioButton` |
-| `switch` | `switch` | `.switch` | `Switch` |
+| `switch` | `switch` | `.switch`, `.toggle` | `Switch` |
 | `slider` | `slider` | `.slider` | `SeekBar` |
 | `list` | `list` | `.table`, `.collectionView` | `RecyclerView` |
 | `listitem` | `listitem` | `.cell` | direct child of the list |
-| `table` / `row` / `cell` | same | `.table` / `.cell` / `.staticText` | `GridView` |
+| `table` / `row` / `cell` | same | — (a `.table` is a `list`) | `GridView` |
 | `tab` / `tablist` | same | `.button` inside `.tabBar` / `.tabBar` | `TabLayout.Tab` |
-| `dialog` | `dialog` | `.alert`, `.sheet` | `AlertDialog` |
+| `dialog` | `dialog` | `.alert`, `.sheet` (action sheet) | `AlertDialog` |
 | `menu` / `menuitem` | same | `.menu` / `.menuItem` | `Menu` / `MenuItem` |
-| `progressbar` | `progressbar` | `.progressIndicator` | `ProgressBar` |
-| `alert` | `alert` | `.alert` | `Toast`, `Snackbar` |
-| `group` | `group` | `.other` | `ViewGroup` |
+| `progressbar` | `progressbar` | `.progressIndicator`, `.activityIndicator` | `ProgressBar` |
+| `alert` | `alert` | — (an `.alert` is modal: `dialog`) | `Toast`, `Snackbar` |
+| `group` | `group` | `.other`, and any type not listed | `ViewGroup` |
 
 The accessible name follows the same principle: `aria-label` and accname
 computation on the web, `accessibilityLabel` on iOS, `contentDescription` then
@@ -155,6 +158,131 @@ This is the real porting difficulty, and it is as much product as technical:
 either help customers label their apps correctly — valuable in itself, as
 accessibility regulation tightens — or accept a more expensive vision tier on
 mobile. Decide before promising price parity between the two platforms.
+
+## iOS driver — EXPERIMENTAL
+
+`IosDriver` (`src/driver/ios/`) drives an iOS app through an
+[Appium](https://appium.io) server running the XCUITest driver, over the W3C
+WebDriver protocol. **Status: experimental — not yet validated on a device.**
+It was written against the documented protocol and is tested against a fake
+Appium server that checks every HTTP call; expect rough edges on a real app.
+
+### Prerequisites
+
+None of these is a QAI dependency — like a browser for the web driver:
+
+- macOS with Xcode and an iOS simulator (or a provisioned device);
+- Appium 2 or 3: `npm i -g appium`;
+- the XCUITest driver, 4.17 or later: `appium driver install xcuitest`;
+- a running server: `appium` (default `http://127.0.0.1:4723`);
+- for deep links (`navigate` to a URL, a StateProvider `entry`): iOS 16.4+ and
+  Xcode 14.3+, as `mobile: deepLink` requires.
+
+```bash
+qai run qa/ --platform ios --app com.example.app --device "iPhone 16"
+qai resolve qa/login.qai.yaml --platform ios --app build/Acme.app --provider ./qa/provider.ts
+```
+
+Resolutions land in `.qai/resolutions/<id>.ios.json`, next to the web ones. A
+resolution written for another platform is refused by `check` and `run`. One
+device plays one journey at a time: `--workers` must be 1 (a `workers` value
+from `qai.config.json` is brought down to 1). `--headed` is refused.
+
+`qai resolve` on iOS is as experimental as the driver: the model is prompted
+for the web and may propose a relative `navigate`, a `hover` or an
+`expectDialog`; each is rejected before any gesture and the model retries. So is
+a `urlContains` that only names the app (`com.example.app`): every location
+starts with it, so it would be true on every screen. A step with no intent on
+iOS (verification only) is resolved and replayed with no gesture, as on the web.
+
+A journey with no step for iOS (`platforms: [web]`, or `only: [web]` on every
+step) is skipped by `resolve`, `check` and `run`, with a line on stderr; it is
+never reported as passed, and a selection left with no journey fails.
+`runScenario` and `generateResolution` refuse it, and `runScenario` refuses a
+resolution written for another platform, before any gesture.
+
+### Session
+
+`--app` is a bundle id (`appium:bundleId`, app already installed) or a path to
+a `.app`, `.ipa` or zipped `.app` (`appium:app`, installed by Appium). Appium
+reads that path **on the server host**: a relative path is resolved from the
+current directory, and refused when `--appium-url` is not on this machine — pass
+an absolute path on the server host, or a URL. After an install, the bundle id
+is read from `mobile: activeAppInfo`; SpringBoard in the foreground is refused.
+`--device` is a UDID (`appium:udid`) or a device name (`appium:deviceName`). The
+session uses `platformName: iOS` and `appium:automationName: XCUITest`.
+`dispose()` deletes the session and never throws on a session already gone.
+
+### What is observed
+
+`GET /session/:id/source` (the XCUITest XML page source) is parsed into the
+normalized tree with the role table above, and:
+
+- **name** — the accessibility label; for an empty text field, its
+  placeholder; then the `name` attribute (identifier, else label);
+- **testId** — the accessibility identifier, when it differs from the label.
+  `fallback.accessibilityId` and `fallback.testId` both target it, and are
+  counted like the primary locator: an identifier carried by several elements
+  is ambiguous. `fallback.selector` is web-only and ignored;
+- **heading** — a `StaticText` (or `Other`) carrying the `Header` trait;
+- **state** — `visible` means **rendered**, as on the web: present with a
+  non-empty frame, even below the fold. XCUITest's own `visible` attribute
+  means on screen; it only decides whether `scrollTo` must scroll. `enabled`,
+  switch value `1`/`0` as `checked`, the `Selected` trait as `selected`;
+- **value** — never the value of a `SecureTextField`, as `type=password` on
+  the web. A text field whose value equals its placeholder is empty;
+- **location** — `<bundle id>/<on-screen navigation bar title>`, or the bundle
+  id alone without a navigation bar. iOS has no URL: `urlContains` and
+  `urlEquals` compare against this string as written — no base, so a relative
+  value is never resolved;
+- the keyboard and the status bar are left out: keys are pressed with `press`,
+  and the clock would keep the screen from ever settling.
+
+`resolve()` counts matches on the same tree `observe()` returns, so `nth` means
+the same element to the model and to the driver.
+
+### Actions
+
+| Action | Protocol |
+|---|---|
+| `click` | find the node by XPath, then W3C Element Click |
+| `fill` | find the node by XPath, then element click, clear, send keys |
+| `select` | send the **displayed label** to the `PickerWheel` (XCTest `adjustToPickerWheelValue`) |
+| `press` | send `Enter`/`Return`, `Tab`, `Backspace`/`Delete`, `Space` or one character to the active element |
+| `swipe` | `mobile: swipe` with the direction |
+| `scrollTo` | `mobile: scrollToElement` on the node when it is off screen, then a re-read: still off screen fails |
+| `navigate` | an absolute URL opens as `mobile: deepLink` into the app; `.` and `/` relaunch it (`mobile: terminateApp` + `mobile: launchApp`); any other path — and `host:port` without a scheme — is refused, at `check` time too |
+| `hover`, `upload`, `expectDialog` | refused — at planning, from `capabilities` (`hover: false`, `dialogs: false`) |
+
+The XPath is the node's position in the source **plus its identity**
+(`[@name="…"]`, else `[@label="…"]`): WebDriverAgent evaluates it on a fresh
+snapshot, so a reloaded list cannot slip another row under the gesture. Nothing
+is tapped by coordinates: Element Click lets XCTest compute a reachable point,
+scroll to the element and fail if something — the keyboard — covers it.
+
+**Alerts.** An app alert or action sheet (`UIAlertController`) is part of the
+app's tree: it is observed as a `dialog`, its text is assertable, and it is
+answered by clicking its button by label, in a step of its own. The driver
+**never** calls `/alert/accept` or `/alert/dismiss`: WebDriverAgent picks the
+button by position (the last button of an alert is "Cancel" when there are
+three; a sheet is reported as an alert on iPhone), so no answer chosen blindly
+is safe. While an app alert is open, a gesture aimed outside it is refused,
+naming the alert. An alert **outside the app** (system permission prompt) is
+not in the app's tree: the gesture that raised it, or the next one, fails
+naming it — grant permissions before the run.
+
+**`settle()`** polls the page source until two consecutive projected trees are
+identical, or the timeout (5 s by default) runs out. iOS exposes no in-flight
+requests: a tree that stops changing is the only observable sign of rest.
+
+**`applyState()`** — there are no cookies or local storage to install:
+non-empty `cookies` or `storage` are refused with an explicit error. `entry` is
+opened as a deep link.
+
+**Network and console** are not observed (no `drainObservations`).
+`noFailedRequests` and `noConsoleErrors` therefore **fail** on iOS with "not
+observable", are rejected during generation, and active `watchdogs` are refused
+by the CLI — they would otherwise pass without having looked.
 
 ## Writing a new driver
 

@@ -88,6 +88,8 @@ Two files per journey, and the split is the whole design:
 
 Porting to mobile means generating a new resolution — not rewriting your tests.
 
+**iOS (experimental, not yet validated on a device):** `qai run qa/ --platform ios --app com.example.app` drives the app through Appium + XCUITest — prerequisites and limits in [docs/driver.md](docs/driver.md#ios-driver--experimental).
+
 Three execution tiers:
 
 | Tier | Trigger | Model calls |
