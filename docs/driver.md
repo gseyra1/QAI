@@ -90,6 +90,9 @@ becomes a step **warning**: the click succeeded but the expected dialog never
 appeared, which almost always means the confirmation disappeared from the
 application.
 
+`expectDialog` exists for dialogs outside the page tree. On iOS an app alert
+is in the tree, so it is clicked by label instead; see the iOS section.
+
 ## `select` targets the label, not the value
 
 Playwright's `selectOption("std")` matches the option's **value** — a technical
@@ -127,7 +130,7 @@ intersection of what the three platforms expose natively.
 | `listitem` | `listitem` | `.cell` | direct child of the list |
 | `table` / `row` / `cell` | same | — (a `.table` is a `list`) | `GridView` |
 | `tab` / `tablist` | same | `.button` inside `.tabBar` / `.tabBar` | `TabLayout.Tab` |
-| `dialog` | `dialog` | `.alert`, `.sheet` | `AlertDialog` |
+| `dialog` | `dialog` | `.alert`, `.sheet` (action sheet) | `AlertDialog` |
 | `menu` / `menuitem` | same | `.menu` / `.menuItem` | `Menu` / `MenuItem` |
 | `progressbar` | `progressbar` | `.progressIndicator`, `.activityIndicator` | `ProgressBar` |
 | `alert` | `alert` | — (an `.alert` is modal: `dialog`) | `Toast`, `Snackbar` |
@@ -170,25 +173,36 @@ None of these is a QAI dependency — like a browser for the web driver:
 
 - macOS with Xcode and an iOS simulator (or a provisioned device);
 - Appium 2 or 3: `npm i -g appium`;
-- the XCUITest driver: `appium driver install xcuitest`;
-- a running server: `appium` (default `http://127.0.0.1:4723`).
+- the XCUITest driver, 4.17 or later: `appium driver install xcuitest`;
+- a running server: `appium` (default `http://127.0.0.1:4723`);
+- for deep links (`navigate` to a URL, a StateProvider `entry`): iOS 16.4+ and
+  Xcode 14.3+, as `mobile: deepLink` requires.
 
 ```bash
 qai run qa/ --platform ios --app com.example.app --device "iPhone 16"
 qai resolve qa/login.qai.yaml --platform ios --app build/Acme.app --provider ./qa/provider.ts
 ```
 
-Resolutions land in `.qai/resolutions/<id>.ios.json`, next to the web ones.
-One device plays one journey at a time: `--workers` must be 1.
+Resolutions land in `.qai/resolutions/<id>.ios.json`, next to the web ones. A
+resolution written for another platform is refused by `check` and `run`. One
+device plays one journey at a time: `--workers` must be 1 (a `workers` value
+from `qai.config.json` is brought down to 1). `--headed` is refused.
+
+`qai resolve` on iOS is as experimental as the driver: the model is prompted
+for the web and may propose a relative `navigate` or an `expectDialog`; both
+are rejected during generation and the model retries.
 
 ### Session
 
 `--app` is a bundle id (`appium:bundleId`, app already installed) or a path to
-a `.app`, `.ipa` or zipped `.app` (`appium:app`, installed by Appium; relative
-paths resolve from the current directory). `--device` is a UDID
-(`appium:udid`) or a device name (`appium:deviceName`). The session uses
-`platformName: iOS` and `appium:automationName: XCUITest`. `dispose()` deletes
-the session and never throws on a session already gone.
+a `.app`, `.ipa` or zipped `.app` (`appium:app`, installed by Appium). Appium
+reads that path **on the server host**: a relative path is resolved from the
+current directory, and refused when `--appium-url` is not on this machine — pass
+an absolute path on the server host, or a URL. After an install, the bundle id
+is read from `mobile: activeAppInfo`; SpringBoard in the foreground is refused.
+`--device` is a UDID (`appium:udid`) or a device name (`appium:deviceName`). The
+session uses `platformName: iOS` and `appium:automationName: XCUITest`.
+`dispose()` deletes the session and never throws on a session already gone.
 
 ### What is observed
 
@@ -198,41 +212,55 @@ normalized tree with the role table above, and:
 - **name** — the accessibility label; for an empty text field, its
   placeholder; then the `name` attribute (identifier, else label);
 - **testId** — the accessibility identifier, when it differs from the label.
-  It is the target of `fallback.accessibilityId`; `fallback.testId` and
-  `fallback.selector` are web-only and ignored here;
+  `fallback.accessibilityId` and `fallback.testId` both target it, and are
+  counted like the primary locator: an identifier carried by several elements
+  is ambiguous. `fallback.selector` is web-only and ignored;
 - **heading** — a `StaticText` (or `Other`) carrying the `Header` trait;
-- **state** — `visible`, `enabled`, switch value `1`/`0` as `checked`, the
-  `Selected` trait as `selected`;
+- **state** — `visible` means **rendered**, as on the web: present with a
+  non-empty frame, even below the fold. XCUITest's own `visible` attribute
+  means on screen; it only decides whether `scrollTo` must scroll. `enabled`,
+  switch value `1`/`0` as `checked`, the `Selected` trait as `selected`;
 - **value** — never the value of a `SecureTextField`, as `type=password` on
   the web. A text field whose value equals its placeholder is empty;
-- **location** — `<bundle id>/<visible navigation bar title>`, or the bundle id
-  alone without a navigation bar. iOS has no URL: `urlContains` checks this;
+- **location** — `<bundle id>/<on-screen navigation bar title>`, or the bundle
+  id alone without a navigation bar. iOS has no URL: `urlContains` checks this;
 - the keyboard and the status bar are left out: keys are pressed with `press`,
   and the clock would keep the screen from ever settling.
+
+`resolve()` counts matches on the same tree `observe()` returns, so `nth` means
+the same element to the model and to the driver.
 
 ### Actions
 
 | Action | Protocol |
 |---|---|
-| `click` | `mobile: tap` at the centre of the resolved node |
-| `fill` | find the exact node by positional XPath, then element click, clear, send keys |
+| `click` | find the node by XPath, then W3C Element Click |
+| `fill` | find the node by XPath, then element click, clear, send keys |
 | `select` | send the **displayed label** to the `PickerWheel` (XCTest `adjustToPickerWheelValue`) |
 | `press` | send `Enter`/`Return`, `Tab`, `Backspace`/`Delete`, `Space` or one character to the active element |
 | `swipe` | `mobile: swipe` with the direction |
-| `scrollTo` | `mobile: scroll` toward the target until it is visible, 8 scrolls at most |
-| `navigate` | an absolute URL opens as `mobile: deepLink` into the app; `.` relaunches it (`mobile: terminateApp` + `mobile: activateApp`); a relative path is refused |
-| `expectDialog` | after the next gesture, `/alert/accept` or `/alert/dismiss` (prompt text via `POST /alert/text`) |
-| `hover`, `upload` | refused — `hover` at planning (`capabilities.hover: false`) |
+| `scrollTo` | `mobile: scrollToElement` on the node when it is off screen, then a re-read: still off screen fails |
+| `navigate` | an absolute URL opens as `mobile: deepLink` into the app; `.` and `/` relaunch it (`mobile: terminateApp` + `mobile: launchApp`); any other path — and `host:port` without a scheme — is refused, at `check` time too |
+| `hover`, `upload`, `expectDialog` | refused — at planning, from `capabilities` (`hover: false`, `dialogs: false`) |
 
-`click` taps coordinates rather than an element: one documented command, and
-the coordinates come from the very tree `resolve()` just validated.
+The XPath is the node's position in the source **plus its identity**
+(`[@name="…"]`, else `[@label="…"]`): WebDriverAgent evaluates it on a fresh
+snapshot, so a reloaded list cannot slip another row under the gesture. Nothing
+is tapped by coordinates: Element Click lets XCTest compute a reachable point,
+scroll to the element and fail if something — the keyboard — covers it.
 
-**Dialogs.** After every gesture and while settling, `GET /alert/text` tells
-whether an alert is open. An armed `expectDialog` answers it; with nothing
-armed, it is **dismissed**, as on the web. Consequence: an alert's text cannot
-be asserted on iOS today.
+**Alerts.** An app alert or action sheet (`UIAlertController`) is part of the
+app's tree: it is observed as a `dialog`, its text is assertable, and it is
+answered by clicking its button by label, in a step of its own. The driver
+**never** calls `/alert/accept` or `/alert/dismiss`: WebDriverAgent picks the
+button by position (the last button of an alert is "Cancel" when there are
+three; a sheet is reported as an alert on iPhone), so no answer chosen blindly
+is safe. While an app alert is open, a gesture aimed outside it is refused,
+naming the alert. An alert **outside the app** (system permission prompt) is
+not in the app's tree: the gesture that raised it, or the next one, fails
+naming it — grant permissions before the run.
 
-**`settle()`** polls the page source until two consecutive reads are
+**`settle()`** polls the page source until two consecutive projected trees are
 identical, or the timeout (5 s by default) runs out. iOS exposes no in-flight
 requests: a tree that stops changing is the only observable sign of rest.
 
@@ -240,7 +268,10 @@ requests: a tree that stops changing is the only observable sign of rest.
 non-empty `cookies` or `storage` are refused with an explicit error. `entry` is
 opened as a deep link.
 
-Network and console observation (`drainObservations`) is not available.
+**Network and console** are not observed (no `drainObservations`).
+`noFailedRequests` and `noConsoleErrors` therefore **fail** on iOS with "not
+observable", are rejected during generation, and active `watchdogs` are refused
+by the CLI — they would otherwise pass without having looked.
 
 ## Writing a new driver
 

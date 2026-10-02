@@ -62,7 +62,14 @@ describe('XCUITest page source → UINode tree', () => {
     assert.equal(named(root, 'switch', 'Remember me').state.checked, true);
     assert.equal(named(root, 'tab', 'Home').state.selected, true);
     assert.equal(named(root, 'tab', 'Settings').state.selected, undefined);
-    assert.equal(named(root, 'button', 'Ghost').state.visible, false);
+    // Sous le pli mais rendu : visible, comme sur le web ; sans boîte : non.
+    assert.equal(named(root, 'button', 'Ghost').state.visible, true);
+    assert.equal(named(root, 'button', 'Collapsed').state.visible, false);
+  });
+
+  it('keeps what XCUITest calls visible — on screen — apart, for scrolling only', () => {
+    assert.equal(elements.get(named(root, 'button', 'Ghost').id)?.onScreen, false);
+    assert.equal(elements.get(named(root, 'button', 'Sign In').id)?.onScreen, true);
   });
 
   it('reads the rect from x, y, width and height', () => {
@@ -86,26 +93,44 @@ describe('XCUITest page source → UINode tree', () => {
     assert.equal(location, 'com.example.acme/Sign In');
   });
 
-  it('records a positional XPath for each node, counted on the raw source', () => {
+  it('records a positional XPath for each node, counted on the raw source, closed by its identity', () => {
     const button = named(root, 'button', 'Sign In');
     assert.deepEqual(elements.get(button.id), {
       type: 'XCUIElementTypeButton',
       xpath:
         '//XCUIElementTypeApplication[1]/XCUIElementTypeWindow[1]/XCUIElementTypeOther[1]' +
-        '/XCUIElementTypeOther[1]/XCUIElementTypeOther[1]/XCUIElementTypeButton[1]',
-      accessibilityId: 'login_button',
+        '/XCUIElementTypeOther[1]/XCUIElementTypeOther[1]/XCUIElementTypeButton[1][@name="login_button"]',
+      onScreen: true,
     });
     const settings = named(root, 'tab', 'Settings');
     assert.equal(
       elements.get(settings.id)?.xpath,
       '//XCUIElementTypeApplication[1]/XCUIElementTypeWindow[1]/XCUIElementTypeOther[1]' +
-        '/XCUIElementTypeTabBar[1]/XCUIElementTypeButton[2]',
+        '/XCUIElementTypeTabBar[1]/XCUIElementTypeButton[2][@name="Settings"]',
     );
+    // Sans `name`, le libellé ; sans rien, le rang seul.
+    const wrapper = elements.get(named(root, 'tablist', 'Tab Bar').id);
+    assert.match(wrapper?.xpath ?? '', /XCUIElementTypeTabBar\[1\]\[@name="Tab Bar"\]$/);
   });
 
-  it('drops hidden leaves when observing, like the web driver', () => {
+  it('quotes an identity that carries quotes, with concat() when it carries both', () => {
+    const xml =
+      '<AppiumAUT><XCUIElementTypeApplication type="XCUIElementTypeApplication" name="A" label="A" x="0" y="0" width="100" height="100">' +
+      '<XCUIElementTypeButton type="XCUIElementTypeButton" name="Say &quot;hi&quot;" label="x" x="0" y="0" width="10" height="10"/>' +
+      '<XCUIElementTypeButton type="XCUIElementTypeButton" name="It&apos;s &quot;on&quot;" label="y" x="0" y="20" width="10" height="10"/>' +
+      '</XCUIElementTypeApplication></AppiumAUT>';
+    const screen = readScreen(xml, { mode: 'complete' });
+    const paths = flatten(screen.root).slice(1).map((node) => screen.elements.get(node.id)?.xpath);
+    assert.deepEqual(paths, [
+      `//XCUIElementTypeApplication[1]/XCUIElementTypeButton[1][@name='Say "hi"']`,
+      `//XCUIElementTypeApplication[1]/XCUIElementTypeButton[2][@name=concat("It's ", '"', "on", '"', "")]`,
+    ]);
+  });
+
+  it('drops leaves without a box when observing, like hidden nodes on the web', () => {
     const observed = readScreen(LOGIN, { mode: 'observe' }).root;
-    assert.equal(flatten(observed).some((node) => node.name === 'Ghost'), false);
+    assert.equal(flatten(observed).some((node) => node.name === 'Collapsed'), false);
+    assert.equal(flatten(observed).some((node) => node.name === 'Ghost'), true);
     assert.equal(flatten(observed).some((node) => node.name === 'Sign In' && node.role === 'button'), true);
   });
 
@@ -132,13 +157,22 @@ describe('XCUITest page source → UINode tree', () => {
     assert.equal(orders.location, 'com.example.acme/Orders');
   });
 
-  it('maps an alert to a dialog', () => {
-    const alert = readScreen(fixture('alert.xml'), { mode: 'complete' });
-    const dialog = named(alert.root, 'dialog', 'Delete account?');
-    assert.ok(flatten(dialog).some((node) => node.role === 'button' && node.name === 'Delete'));
+  it('maps an alert and an action sheet to dialogs, and records them as open', () => {
+    for (const [file, name, button] of [
+      ['alert.xml', 'Delete account?', 'Delete'],
+      ['sheet.xml', 'Order actions', 'Share'],
+    ] as const) {
+      const screen = readScreen(fixture(file), { mode: 'complete' });
+      const dialog = named(screen.root, 'dialog', name);
+      const inside = flatten(dialog).find((node) => node.role === 'button' && node.name === button);
+      assert.ok(inside !== undefined, file);
+      assert.deepEqual(screen.modals, [{ id: dialog.id, name }]);
+      assert.equal(screen.elements.get(inside.id)?.modal, dialog.id);
+    }
+    assert.deepEqual(readScreen(LOGIN, { mode: 'complete' }).modals, []);
   });
 
-  it('falls back to geometry when the visible attribute is excluded from the source', () => {
+  it('reads on-screen from geometry when the visible attribute is excluded from the source', () => {
     const xml =
       '<AppiumAUT><XCUIElementTypeApplication type="XCUIElementTypeApplication" name="A" label="A" x="0" y="0" width="100" height="100">' +
       '<XCUIElementTypeButton type="XCUIElementTypeButton" name="Shown" label="Shown" x="0" y="0" width="10" height="10"/>' +
@@ -147,6 +181,7 @@ describe('XCUITest page source → UINode tree', () => {
     const screen = readScreen(xml, { mode: 'complete', bundleId: 'com.example.known' });
     assert.equal(named(screen.root, 'button', 'Shown').state.visible, true);
     assert.equal(named(screen.root, 'button', 'Flat').state.visible, false);
+    assert.equal(screen.elements.get(named(screen.root, 'button', 'Shown').id)?.onScreen, true);
     // Sans attribut bundleId dans la source, le bundle connu du pilote sert.
     assert.equal(screen.location, 'com.example.known');
   });

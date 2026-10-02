@@ -20,18 +20,36 @@ export interface ElementInfo {
   /** Type XCUITest complet, `XCUIElementTypePickerWheel` par exemple. */
   type: string;
   /**
-   * Chemin positionnel dans la source. Le localisateur `xpath` de XCUITest est
-   * évalué sur ce même document : c'est le seul moyen de désigner exactement
-   * l'élément résolu, et non un homonyme.
+   * Chemin positionnel dans la source, complété par l'identité de l'élément.
+   *
+   * WebDriverAgent évalue le chemin sur un NOUVEL instantané, pas sur celui que
+   * la source a sérialisé : un rang seul désignerait n'importe quel voisin
+   * venu prendre la place après un rechargement de liste. Le prédicat sur
+   * `name` (ou `label`) fait qu'un écran changé ne désigne plus rien, au lieu
+   * de désigner autre chose.
    */
   xpath: string;
-  /** L'attribut `name` brut : identifiant d'accessibilité, sinon libellé. */
-  accessibilityId?: string;
+  /**
+   * À l'écran au sens de XCUITest (attribut `visible`), ce que `state.visible`
+   * ne dit PAS : celui-ci suit le web — rendu, même sous le pli. Seul
+   * `scrollTo` a besoin de la différence.
+   */
+  onScreen: boolean;
+  /** L'identifiant du dialogue (`Alert` ou `Sheet`) qui contient l'élément. */
+  modal?: string;
+}
+
+/** Un dialogue de l'application affiché : alerte ou feuille d'actions. */
+export interface Modal {
+  id: string;
+  name: string;
 }
 
 export interface Screen {
   root: UINode;
   elements: Map<string, ElementInfo>;
+  /** Les dialogues de l'application à l'écran, dans l'ordre du document. */
+  modals: Modal[];
   bundleId?: string;
   location: string;
   viewport: Rect;
@@ -39,9 +57,9 @@ export interface Screen {
 
 export interface ReadOptions {
   /**
-   * `complete` garde tout — invisibles compris — pour que `resolve` sache
-   * distinguer « absent » de « hors écran ». `observe` suit les règles du
-   * pilote web : feuilles invisibles retirées, élagage sur demande.
+   * `complete` garde tout — non rendus compris — pour que `resolve` sache
+   * distinguer « absent » de « non rendu ». `observe` suit les règles du
+   * pilote web : feuilles non rendues retirées, élagage sur demande.
    */
   mode: 'complete' | 'observe';
   interactiveOnly?: boolean;
@@ -93,8 +111,11 @@ const ROLES: Readonly<Record<string, Role>> = {
  *
  * Le clavier virtuel ajoute une trentaine de boutons à chaque saisie : du
  * bruit pour le modèle, et des cibles qu'un scénario ne doit pas viser — une
- * touche se presse par `press`. La barre d'état porte l'heure : elle change
- * chaque minute, et `settle` n'atteindrait jamais deux sources identiques.
+ * touche se presse par `press`. Ce retrait est sans danger pour les gestes :
+ * ils passent par l'élément, et XCTest refuse de toucher un élément que le
+ * clavier recouvre. La barre d'état porte l'heure : elle change chaque
+ * minute, et `settle` — qui compare l'arbre projeté — ne trouverait jamais
+ * deux lectures identiques.
  */
 const SKIPPED: ReadonlySet<string> = new Set(['Keyboard', 'StatusBar']);
 
@@ -194,12 +215,41 @@ function valueOf(element: XmlElement, type: string, role: Role): string | undefi
   return value;
 }
 
-function stateOf(element: XmlElement, role: Role, traits: Set<string>, rect: Rect): UINode['state'] {
+/**
+ * Rendu, au sens du web : présent dans l'arbre avec une boîte non vide.
+ *
+ * L'attribut `visible` de XCUITest veut dire « à l'écran » : une ligne de
+ * liste sous le pli y vaut « false ». Le reprendre tel quel faisait passer
+ * « la commande 1042 a disparu » pour vrai tant que la ligne était hors
+ * écran — un vert qui ne prouve rien — et faisait compter à `resolve` une
+ * autre population que celle montrée au modèle. Le web ne regarde pas la
+ * fenêtre non plus : un élément sous le pli y est visible. UIKit retire déjà
+ * de l'arbre d'accessibilité les vues masquées ou transparentes ; reste la
+ * boîte vide d'une vue repliée.
+ */
+function isRendered(rect: Rect): boolean {
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * À l'écran, au sens de XCUITest. `visible` peut être exclu de la source par
+ * réglage (pageSourceExcludedAttributes) : on retombe alors sur l'intersection
+ * avec l'application.
+ */
+function isOnScreen(element: XmlElement, rect: Rect, viewport: Rect): boolean {
   const raw = element.attributes['visible'];
-  // `visible` peut être exclu de la source par réglage (pageSourceExcludedAttributes) :
-  // on retombe alors sur la géométrie, comme le web sur la boîte englobante.
-  const visible = raw !== undefined ? raw === 'true' : rect.width > 0 && rect.height > 0;
-  const state: UINode['state'] = { visible };
+  if (raw !== undefined) return raw === 'true';
+  return (
+    isRendered(rect) &&
+    rect.x < viewport.x + viewport.width &&
+    rect.x + rect.width > viewport.x &&
+    rect.y < viewport.y + viewport.height &&
+    rect.y + rect.height > viewport.y
+  );
+}
+
+function stateOf(element: XmlElement, role: Role, traits: Set<string>, rect: Rect): UINode['state'] {
+  const state: UINode['state'] = { visible: isRendered(rect) };
 
   if (element.attributes['enabled'] === 'false' || traits.has('NotEnabled')) state.disabled = true;
 
@@ -218,6 +268,28 @@ function stateOf(element: XmlElement, role: Role, traits: Set<string>, rect: Rec
   // `focused` n'est écrit que sur tvOS ; on le lit quand il est là.
   if (element.attributes['focused'] === 'true') state.focused = true;
   return state;
+}
+
+/**
+ * Un littéral XPath 1.0. Le langage n'a pas d'échappement : une chaîne qui
+ * porte les deux guillemets se recompose par `concat()`.
+ */
+function xpathLiteral(text: string): string {
+  if (!text.includes('"')) return `"${text}"`;
+  if (!text.includes("'")) return `'${text}'`;
+  return `concat(${text
+    .split('"')
+    .map((part) => `"${part}"`)
+    .join(`, '"', `)})`;
+}
+
+/** Le prédicat d'identité du dernier pas : `name`, sinon `label`, sinon rien. */
+function identityOf(element: XmlElement): string {
+  for (const attribute of ['name', 'label']) {
+    const value = element.attributes[attribute];
+    if (value !== undefined && value !== '') return `[@${attribute}=${xpathLiteral(value)}]`;
+  }
+  return '';
 }
 
 function keep(node: UINode, interactiveOnly: boolean): boolean {
@@ -251,13 +323,21 @@ function locationOf(bundleId: string | undefined, navigationTitle: string | unde
 
 export function readScreen(xml: string, options: ReadOptions): Screen {
   const app = applicationOf(parseXml(xml));
+  const viewport = rectOf(app);
   const elements = new Map<string, ElementInfo>();
+  const modals: Modal[] = [];
   const interactiveOnly = options.interactiveOnly === true;
   const complete = options.mode === 'complete';
   let counter = 0;
   let navigationTitle: string | undefined;
 
-  function walk(element: XmlElement, xpath: string, isRoot: boolean, inTabBar: boolean): UINode | null {
+  function walk(
+    element: XmlElement,
+    xpath: string,
+    isRoot: boolean,
+    inTabBar: boolean,
+    modal: string | undefined,
+  ): UINode | null {
     const type = shortType(element);
     if (!isRoot && SKIPPED.has(type)) return null;
 
@@ -265,8 +345,14 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     const rect = rectOf(element);
     const role = roleOf(type, traits, inTabBar);
     const state = stateOf(element, role, traits, rect);
+    const onScreen = isOnScreen(element, rect, viewport);
+    // L'identifiant est réservé avant les enfants : ils doivent pouvoir
+    // désigner le dialogue qui les contient.
+    const id = `n${counter++}`;
+    const isModal = (type === 'Alert' || type === 'Sheet') && onScreen;
+    const within = isModal ? id : modal;
 
-    if (type === 'NavigationBar' && state.visible && navigationTitle === undefined) {
+    if (type === 'NavigationBar' && onScreen && navigationTitle === undefined) {
       navigationTitle = collapse(element.attributes['name'] ?? element.attributes['label'] ?? '');
     }
 
@@ -277,12 +363,12 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     for (const child of element.children) {
       const rank = (ranks.get(child.tag) ?? 0) + 1;
       ranks.set(child.tag, rank);
-      const built = walk(child, `${xpath}/${child.tag}[${rank}]`, false, inTabBar || type === 'TabBar');
+      const built = walk(child, `${xpath}/${child.tag}[${rank}]`, false, inTabBar || type === 'TabBar', within);
       if (built !== null) children.push(built);
     }
 
     const node: UINode = {
-      id: `n${counter++}`,
+      id,
       role,
       name: nameOf(element, role),
       state,
@@ -300,9 +386,10 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
       node.testId = rawName;
     }
 
-    const info: ElementInfo = { type: `${PREFIX}${type}`, xpath };
-    if (rawName !== undefined && rawName !== '') info.accessibilityId = rawName;
+    const info: ElementInfo = { type: `${PREFIX}${type}`, xpath: `${xpath}${identityOf(element)}`, onScreen };
+    if (within !== undefined) info.modal = within;
     elements.set(node.id, info);
+    if (isModal) modals.push({ id, name: node.name });
 
     if (isRoot || complete) return node;
     if (!state.visible && children.length === 0) return null;
@@ -319,14 +406,15 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     return keep(node, interactiveOnly) ? node : null;
   }
 
-  const root = walk(app, `//${app.tag}[1]`, true, false) as UINode;
+  const root = walk(app, `//${app.tag}[1]`, true, false, undefined) as UINode;
   const declared = app.attributes['bundleId'];
   const bundleId = declared !== undefined && declared !== '' ? declared : options.bundleId;
   const screen: Screen = {
     root,
     elements,
+    modals,
     location: locationOf(bundleId, navigationTitle),
-    viewport: rectOf(app),
+    viewport,
   };
   if (bundleId !== undefined) screen.bundleId = bundleId;
   return screen;

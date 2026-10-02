@@ -30,7 +30,12 @@ import { readScreen } from './source.ts';
  * chaque appel. D'où le statut expérimental, affiché dans la documentation.
  */
 
-export type IosDriverErrorCode = 'not-launched' | 'unsupported' | 'unresolved' | 'invalid-entry';
+export type IosDriverErrorCode =
+  | 'not-launched'
+  | 'unsupported'
+  | 'unresolved'
+  | 'invalid-entry'
+  | 'blocked-by-alert';
 
 export class IosDriverError extends Error {
   readonly code: IosDriverErrorCode;
@@ -60,8 +65,12 @@ const SESSION_TIMEOUT_MS = 10 * 60_000;
 /** Intervalle de sondage de `settle`. Une source XCUITest coûte déjà ~0,5 s. */
 const POLL_MS = 250;
 
-/** Défilements tentés par `scrollTo` avant d'abandonner. */
-const MAX_SCROLLS = 8;
+/**
+ * Le tableau de bord d'iOS. Au premier plan après une installation, il veut
+ * dire que l'application n'a pas démarré : relancer « l'application » ou y
+ * ouvrir un lien profond viserait le système.
+ */
+const SPRINGBOARD = 'com.apple.springboard';
 
 /**
  * Touches que `press` sait produire, en caractères tapés.
@@ -98,20 +107,62 @@ function elementIdOf(value: unknown, command: string): string {
   throw new Error(`${command} failed: the response carries no element reference`);
 }
 
+/** Un texte d'alerte dans un message d'erreur : une ligne, bornée. */
+function excerpt(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+}
+
+/** Le serveur tourne-t-il sur cette machine ? Un chemin local n'a de sens que là. */
+function isLoopback(serverUrl: string): boolean {
+  try {
+    const host = new URL(serverUrl).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Un lien profond : un schéma suivi d'autre chose qu'un port.
+ *
+ * « localhost:3000/x » a la forme d'un schéma pour une URL, mais c'est une
+ * adresse web recopiée sans « http:// » : l'envoyer comme lien profond
+ * produirait une erreur de serveur illisible au lieu d'un refus clair.
+ */
+function isDeepLink(to: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(to);
+}
+
+function flatten(node: UINode): UINode[] {
+  return [node, ...node.children.flatMap(flatten)];
+}
+
 export class IosDriver implements Driver {
   readonly platform: Platform = 'ios';
   /**
    * `hover` n'existe pas sous le doigt : le refus est déclaré ici pour que le
    * moteur l'oppose à la planification, pas au milieu d'un parcours.
+   *
+   * `dialogs` vaut non, et ce n'est pas un manque. Une alerte d'application
+   * iOS fait partie de l'écran : elle est observée (rôle `dialog`), assertable,
+   * et on y répond en cliquant son bouton par son libellé — exactement comme
+   * à une modale web. Répondre « accepter » ou « refuser » à l'aveugle passe
+   * par l'heuristique de WebDriverAgent, qui choisit un bouton par sa
+   * POSITION : sur une alerte à trois boutons, « accepter » touche Annuler ;
+   * sur [Supprimer, Garder], « refuser » touche Supprimer. Le style d'un
+   * bouton n'étant pas exposé à l'accessibilité, aucun choix sûr n'est
+   * possible : mieux vaut refuser `expectDialog` à la planification.
+   *
    * `navigateByUrl` vaut oui parce que `navigate` est servi — par lien profond
-   * ou relance — mais seulement pour une URL absolue ou « . ».
+   * ou relance — mais seulement pour une URL absolue, « . » ou « / ».
    */
   readonly capabilities: Capabilities = {
     hover: false,
     swipe: true,
     navigateByUrl: true,
     deepLink: true,
-    dialogs: true,
+    dialogs: false,
   };
 
   readonly #client: AppiumClient;
@@ -119,8 +170,6 @@ export class IosDriver implements Driver {
   readonly #platformVersion: string | undefined;
   #session: string | null = null;
   #bundleId = '';
-  /** File des politiques armées par `expectDialog`, consommées dans l'ordre. */
-  readonly #dialogs: { response: 'accept' | 'dismiss'; promptText?: string }[] = [];
 
   constructor(options: IosDriverOptions = {}) {
     this.#client = new AppiumClient(options.serverUrl ?? DEFAULT_APPIUM_URL, options.commandTimeoutMs ?? 60_000);
@@ -171,9 +220,19 @@ export class IosDriver implements Driver {
       'appium:automationName': 'XCUITest',
     };
     if (path) {
-      // Un chemin relatif se lit depuis le répertoire courant ; une URL
-      // distante est transmise telle quelle, Appium sait la télécharger.
-      capabilities['appium:app'] = /^https?:\/\//i.test(entry) || isAbsolute(entry) ? entry : resolvePath(entry);
+      // `appium:app` est lu par le SERVEUR, sur sa machine. Un chemin relatif
+      // ne peut donc se compléter ici que si le serveur est ici ; sinon il
+      // désignerait un fichier de cette machine-ci, inexistant là-bas. Une URL
+      // distante est transmise telle quelle : Appium sait la télécharger.
+      const remote = /^https?:\/\//i.test(entry);
+      if (!remote && !isAbsolute(entry) && !isLoopback(this.#client.serverUrl)) {
+        throw new IosDriverError(
+          `"${entry}" is a relative path, but the Appium server ${this.#client.serverUrl} is not on this machine: ` +
+            'pass an absolute path on the server host, or a URL',
+          'invalid-entry',
+        );
+      }
+      capabilities['appium:app'] = remote || isAbsolute(entry) ? entry : resolvePath(entry);
     } else {
       capabilities['appium:bundleId'] = entry;
     }
@@ -208,6 +267,12 @@ export class IosDriver implements Driver {
     if (typeof bundleId !== 'string' || bundleId === '') {
       throw new Error('mobile: activeAppInfo failed: the response carries no bundleId');
     }
+    if (bundleId === SPRINGBOARD) {
+      throw new IosDriverError(
+        `the app installed from "${entry}" is not in the foreground (SpringBoard is): pass its bundle id with --app instead`,
+        'invalid-entry',
+      );
+    }
     this.#bundleId = bundleId;
   }
 
@@ -223,8 +288,9 @@ export class IosDriver implements Driver {
       );
     }
     if (state.entry !== undefined) {
-      await this.#navigate(state.entry);
-      await this.#answerDialog();
+      const open = this.#navigation(state.entry);
+      await open();
+      await this.#refuseForeignAlert();
     }
   }
 
@@ -234,8 +300,21 @@ export class IosDriver implements Driver {
     return xml;
   }
 
-  async #screen(): Promise<Screen> {
-    return readScreen(await this.#source(), { mode: 'complete', bundleId: this.#bundleId });
+  /**
+   * Une lecture, deux projections du même document.
+   *
+   * `observed` est l'arbre que voient le modèle et les assertions : c'est sur
+   * lui qu'on compte les correspondances, sans quoi `nth: 1` désignerait ici
+   * un autre élément que celui montré là. `complete` garde les nœuds non
+   * rendus, pour distinguer « absent » de « non rendu ». Les identifiants sont
+   * attribués avant tout élagage : un même élément porte le même dans les deux.
+   */
+  async #read(): Promise<{ observed: Screen; complete: Screen }> {
+    const xml = await this.#source();
+    return {
+      observed: readScreen(xml, { mode: 'observe', bundleId: this.#bundleId }),
+      complete: readScreen(xml, { mode: 'complete', bundleId: this.#bundleId }),
+    };
   }
 
   async observe(options: ObserveOptions = {}): Promise<UISnapshot> {
@@ -267,14 +346,18 @@ export class IosDriver implements Driver {
    * pointant silencieusement le mauvais élément. L'appariement est celui du
    * moteur (`matchNodes`) : « le bouton Valider » veut dire la même chose ici
    * que dans les assertions.
+   *
+   * Ordre : primary rendu, repli rendu, puis seulement un nœud non rendu —
+   * comme `getByRole` côté web, qui ignore les éléments masqués avant de
+   * passer au repli.
    */
-  #pick(screen: Screen, target: ResolvedTarget): Picked {
+  #pick(observed: Screen, complete: Screen, target: ResolvedTarget): Picked {
     const { nth, ...unindexed } = target.primary;
     if (unindexed.role === undefined && unindexed.name === undefined) {
       throw new Error('empty locator: neither role nor name');
     }
-    const matched = matchNodes(screen.root, unindexed);
 
+    const matched = matchNodes(observed.root, unindexed);
     if (matched.length > 1 && nth === undefined) return { node: null, usedFallback: false, matches: matched.length };
     if (matched.length >= 1) {
       const node = matched[nth ?? 0];
@@ -283,18 +366,36 @@ export class IosDriver implements Driver {
         : { node, usedFallback: false, matches: matched.length };
     }
 
-    // `testId` et `selector` n'ont pas de sens ici : ils désignent le DOM.
-    const id = target.fallback?.accessibilityId;
+    /**
+     * Le repli désigne l'identifiant d'accessibilité — `testId` dans l'arbre.
+     *
+     * `fallback.testId` est accepté au même titre qu'`accessibilityId` : c'est
+     * ce que le modèle et le réparateur écrivent en lisant « #id », et sur iOS
+     * l'identifiant d'accessibilité EST l'identifiant de test. Seul le vrai
+     * identifiant compte, jamais un libellé recopié dans `name` par
+     * WebDriverAgent ; et il est compté, comme le primary : un identifiant de
+     * cellule réutilisé sur chaque ligne est ambigu, pas « la première ».
+     */
+    const id = target.fallback?.accessibilityId ?? target.fallback?.testId;
+    const carriers = id === undefined ? [] : flatten(observed.root).filter((node) => node.testId === id);
+    if (carriers.length > 1) return { node: null, usedFallback: false, matches: carriers.length };
+    const carrier = carriers[0];
+    if (carrier !== undefined) return { node: carrier, usedFallback: true, matches: 0 };
+
+    // Rien de rendu : un nœud présent mais sans boîte dit « non visible ».
+    const hidden = matchNodes(complete.root, unindexed);
+    const unrendered = hidden[nth ?? 0];
+    if (unrendered !== undefined) return { node: unrendered, usedFallback: false, matches: hidden.length };
     if (id !== undefined) {
-      // Premier dans l'ordre du document, comme `first()` côté web.
-      const node = firstInOrder(screen.root, (one) => screen.elements.get(one.id)?.accessibilityId === id);
-      if (node !== null) return { node, usedFallback: true, matches: 0 };
+      const ghost = flatten(complete.root).find((node) => node.testId === id);
+      if (ghost !== undefined) return { node: ghost, usedFallback: true, matches: 0 };
     }
     return { node: null, usedFallback: false, matches: 0 };
   }
 
   async resolve(target: ResolvedTarget): Promise<ResolveOutcome> {
-    const picked = this.#pick(await this.#screen(), target);
+    const { observed, complete } = await this.#read();
+    const picked = this.#pick(observed, complete, target);
     if (picked.node === null) {
       return picked.matches > 1
         ? { found: false, reason: 'ambiguous', matches: picked.matches }
@@ -304,9 +405,17 @@ export class IosDriver implements Driver {
     return { found: true, node: picked.node, usedFallback: picked.usedFallback };
   }
 
+  /**
+   * La cible d'un geste, avec l'écran dont elle est issue.
+   *
+   * Une alerte ou une feuille d'actions de l'application ouverte bloque tout
+   * ce qui est dessous : un toucher hors d'elle la ferait disparaître (une
+   * feuille se referme ainsi) ou n'atteindrait rien. Le refus nomme l'alerte,
+   * pour que le rapport dise ce qui était à l'écran.
+   */
   async #target(target: ResolvedTarget): Promise<{ screen: Screen; node: UINode }> {
-    const screen = await this.#screen();
-    const { node, matches } = this.#pick(screen, target);
+    const { observed, complete } = await this.#read();
+    const { node, matches } = this.#pick(observed, complete, target);
     if (node === null) {
       throw new IosDriverError(
         matches > 1 ? `ambiguous target: ${matches} elements` : 'target not found, even via the fallback',
@@ -314,16 +423,26 @@ export class IosDriver implements Driver {
       );
     }
     if (!node.state.visible) throw new IosDriverError('target found but not visible', 'unresolved');
-    return { screen, node };
+
+    const modal = observed.elements.get(node.id)?.modal;
+    const open = observed.modals;
+    if (open.length > 0 && !open.some((one) => one.id === modal)) {
+      const shown = open[open.length - 1]?.name ?? '';
+      throw new IosDriverError(
+        `an alert is open ("${excerpt(shown)}"): answer it first by clicking one of its buttons`,
+        'blocked-by-alert',
+      );
+    }
+    return { screen: observed, node };
   }
 
   /**
    * L'élément XCUITest qui correspond exactement au nœud résolu.
    *
-   * Le chemin positionnel est évalué par XCUITest sur le document même dont le
-   * nœud est issu : un homonyme ailleurs à l'écran ne peut pas être pris à sa
-   * place. Si l'écran a changé entre-temps, le chemin ne désigne plus rien et
-   * on le dit, plutôt que de taper au hasard.
+   * WebDriverAgent évalue le chemin sur un instantané neuf : le chemin porte
+   * donc le rang ET l'identité (`name` ou `label`) de l'élément. Si l'écran a
+   * changé entre-temps, il ne désigne plus rien et on le dit, plutôt que
+   * d'agir sur le voisin venu prendre la place.
    */
   async #elementFor(screen: Screen, node: UINode): Promise<string> {
     const info = screen.elements.get(node.id);
@@ -336,46 +455,48 @@ export class IosDriver implements Driver {
   }
 
   /**
-   * Un tap au centre de la cible, par `mobile: tap`.
+   * Un toucher sur l'élément, par Element Click (W3C).
    *
-   * Préféré aux actions W3C : une seule commande documentée par XCUITest, sans
-   * séquence pointeur à composer — et les coordonnées sont celles de l'arbre
-   * que `resolve` vient de valider, sans recherche d'élément supplémentaire.
-   * Sans `elementId`, x et y sont relatifs à l'application active : on les
-   * ramène donc à son origine.
+   * Pas de tap par coordonnées : un point de l'écran ne sait pas ce qui le
+   * recouvre. Le clavier virtuel, retiré de l'arbre, cache souvent le bas de
+   * l'écran ; un tap à l'aveugle y taperait une lettre dans le champ actif et
+   * le geste passerait pour réussi. Le clic d'élément passe par XCTest, qui
+   * calcule un point réellement atteignable, défile jusqu'à l'élément s'il est
+   * sous le pli, et échoue s'il n'y parvient pas.
    */
-  async #tap(screen: Screen, node: UINode): Promise<void> {
-    const x = node.rect.x + node.rect.width / 2 - screen.viewport.x;
-    const y = node.rect.y + node.rect.height / 2 - screen.viewport.y;
-    await this.#mobile('tap', { x, y });
+  async #click(screen: Screen, node: UINode): Promise<void> {
+    const element = encodeURIComponent(await this.#elementFor(screen, node));
+    await this.#call('POST', `/element/${element}/click`, {}, 'element click');
   }
 
-  async #navigate(to: string): Promise<void> {
+  /**
+   * Prépare la navigation et la refuse tout de suite si elle est invalide.
+   *
+   * « . » et « / » désignent la racine de l'application : on la relance.
+   * `mobile: launchApp` plutôt qu'`activateApp` : la documentation dit
+   * qu'`activateApp` échoue sur une application arrêtée, et WebDriverAgent ne
+   * réarme sa détection de plantage qu'au lancement.
+   */
+  #navigation(to: string): () => Promise<void> {
     const trimmed = to.trim();
-    if (trimmed === '.' || trimmed === '/' || trimmed === '') {
-      // « . » est la racine de l'application : sur iOS, la relancer.
-      await this.#mobile('terminateApp', { bundleId: this.#bundleId });
-      await this.#mobile('activateApp', { bundleId: this.#bundleId });
-      return;
+    if (trimmed === '.' || trimmed === '/') {
+      return async () => {
+        await this.#mobile('terminateApp', { bundleId: this.#bundleId });
+        await this.#mobile('launchApp', { bundleId: this.#bundleId });
+      };
     }
-    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-      await this.#mobile('deepLink', { url: trimmed, bundleId: this.#bundleId });
-      return;
+    if (isDeepLink(trimmed)) {
+      return async () => {
+        await this.#mobile('deepLink', { url: trimmed, bundleId: this.#bundleId });
+      };
     }
     throw new IosDriverError(
-      `navigate on iOS takes an absolute deep link URL (myapp://…) or "." to relaunch the app, not "${trimmed}"`,
+      `navigate on iOS takes an absolute deep link URL (myapp://…), or "." or "/" to relaunch the app, not "${trimmed}"`,
       'unsupported',
     );
   }
 
-  async #press(key: string): Promise<void> {
-    const typed = KEYS[key] ?? ([...key].length === 1 ? key : undefined);
-    if (typed === undefined) {
-      throw new IosDriverError(
-        `press "${key}" is not supported on iOS (Enter, Return, Tab, Backspace, Delete, Space or a single character)`,
-        'unsupported',
-      );
-    }
+  async #press(typed: string): Promise<void> {
     const active = await this.#call('GET', '/element/active', undefined, 'get active element');
     await this.#call(
       'POST',
@@ -386,77 +507,68 @@ export class IosDriver implements Driver {
   }
 
   /**
-   * Répond au dialogue présent, s'il y en a un. Rend vrai s'il a répondu.
+   * Refuse de continuer sous une alerte qui n'appartient pas à l'application.
    *
-   * La présence se lit par `GET /alert/text` : « no such alert » est la
-   * réponse documentée en l'absence de dialogue. Une politique armée est
-   * consommée ; sans politique, le dialogue est refusé, comme sur le web.
+   * `GET /alert/text` voit aussi les alertes du système (autorisations,
+   * SpringBoard), absentes de la source de l'application : elles ne sont ni
+   * observables ni cliquables par un scénario. Y répondre par
+   * `/alert/accept` ou `/alert/dismiss` serait choisir un bouton par sa
+   * position — « Autoriser une fois » pour un refus, sur l'invite de
+   * localisation. Le geste échoue donc en nommant l'alerte. Une alerte de
+   * l'application, elle, est dans la source : on la laisse à l'écran, où
+   * elle s'observe et se clique comme le reste.
    */
-  async #answerDialog(): Promise<boolean> {
+  async #refuseForeignAlert(): Promise<void> {
+    let text: unknown;
     try {
-      await this.#call('GET', '/alert/text', undefined, 'get alert text');
+      text = await this.#call('GET', '/alert/text', undefined, 'get alert text');
     } catch (error) {
-      if (error instanceof AppiumError && error.error === 'no such alert') return false;
+      if (error instanceof AppiumError && error.error === 'no such alert') return;
       throw error;
     }
-    const policy = this.#dialogs.shift();
-    if (policy?.response === 'accept') {
-      if (policy.promptText !== undefined) {
-        await this.#call('POST', '/alert/text', { text: policy.promptText }, 'send alert text', [policy.promptText]);
-      }
-      await this.#call('POST', '/alert/accept', {}, 'accept alert');
-    } else {
-      await this.#call('POST', '/alert/dismiss', {}, 'dismiss alert');
-    }
-    return true;
+    const screen = readScreen(await this.#source(), { mode: 'complete', bundleId: this.#bundleId });
+    if (screen.modals.length > 0) return;
+    throw new IosDriverError(
+      `an alert outside the app is open ("${excerpt(typeof text === 'string' ? text : '')}"): ` +
+        'QAI never answers system alerts, grant the permission before the run',
+      'blocked-by-alert',
+    );
   }
 
   /**
-   * Défiler jusqu'à rendre la cible visible, dans une limite fixe.
+   * Amène la cible à l'écran par `mobile: scrollToElement`.
    *
-   * Une cible présente mais hors écran donne le sens ; une cible absente de
-   * l'arbre — cellule pas encore rendue — fait descendre, puis remonter quand
-   * la source cesse de changer (bord atteint). Au-delà de la limite, l'échec
-   * est explicite : défiler indéfiniment masquerait une cible disparue.
+   * La cible est déjà dans l'arbre — c'est ce que `resolve` vient d'établir :
+   * XCUITest sait la rejoindre directement, sans deviner un sens ni une
+   * distance de défilement. Déjà à l'écran, rien n'est fait. Après coup, on
+   * relit l'écran pour le vérifier : un défilement qui n'a rien montré est un
+   * échec explicite, pas un succès supposé.
    */
   async #scrollTo(target: ResolvedTarget): Promise<void> {
-    let xml = await this.#source();
-    let direction: 'down' | 'up' = 'down';
-    let reversed = false;
+    const { screen, node } = await this.#target(target);
+    if (screen.elements.get(node.id)?.onScreen === true) return;
+    await this.#mobile('scrollToElement', { elementId: await this.#elementFor(screen, node) });
 
-    for (let attempt = 0; ; attempt += 1) {
-      const screen = readScreen(xml, { mode: 'complete', bundleId: this.#bundleId });
-      const { node, matches } = this.#pick(screen, target);
-      if (node === null && matches > 1) {
-        throw new IosDriverError(`ambiguous target: ${matches} elements`, 'unresolved');
-      }
-      if (node !== null && node.state.visible) return;
-      if (node !== null) {
-        direction = node.rect.y + node.rect.height <= screen.viewport.y ? 'up' : 'down';
-      }
-      if (attempt >= MAX_SCROLLS) break;
-
-      await this.#mobile('scroll', { direction });
-      const after = await this.#source();
-      if (after === xml) {
-        if (node !== null || reversed) break;
-        reversed = true;
-        direction = 'up';
-      }
-      xml = after;
+    const after = await this.#read();
+    const seen = this.#pick(after.observed, after.complete, target).node;
+    if (seen === null || after.observed.elements.get(seen.id)?.onScreen !== true) {
+      throw new IosDriverError('target still off screen after scrolling to it', 'unresolved');
     }
-    throw new IosDriverError(`target still not visible after scrolling (${MAX_SCROLLS} attempts at most)`, 'unresolved');
   }
 
-  async act(action: Action): Promise<void> {
+  /**
+   * Valide le geste, puis rend son exécution.
+   *
+   * Tout refus qui ne dépend que de l'action tombe ici, avant la moindre
+   * requête : un geste impossible ne doit rien toucher sur l'appareil.
+   */
+  #plan(action: Action): () => Promise<void> {
     switch (action.kind) {
       case 'expectDialog':
-        // Rien n'est exécuté : on arme, le geste suivant déclenchera.
-        this.#dialogs.push({
-          response: action.response,
-          ...(action.promptText !== undefined ? { promptText: action.promptText } : {}),
-        });
-        return;
+        throw new IosDriverError(
+          'expectDialog is not supported on iOS: an app alert is part of the screen, click its button by its label',
+          'unsupported',
+        );
       case 'hover':
         throw new IosDriverError('hover does not exist on iOS: there is no pointer to rest over an element', 'unsupported');
       case 'upload':
@@ -465,76 +577,101 @@ export class IosDriver implements Driver {
           'unsupported',
         );
       case 'navigate':
-        await this.#navigate(action.to);
-        break;
-      case 'press':
-        await this.#press(action.key);
-        break;
-      case 'swipe':
-        await this.#mobile('swipe', { direction: action.direction });
-        break;
-      case 'scrollTo':
-        await this.#scrollTo(action.target);
-        return;
-      case 'click': {
-        const { screen, node } = await this.#target(action.target);
-        await this.#tap(screen, node);
-        break;
+        return this.#navigation(action.to);
+      case 'press': {
+        const typed = KEYS[action.key] ?? ([...action.key].length === 1 ? action.key : undefined);
+        if (typed === undefined) {
+          throw new IosDriverError(
+            `press "${action.key}" is not supported on iOS (Enter, Return, Tab, Backspace, Delete, Space or a single character)`,
+            'unsupported',
+          );
+        }
+        return () => this.#press(typed);
       }
-      case 'fill': {
+      case 'swipe':
+        return async () => {
+          await this.#mobile('swipe', { direction: action.direction });
+        };
+      case 'scrollTo':
+        return () => this.#scrollTo(action.target);
+      case 'click':
+        return async () => {
+          const { screen, node } = await this.#target(action.target);
+          await this.#click(screen, node);
+        };
+      case 'fill':
         // Focus explicite, puis effacement, puis saisie : `clear` et la saisie
         // de XCUITest visent l'élément, mais un champ sans focus n'ouvre pas
         // son clavier sur toutes les versions.
-        const { screen, node } = await this.#target(action.target);
-        const element = encodeURIComponent(await this.#elementFor(screen, node));
-        await this.#call('POST', `/element/${element}/click`, {}, 'element click');
-        await this.#call('POST', `/element/${element}/clear`, {}, 'element clear');
-        await this.#call('POST', `/element/${element}/value`, { text: action.value }, 'element send keys', [action.value]);
-        break;
-      }
-      case 'select': {
-        const { screen, node } = await this.#target(action.target);
-        const info = screen.elements.get(node.id);
-        if (info?.type !== 'XCUIElementTypePickerWheel') {
-          throw new IosDriverError(`select needs a picker wheel on iOS, the target is a ${node.role}`, 'unsupported');
-        }
-        // Le libellé affiché est envoyé comme valeur : XCUITest le passe à
-        // `adjustToPickerWheelValue`, qui fait tourner la roue dans le bon sens
-        // jusqu'à ce libellé — la règle de docs/driver.md, viser ce qui se lit.
-        const element = encodeURIComponent(await this.#elementFor(screen, node));
-        await this.#call('POST', `/element/${element}/value`, { text: action.option }, 'element send keys');
-        break;
-      }
+        return async () => {
+          const { screen, node } = await this.#target(action.target);
+          const element = encodeURIComponent(await this.#elementFor(screen, node));
+          await this.#call('POST', `/element/${element}/click`, {}, 'element click');
+          await this.#call('POST', `/element/${element}/clear`, {}, 'element clear');
+          await this.#call('POST', `/element/${element}/value`, { text: action.value }, 'element send keys', [
+            action.value,
+          ]);
+        };
+      case 'select':
+        return async () => {
+          const { screen, node } = await this.#target(action.target);
+          const info = screen.elements.get(node.id);
+          if (info?.type !== 'XCUIElementTypePickerWheel') {
+            throw new IosDriverError(`select needs a picker wheel on iOS, the target is a ${node.role}`, 'unsupported');
+          }
+          // Le libellé affiché est envoyé comme valeur : XCUITest le passe à
+          // `adjustToPickerWheelValue`, qui fait tourner la roue dans le bon
+          // sens jusqu'à ce libellé — la règle de docs/driver.md, viser ce qui
+          // se lit.
+          const element = encodeURIComponent(await this.#elementFor(screen, node));
+          await this.#call('POST', `/element/${element}/value`, { text: action.option }, 'element send keys');
+        };
     }
-    await this.#answerDialog();
   }
 
   /**
-   * Repos = deux sources consécutives identiques, ou le délai écoulé.
+   * Un geste encadré par deux contrôles d'alerte système.
+   *
+   * Avant : une alerte apparue pendant le repos ou les assertions recevrait le
+   * toucher destiné à l'application. Après : le geste qui l'a fait naître est
+   * celui qui doit échouer, le rapport pointant la bonne étape.
+   */
+  async act(action: Action): Promise<void> {
+    const gesture = this.#plan(action);
+    await this.#refuseForeignAlert();
+    await gesture();
+    await this.#refuseForeignAlert();
+  }
+
+  /**
+   * L'empreinte d'un écran : l'arbre projeté, pas la source brute.
+   *
+   * La source porte la barre d'état — l'heure — et des attributs que la
+   * projection ignore : les comparer bruts ferait courir chaque `settle`
+   * jusqu'au bout de son délai sur un écran pourtant immobile.
+   */
+  async #fingerprint(): Promise<string> {
+    const screen = readScreen(await this.#source(), { mode: 'complete', bundleId: this.#bundleId });
+    return `${screen.location}\n${JSON.stringify(screen.root)}`;
+  }
+
+  /**
+   * Repos = deux lectures consécutives de l'arbre identiques, ou le délai écoulé.
    *
    * iOS n'expose ni requêtes en vol ni boucle de rendu : la seule preuve de
-   * calme observable est un arbre qui ne bouge plus. Un dialogue apparu entre
-   * deux lectures est traité ici aussi, sinon un dialogue un peu tardif
-   * échapperait à la politique armée pour lui.
+   * calme observable est un arbre qui ne bouge plus.
    */
   async settle(timeoutMs = 5000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let previous: string | null = null;
     for (;;) {
-      if (await this.#answerDialog()) previous = null;
-      const current = await this.#source();
+      const current = await this.#fingerprint();
       if (current === previous) return;
       previous = current;
       const remaining = deadline - Date.now();
       if (remaining <= 0) return;
       await sleep(Math.min(POLL_MS, remaining));
     }
-  }
-
-  takePendingDialogs(): number {
-    const pending = this.#dialogs.length;
-    this.#dialogs.length = 0;
-    return pending;
   }
 
   /**
@@ -545,7 +682,6 @@ export class IosDriver implements Driver {
   async dispose(): Promise<void> {
     const session = this.#session;
     this.#session = null;
-    this.#dialogs.length = 0;
     if (session === null) return;
     try {
       await this.#client.request('DELETE', `/session/${encodeURIComponent(session)}`, undefined, {
@@ -555,13 +691,4 @@ export class IosDriver implements Driver {
       // Session déjà partie : rien à libérer.
     }
   }
-}
-
-function firstInOrder(root: UINode, accept: (node: UINode) => boolean): UINode | null {
-  if (accept(root)) return root;
-  for (const child of root.children) {
-    const found = firstInOrder(child, accept);
-    if (found !== null) return found;
-  }
-  return null;
 }

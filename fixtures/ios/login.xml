@@ -22,6 +22,7 @@
               <XCUIElementTypePickerWheel type="XCUIElementTypePickerWheel" value="Standard delivery" name="delivery_picker" label="Delivery" enabled="true" visible="true" accessible="true" x="16" y="690" width="358" height="100" index="0" traits="Adjustable"/>
             </XCUIElementTypePicker>
             <XCUIElementTypeButton type="XCUIElementTypeButton" name="Ghost" label="Ghost" enabled="true" visible="false" accessible="true" x="16" y="900" width="358" height="44" index="11" traits="Button"/>
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Collapsed" label="Collapsed" enabled="true" visible="false" accessible="true" x="16" y="900" width="0" height="0" index="12" traits="Button"/>
           </XCUIElementTypeOther>
         </XCUIElementTypeOther>
         <XCUIElementTypeTabBar type="XCUIElementTypeTabBar" name="Tab Bar" label="Tab Bar" enabled="true" visible="true" accessible="false" x="0" y="761" width="390" height="83" index="2" traits="TabBar">

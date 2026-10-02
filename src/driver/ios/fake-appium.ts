@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { ELEMENT_KEY } from './appium.ts';
+import type { XmlElement } from './xml.ts';
+import { parseXml } from './xml.ts';
 
 /**
  * Un faux serveur Appium pour les tests du pilote iOS.
@@ -36,14 +38,125 @@ function w3cError(status: number, error: string, message: string): Reply {
   return { status, value: { error, message, stacktrace: '' } };
 }
 
+interface Step {
+  descendant: boolean;
+  tag: string;
+  position?: number;
+  attributes: [string, string][];
+}
+
+/**
+ * Le sous-ensemble d'XPath 1.0 que le pilote produit : des pas `/Tag[n]`, le
+ * premier en `//`, le dernier éventuellement suivi de `[@attr="…"]` (guillemets
+ * doubles, simples, ou `concat()`). Tout le reste est refusé, comme le serait
+ * un sélecteur invalide : un chemin que le faux ne comprend pas ne doit jamais
+ * « trouver » quelque chose.
+ */
+function parsePath(path: string): Step[] {
+  const steps: Step[] = [];
+  let at = 0;
+  const fail = (): never => {
+    throw new Error(`unsupported xpath: ${path}`);
+  };
+  const literal = (): string => {
+    const quote = path[at];
+    if (quote === '"' || quote === "'") {
+      const end = path.indexOf(quote, at + 1);
+      if (end < 0) fail();
+      const text = path.slice(at + 1, end);
+      at = end + 1;
+      return text;
+    }
+    if (path.startsWith('concat(', at)) {
+      at += 'concat('.length;
+      let text = '';
+      for (;;) {
+        while (path[at] === ' ') at += 1;
+        text += literal();
+        while (path[at] === ' ') at += 1;
+        if (path[at] === ',') {
+          at += 1;
+          continue;
+        }
+        if (path[at] === ')') {
+          at += 1;
+          return text;
+        }
+        fail();
+      }
+    }
+    return fail();
+  };
+  while (at < path.length) {
+    if (path[at] !== '/') fail();
+    const descendant = path[at + 1] === '/';
+    at += descendant ? 2 : 1;
+    const name = /^[A-Za-z][A-Za-z0-9]*/.exec(path.slice(at))?.[0] ?? fail();
+    at += name.length;
+    const step: Step = { descendant, tag: name, attributes: [] };
+    while (path[at] === '[') {
+      at += 1;
+      const digits = /^[0-9]+/.exec(path.slice(at))?.[0];
+      if (digits !== undefined) {
+        step.position = Number(digits);
+        at += digits.length;
+      } else if (path[at] === '@') {
+        const attribute = /^@([A-Za-z]+)=/.exec(path.slice(at)) ?? fail();
+        at += attribute[0].length;
+        step.attributes.push([attribute[1] as string, literal()]);
+      } else {
+        fail();
+      }
+      if (path[at] !== ']') fail();
+      at += 1;
+    }
+    steps.push(step);
+  }
+  return steps;
+}
+
+function descendants(element: XmlElement): XmlElement[] {
+  return element.children.flatMap((child) => [child, ...descendants(child)]);
+}
+
+/** Évalue le chemin sur la source servie, comme WebDriverAgent sur son instantané. */
+export function evaluatePath(source: string, path: string): XmlElement[] {
+  const document = parseXml(source);
+  // Le nœud document virtuel : la racine XML est son seul enfant.
+  const top: XmlElement = { tag: '#document', attributes: {}, children: [document] };
+  let current: XmlElement[] = [top];
+  for (const step of parsePath(path)) {
+    // Les parents candidats : ceux du pas, ou tous leurs descendants pour « // ».
+    const parents = step.descendant ? current.flatMap((one) => [one, ...descendants(one)]) : current;
+    const next: XmlElement[] = [];
+    for (const parent of parents) {
+      let rank = 0;
+      for (const child of parent.children) {
+        if (child.tag !== step.tag) continue;
+        rank += 1;
+        if (step.position !== undefined && rank !== step.position) continue;
+        if (step.attributes.some(([name, value]) => child.attributes[name] !== value)) continue;
+        next.push(child);
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
 export class FakeAppium {
   readonly calls: Recorded[] = [];
   readonly sessionId = 'sess-1';
   source = '';
-  /** Texte du dialogue affiché, ou null. */
+  /**
+   * Texte de l'alerte que WebDriverAgent voit, ou null. Qu'elle appartienne à
+   * l'application ou au système dépend de la source servie : une alerte
+   * d'application y figure, une alerte système non.
+   */
   alert: string | null = null;
   activeBundleId = 'com.example.acme';
   #deleted = false;
+  #elements = 0;
   readonly #handlers: { method: string; pattern: RegExp; handle: Handler }[] = [];
   readonly #server: Server;
   url = '';
@@ -89,6 +202,7 @@ export class FakeAppium {
   reset(): void {
     this.calls.length = 0;
     this.#handlers.length = 0;
+    this.#elements = 0;
   }
 
   async close(): Promise<void> {
@@ -144,14 +258,6 @@ export class FakeAppium {
         ? w3cError(404, 'no such alert', 'An attempt was made to operate on a modal dialog when one was not open')
         : { value: this.alert };
     }
-    if (route === 'POST /alert/accept' || route === 'POST /alert/dismiss') {
-      if (this.alert === null) {
-        return w3cError(404, 'no such alert', 'An attempt was made to operate on a modal dialog when one was not open');
-      }
-      this.alert = null;
-      return { value: null };
-    }
-    if (route === 'POST /alert/text') return { value: null };
 
     if (route === 'POST /execute/sync') {
       const script = (call.body as { script?: unknown } | undefined)?.script;
@@ -160,7 +266,18 @@ export class FakeAppium {
       }
       return { value: null };
     }
-    if (route === 'POST /elements') return { value: [{ [ELEMENT_KEY]: 'el-1' }] };
+    if (route === 'POST /elements') {
+      const { using, value } = (call.body ?? {}) as { using?: unknown; value?: unknown };
+      if (using !== 'xpath' || typeof value !== 'string') {
+        return w3cError(400, 'invalid argument', 'only xpath is served by the fake');
+      }
+      try {
+        const found = evaluatePath(this.source, value);
+        return { value: found.map(() => ({ [ELEMENT_KEY]: `el-${(this.#elements += 1)}` })) };
+      } catch (error) {
+        return w3cError(400, 'invalid selector', (error as Error).message);
+      }
+    }
     if (route === 'GET /element/active') return { value: { [ELEMENT_KEY]: 'el-active' } };
     if (/^POST \/element\/[^/]+\/(click|clear|value)$/.test(route)) return { value: null };
 

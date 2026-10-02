@@ -75,6 +75,36 @@ steps:
     );
     assert.deepEqual(issues, [{ kind: 'orphan-step', stepId: 's9' }]);
   });
+
+  /**
+   * Rejouer une résolution web sur iOS — et y réécrire les réparations —
+   * produirait un fichier « web » plein de cibles iOS.
+   */
+  it('refuse une résolution écrite pour une autre plateforme', () => {
+    const scenario = parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    do: agir\n');
+    const issues = checkConsistency(
+      scenario,
+      { scenario: 't', platform: 'web', recordedAt: '', steps: { s1: { actions: [{ kind: 'press', key: 'Enter' }] } } },
+      'ios',
+    );
+    assert.deepEqual(issues, [{ kind: 'platform-mismatch', stepId: '*', detail: 'web ≠ ios' }]);
+    assert.match(formatIssue(issues[0] as (typeof issues)[number]), /written for another platform \(web ≠ ios\)/);
+  });
+
+  it('refuse hors du web une navigation par chemin relatif, sans URL de base', () => {
+    const scenario = parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    do: agir\n');
+    const navigations = ['/cart', '.', '/', 'acme://orders', 'localhost:3000/x'].map((to) => ({
+      kind: 'navigate' as const,
+      to,
+    }));
+    const resolution = { scenario: 't', platform: 'ios' as const, recordedAt: '', steps: { s1: { actions: navigations } } };
+    assert.deepEqual(checkConsistency(scenario, resolution, 'ios'), [
+      { kind: 'relative-navigate', stepId: 's1', detail: '/cart' },
+      { kind: 'relative-navigate', stepId: 's1', detail: 'localhost:3000/x' },
+    ]);
+    // Sur le web, le chemin relatif est la forme normale.
+    assert.deepEqual(checkConsistency(scenario, { ...resolution, platform: 'web' }, 'web'), []);
+  });
 });
 
 describe('parseScenario', () => {

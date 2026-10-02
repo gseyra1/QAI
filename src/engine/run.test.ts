@@ -178,10 +178,15 @@ describe('runScenario', () => {
     assert.match(report.steps[0]?.failures[0]?.reason ?? '', /expected "3", observed "1"/);
   });
 
-  it('laisse scrollTo agir sur une cible présente mais hors écran, sans réparer', async () => {
+  /**
+   * Un `scrollTo` vers une cible masquée part en réparation, comme tout geste
+   * autre qu'`upload`. Sur le web, laisser passer ferait attendre le délai
+   * complet de Playwright pour un élément qui ne s'affichera jamais.
+   */
+  it('envoie un scrollTo vers une cible masquée à la réparation', async () => {
     const hidden: ResolveOutcome = { found: false, reason: 'not-visible', matches: 1 };
     const driver = new FakeDriver(TREE, () => hidden);
-    const healer = new SpyHealer({ healed: false, reason: 'ne doit pas arriver' });
+    const healer = new SpyHealer({ healed: false, reason: 'rien à proposer' });
 
     const report = await runScenario({
       driver,
@@ -190,23 +195,8 @@ describe('runScenario', () => {
       resolution: resolution({ s1: { actions: [{ kind: 'scrollTo', target: CLICK }] } }),
     });
 
-    assert.equal(report.status, 'passed');
-    assert.equal(healer.calls.length, 0, 'défiler est la réponse attendue à « hors écran »');
-    assert.deepEqual(driver.acted.map((action) => action.kind), ['scrollTo']);
-  });
-
-  it('refuse toujours un clic sur une cible hors écran', async () => {
-    const hidden: ResolveOutcome = { found: false, reason: 'not-visible', matches: 1 };
-    const driver = new FakeDriver(TREE, () => hidden);
-
-    const report = await runScenario({
-      driver,
-      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
-      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
-    });
-
     assert.equal(report.status, 'failed');
-    assert.equal(report.steps[0]?.error, 'target found but not visible');
+    assert.deepEqual(healer.calls.map((call) => call.outcome), [hidden]);
     assert.equal(driver.acted.length, 0);
   });
 

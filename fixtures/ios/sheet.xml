@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Acme" label="Acme" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="48213" bundleId="com.example.acme">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="Order #1040" enabled="true" visible="true" accessible="false" x="0" y="47" width="390" height="44" index="0" traits="">
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order #1040" name="Order #1040" label="Order #1040" enabled="true" visible="true" accessible="true" x="140" y="58" width="110" height="22" index="0" traits="Header, StaticText"/>
+          <XCUIElementTypeButton type="XCUIElementTypeButton" name="more_button" label="More" enabled="true" visible="true" accessible="true" x="340" y="47" width="44" height="44" index="1" traits="Button"/>
+        </XCUIElementTypeNavigationBar>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Track parcel" label="Track parcel" enabled="true" visible="true" accessible="true" x="16" y="420" width="358" height="50" index="1" traits="Button"/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+    <XCUIElementTypeSheet type="XCUIElementTypeSheet" name="Order actions" label="Order actions" enabled="true" visible="true" accessible="false" x="8" y="560" width="374" height="276" index="1" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="8" y="560" width="374" height="276" index="0" traits="">
+        <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Order actions" name="Order actions" label="Order actions" enabled="true" visible="true" accessible="true" x="24" y="572" width="342" height="18" index="0" traits="StaticText"/>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Share" label="Share" enabled="true" visible="true" accessible="true" x="8" y="602" width="374" height="57" index="1" traits="Button"/>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Delete" label="Delete" enabled="true" visible="true" accessible="true" x="8" y="660" width="374" height="57" index="2" traits="Button"/>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Cancel" label="Cancel" enabled="true" visible="true" accessible="true" x="8" y="779" width="374" height="57" index="3" traits="Button"/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeSheet>
+  </XCUIElementTypeApplication>
+</AppiumAUT>

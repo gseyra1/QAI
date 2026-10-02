@@ -232,10 +232,32 @@ export async function main(argv: string[]): Promise<number> {
     if (server !== undefined && !/^https?:\/\/[^/]/i.test(server)) {
       return invalide('--appium-url', 'an http(s) URL');
     }
+    // Montrer le navigateur n'a pas de sens sur un simulateur : l'accepter
+    // laisserait croire qu'il change quelque chose.
+    if (values.headed === true) return invalide('--headed', '--platform web');
     // Un appareil ne joue qu'un parcours à la fois : quatre sessions sur le
     // même simulateur se voleraient l'écran et produiraient des verdicts faux.
-    if (workers !== undefined && workers !== 1) {
+    // Seul le drapeau est refusé : une valeur du fichier sert aussi au web
+    // d'un même projet, elle est ramenée à 1 et on le dit.
+    if (values.workers !== undefined && workers !== 1) {
       return invalide('--workers', '1 with --platform ios (one device runs one journey at a time)');
+    }
+    if (workers !== undefined && workers !== 1) {
+      process.stderr.write(
+        `"workers": ${workers} from qai.config.json is ignored on iOS: one device runs one journey at a time\n`,
+      );
+    }
+    // Le pilote iOS n'observe ni réseau ni console : un garde-fou actif
+    // passerait chaque étape faute d'avoir regardé. Refusé avant de lancer.
+    const watchdogs = config.watchdogs;
+    const watched = [watchdogs?.requestFailures, watchdogs?.consoleErrors].some(
+      (level) => level !== undefined && level !== 'off',
+    );
+    if (watched && command === 'run') {
+      process.stderr.write(
+        'watchdogs in qai.config.json require --platform web: iOS does not observe network or console activity (set them to "off")\n',
+      );
+      return 1;
     }
   }
   if (command === undefined || requested.length === 0) {
@@ -477,10 +499,10 @@ export async function main(argv: string[]): Promise<number> {
     ...(provider !== undefined
       ? { createHealer: (driver: Driver) => new ModelHealer({ driver, provider }) }
       : {}),
-    ...(settings.workers !== undefined
-      ? { workers: settings.workers }
-      : platform === 'ios'
-        ? { workers: 1 }
+    ...(platform === 'ios'
+      ? { workers: 1 }
+      : settings.workers !== undefined
+        ? { workers: settings.workers }
         : {}),
     ...(settings.assertTimeout !== undefined ? { assertTimeoutMs: settings.assertTimeout } : {}),
     ...(config.watchdogs !== undefined ? { watchdogs: config.watchdogs } : {}),

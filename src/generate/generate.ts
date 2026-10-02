@@ -12,7 +12,7 @@ import { matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
-import { targetOf, valueOf, withValue } from '../resolution/types.ts';
+import { isObservationCheck, targetOf, valueOf, withValue } from '../resolution/types.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
 import { checksMessage, retryMessage, stepMessage, SYSTEM_PROMPT } from './prompt.ts';
@@ -210,6 +210,7 @@ function verifyChecks(
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
   secrets: SecretRegistry,
+  observable: boolean,
 ): CheckOutcome {
   const errors: string[] = [];
   const produced: Record<string, string> = {};
@@ -252,6 +253,14 @@ function verifyChecks(
     const check = proposal.assertions[expectation];
     if (check === undefined) {
       errors.push(`assertion "${expectation}" missing — copy the assertion text exactly as the key`);
+      continue;
+    }
+    // Un pilote qui n'observe ni réseau ni console rendrait ces vérifications
+    // vraies faute d'avoir regardé : les écrire figerait un vert sans preuve.
+    if (!observable && isObservationCheck(check)) {
+      errors.push(
+        `assertion "${expectation}": ${check.check} cannot be observed on this platform — no network or console activity is reported here`,
+      );
       continue;
     }
     try {
@@ -509,7 +518,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     await driver.settle();
     let after = await driver.observe({ interactiveOnly: true });
     let checks: Pick<Proposal, 'captures' | 'assertions'> = proposal;
-    let outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets);
+    let outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets, driver.drainObservations !== undefined);
 
     const checksConversation: ModelMessage[] = [];
     while (outcome.errors.length > 0 && used < attempts) {
@@ -566,7 +575,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       after = await driver.observe({ interactiveOnly: true });
       checks = candidate;
-      outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets);
+      outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets, driver.drainObservations !== undefined);
     }
 
     if (outcome.errors.length > 0) {

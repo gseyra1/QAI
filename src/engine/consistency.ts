@@ -8,7 +8,9 @@ export type IssueKind =
   | 'orphan-step'
   | 'missing-assertion'
   | 'missing-capture'
-  | 'no-actions';
+  | 'no-actions'
+  | 'platform-mismatch'
+  | 'relative-navigate';
 
 export interface ConsistencyIssue {
   kind: IssueKind;
@@ -32,6 +34,16 @@ export function checkConsistency(
   const issues: ConsistencyIssue[] = [];
   const known = new Set<string>();
 
+  /**
+   * Une résolution est propre à une plateforme : ses cibles décrivent un
+   * arbre précis. Rejouer une résolution web sur iOS ferait réparer, puis
+   * réécrire, un fichier qui resterait marqué « web ». Le refus est global :
+   * le reste du contrôle n'aurait aucun sens sur l'autre plateforme.
+   */
+  if (resolution.platform !== platform) {
+    return [{ kind: 'platform-mismatch', stepId: '*', detail: `${resolution.platform} ≠ ${platform}` }];
+  }
+
   for (const step of scenario.steps) {
     if (!appliesTo(step, platform)) continue;
     known.add(step.id);
@@ -44,6 +56,18 @@ export function checkConsistency(
 
     if (cached.actions.length === 0) {
       issues.push({ kind: 'no-actions', stepId: step.id });
+    }
+
+    // Hors du web, il n'y a pas d'URL de base : un chemin relatif ne désigne
+    // rien. Le dire avant de jouer vaut mieux qu'un échec à mi-parcours,
+    // après des gestes déjà faits sur l'appareil.
+    if (platform !== 'web') {
+      for (const action of cached.actions) {
+        if (action.kind !== 'navigate') continue;
+        const to = action.to.trim();
+        if (to === '.' || to === '/' || /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(to)) continue;
+        issues.push({ kind: 'relative-navigate', stepId: step.id, detail: action.to });
+      }
     }
 
     for (const assertion of expectationsOf(step)) {
@@ -78,5 +102,9 @@ export function formatIssue(issue: ConsistencyIssue): string {
       return `step "${issue.stepId}": capture "${issue.detail}" not resolved`;
     case 'no-actions':
       return `step "${issue.stepId}": no actions`;
+    case 'platform-mismatch':
+      return `the resolution was written for another platform (${issue.detail ?? ''}): regenerate it with "qai resolve"`;
+    case 'relative-navigate':
+      return `step "${issue.stepId}": navigate "${issue.detail ?? ''}" is a relative path, which has no meaning without a base URL — use a deep link, "." or "/"`;
   }
 }
