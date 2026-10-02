@@ -211,6 +211,102 @@ describe('iOS command line', () => {
     assert.match(err, /written for another platform \(web ≠ ios\)/);
   });
 
+  /**
+   * La cohérence se juge sur la plateforme jouée, pas sur le web : la même
+   * étape, sans intention sur iOS, n'y a aucun geste, et en garder un est une
+   * incohérence ; une navigation relative n'y désigne rien.
+   */
+  it('checks consistency against the iOS shape of each step', async () => {
+    const scenario = join(dir, 'verify', 'login.qai.yaml');
+    await mkdir(dirname(scenario), { recursive: true });
+    await writeFile(
+      scenario,
+      'id: login\ntitle: Sign in\nsteps:\n  - id: s1\n    per_platform:\n      web: open the login page\n    expect: the form is shown\n',
+    );
+    const shown = { 'the form is shown': { check: 'visible', target: SIGN_IN.primary } };
+    const resolution = async (platform: string, actions: unknown[]): Promise<string> => {
+      const path = join(dir, 'verify', `${platform}-${actions.length}.json`);
+      await writeFile(
+        path,
+        JSON.stringify({
+          version: 3,
+          scenario: 'login',
+          platform,
+          recordedAt: '2026-10-02T00:00:00.000Z',
+          steps: { s1: { actions, assertions: shown } },
+        }),
+      );
+      return path;
+    };
+
+    const empty = await cli(['check', scenario, '--platform', 'ios', '--resolution', await resolution('ios', [])]);
+    assert.equal(empty.code, 0, empty.err);
+    assert.match(empty.out, /1 journey\(s\) consistent/);
+
+    const stale = await cli([
+      'check', scenario, '--platform', 'ios', '--resolution', await resolution('ios', [{ kind: 'click', target: SIGN_IN }]),
+    ]);
+    assert.equal(stale.code, 1);
+    assert.match(stale.err, /step "s1": verification-only step, but the cached resolution still has 1 action/);
+
+    // Sur le web, la même étape a une intention : zéro geste y est un manque.
+    const web = await cli(['check', scenario, '--resolution', await resolution('web', [])]);
+    assert.equal(web.code, 1);
+    assert.match(web.err, /step "s1": no actions, but the step has an intent/);
+  });
+
+  it('refuses a relative navigate in an iOS resolution at check time', async () => {
+    const path = join(dir, 'relative.ios.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        scenario: 'login',
+        platform: 'ios',
+        recordedAt: '2026-10-02T00:00:00.000Z',
+        steps: {
+          s1: {
+            actions: [{ kind: 'navigate', to: 'orders' }],
+            assertions: { 'the form is shown': { check: 'visible', target: SIGN_IN.primary } },
+          },
+        },
+      }),
+    );
+    const { code, err } = await cli(['check', join(dir, 'login.qai.yaml'), '--platform', 'ios', '--resolution', path]);
+    assert.equal(code, 1);
+    assert.match(err, /navigate "orders" is a relative path/);
+  });
+
+  it('replays a verification-only step on iOS without touching the app', async () => {
+    const scenario = join(dir, 'replay', 'login.qai.yaml');
+    await mkdir(join(dir, 'replay', '.qai', 'resolutions'), { recursive: true });
+    await writeFile(
+      scenario,
+      'id: login\ntitle: Sign in\nsteps:\n  - id: s1\n    per_platform:\n      web: open the login page\n    expect: on the login screen\n',
+    );
+    await writeFile(
+      join(dir, 'replay', '.qai', 'resolutions', 'login.ios.json'),
+      JSON.stringify({
+        version: 3,
+        scenario: 'login',
+        platform: 'ios',
+        recordedAt: '2026-10-02T00:00:00.000Z',
+        // Comparée brute : sur iOS, l'entrée de lancement n'est pas une base.
+        steps: { s1: { actions: [], assertions: { 'on the login screen': { check: 'urlEquals', value: 'com.example.acme/Sign In' } } } },
+      }),
+    );
+    const { code, out } = await cli([
+      'run', scenario, '--platform', 'ios', '--app', 'com.example.acme', '--appium-url', fake.url,
+      '--artifacts', join(dir, 'artifacts'), '--json',
+    ]);
+    assert.equal(code, 0, out);
+    const report = JSON.parse(out) as { entries: { report: { steps: { stepId: string; status: string }[] } }[] };
+    assert.deepEqual(
+      report.entries[0]?.report.steps.map((step) => [step.stepId, step.status]),
+      [['s1', 'passed']],
+    );
+    assert.equal(fake.commands().some((command) => /\/click$|\/value$|\/actions$/.test(command)), false);
+  });
+
   it('runs a journey through the Appium server, device and app it was given', async () => {
     await mkdir(join(dir, '.qai', 'resolutions'), { recursive: true });
     await writeFile(join(dir, '.qai', 'resolutions', 'login.ios.json'), iosResolution('ios'));

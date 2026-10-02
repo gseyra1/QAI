@@ -75,7 +75,7 @@ export { loadScenario, parseScenario, ScenarioError } from './scenario/load.ts';
 export { loadResolution, parseResolution, ResolutionError } from './resolution/load.ts';
 export { saveResolution, serializeResolution } from './resolution/save.ts';
 export { applyHeals } from './resolution/apply.ts';
-export { RESOLUTION_VERSION } from './resolution/types.ts';
+export { OBSERVATION_VERSION, RESOLUTION_VERSION } from './resolution/types.ts';
 
 // Cohérence scénario/résolution : le contrôle qui attrape les faux verts.
 export type { ConsistencyIssue, IssueKind } from './engine/consistency.ts';

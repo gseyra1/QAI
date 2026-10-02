@@ -190,7 +190,8 @@ from `qai.config.json` is brought down to 1). `--headed` is refused.
 
 `qai resolve` on iOS is as experimental as the driver: the model is prompted
 for the web and may propose a relative `navigate` or an `expectDialog`; both
-are rejected during generation and the model retries.
+are rejected during generation and the model retries. A step with no intent on
+iOS (verification only) is resolved and replayed with no gesture, as on the web.
 
 ### Session
 
@@ -223,7 +224,9 @@ normalized tree with the role table above, and:
 - **value** — never the value of a `SecureTextField`, as `type=password` on
   the web. A text field whose value equals its placeholder is empty;
 - **location** — `<bundle id>/<on-screen navigation bar title>`, or the bundle
-  id alone without a navigation bar. iOS has no URL: `urlContains` checks this;
+  id alone without a navigation bar. iOS has no URL: `urlContains` and
+  `urlEquals` compare against this string as written — no base, so a relative
+  value is never resolved;
 - the keyboard and the status bar are left out: keys are pressed with `press`,
   and the clock would keep the screen from ever settling.
 

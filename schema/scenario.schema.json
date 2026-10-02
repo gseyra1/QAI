@@ -54,13 +54,22 @@
       "type": "string",
       "enum": ["web", "mobile", "ios", "android"]
     },
+    "intent": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "An intention for one platform. Never empty: an empty intent would silently turn the step into a verification-only one on that platform."
+    },
     "step": {
       "type": "object",
       "required": ["id"],
       "additionalProperties": false,
+      "description": "A step acts (do or per_platform), verifies (expect or capture), or both. A step without an intent only verifies the screen left by the previous one.",
       "anyOf": [
         { "required": ["do"] },
-        { "required": ["per_platform"] }
+        { "required": ["per_platform"] },
+        { "required": ["expect"] },
+        { "required": ["capture"] }
       ],
       "properties": {
         "id": {
@@ -71,7 +80,8 @@
         "do": {
           "type": "string",
           "minLength": 1,
-          "description": "The intention, in natural language, in the team's language. No selectors."
+          "pattern": "\\S",
+          "description": "The intention, in natural language, in the team's language. No selectors. Omit it for a verification-only step; never leave it empty."
         },
         "per_platform": {
           "type": "object",
@@ -79,10 +89,10 @@
           "additionalProperties": false,
           "description": "Rewording of the intention for a given platform, when the gesture genuinely differs. An exception to keep rare and visible. Do NOT rename to 'on': YAML 1.1 interprets that key as the boolean true.",
           "properties": {
-            "web": { "type": "string" },
-            "mobile": { "type": "string" },
-            "ios": { "type": "string" },
-            "android": { "type": "string" }
+            "web": { "$ref": "#/$defs/intent" },
+            "mobile": { "$ref": "#/$defs/intent" },
+            "ios": { "$ref": "#/$defs/intent" },
+            "android": { "$ref": "#/$defs/intent" }
           }
         },
         "only": {
@@ -94,10 +104,10 @@
         "expect": {
           "description": "Semantic assertion(s). Self-healing is never allowed to modify them.",
           "oneOf": [
-            { "type": "string", "minLength": 1 },
+            { "type": "string", "minLength": 1, "pattern": "\\S" },
             {
               "type": "array",
-              "items": { "type": "string", "minLength": 1 },
+              "items": { "type": "string", "minLength": 1, "pattern": "\\S" },
               "minItems": 1
             }
           ]

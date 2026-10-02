@@ -227,4 +227,24 @@ describe('rapport JUnit', () => {
     assert.match(xml, /<system-err>atteint par son repli technique<\/system-err>/);
     assert.match(xml, /failures="0"/);
   });
+
+  it('nomme un cas qui ne fait que vérifier', () => {
+    const xml = formatJUnit(suite([entry(scenario({ steps: [step({ stepId: 's2', intent: '' })] }))]));
+
+    assert.match(xml, /<testcase name="s2 — \(verification only\)"/);
+  });
+
+  /**
+   * Une étape sautée sans intention n'existe pas sur cette plateforme : ce
+   * n'est pas une vérification, et son nom de cas — son identité dans
+   * l'historique de la CI — reste celui d'avant la v3.
+   */
+  it('garde le nom nu d\'une étape sautée sans intention', () => {
+    const xml = formatJUnit(
+      suite([entry(scenario({ steps: [step({ stepId: 's1', intent: '', status: 'skipped' })] }))]),
+    );
+
+    assert.match(xml, /<testcase name="s1" /);
+    assert.doesNotMatch(xml, /verification only/);
+  });
 });

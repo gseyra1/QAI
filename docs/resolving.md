@@ -72,10 +72,10 @@ Braces, quotes, and repeated field names make up most of a JSON payload's bytes
 and carry no information. The tree is paid for on every call: its density is an
 architecture decision.
 
-## Two things not left to the prompt
+## What is not left to the prompt
 
-Both are guaranteed mechanically, because both can be. A rule stated in the
-system prompt holds most of the time, which is not the same thing.
+All of these are guaranteed mechanically, because they can be. A rule stated in
+the system prompt holds most of the time, which is not the same thing.
 
 **A generated `navigate` is rewritten relative to the base.** The model copies
 the URL it sees, development port included. Written as-is into a versioned
@@ -88,6 +88,34 @@ versioned is what was actually played.
 
 An absolute URL to **another** origin is kept as is. That is a deliberate
 navigation out of the application, not an address copied by accident.
+
+Both rewrites are web only. On iOS a `navigate` is a deep link or a relaunch
+and a URL check compares the screen identifier: both are kept as written.
+
+**A generated `urlEquals` is rewritten the same way.** Same bug, same fix, same
+rules (shared code): a literal absolute URL on the base origin becomes relative
+to the base — `"orders?id=3"`, `"/login"` outside the base path, `"."` for the
+base itself. Replay resolves it against its own base and compares strictly, so
+the asserted address is unchanged. Templates (`{{…}}`) and other origins are
+kept. The rewrite happens **before** verification, so the stored value is the
+one proven against the screen. Without `--base-url` (a harness calling
+`generateResolution` without `baseUrl`) the value is kept and a warning is
+reported. Repairing never touches checks.
+
+**A `urlContains` holding an absolute address of the application is refused**
+back to the model, never rewritten. An absolute substring anchors the origin
+and the start of the path; any relative form loses that anchor —
+`http://host/orders` turned into `orders` would match `/login?next=/orders`,
+the very redirect an access check must catch. The model picks `urlEquals` or a
+fragment it stands behind.
+
+**A verification-only step gets no actions; a step with an intent gets at least
+one.** For a step with no intent on the platform being resolved, phase A is
+skipped: the model is only asked for captures and assertions on the current
+screen, and a proposal carrying actions is refused. For a step with an intent,
+an empty `actions` list is refused. A step that has no intent there and nothing
+to verify fails without a model call. The prompt mentions it; the code enforces
+it.
 
 **`{{env.NAME}}` is refused when the intent does not name NAME.** The model
 readily generalises the secrets rule to any value it has to type: "fill in the
@@ -106,6 +134,15 @@ the trust argument.
 
 Nothing is written if any step fails: a partial resolution would produce greens
 that prove nothing.
+
+The file carries a format `version` (up to 3). It goes up when the observation
+changes (v2) or when the meaning of a stored field changes (v3: relative
+`urlEquals` values resolved against the base, empty `actions` for
+verification-only steps). A file is written with the lowest version its content
+needs: v3 only when it uses one of those, v2 otherwise, so a heal does not make
+it unreadable for a teammate on an older QAI. A QAI older than the file refuses
+it. `qai check` and `qai run` warn about v1 files only: a v2 file is a valid v3
+file.
 
 ## The limits, plainly
 

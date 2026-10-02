@@ -1,6 +1,7 @@
 import type { StepReport } from '../engine/run.ts';
 import type { SuiteReport } from '../engine/suite.ts';
 import { warningCount } from '../engine/suite.ts';
+import { intentLabel } from './text.ts';
 
 /**
  * Marqueur invisible qui permet à la CI de retrouver son propre commentaire et
@@ -27,7 +28,7 @@ function seconds(ms: number): string {
 }
 
 function stepDetail(step: StepReport, options: MarkdownOptions): string[] {
-  const lines = [`- ${MARK[step.status]} **${step.stepId}** — ${step.intent}`];
+  const lines = [`- ${MARK[step.status]} **${step.stepId}** — ${intentLabel(step)}`];
 
   if (step.error !== undefined) lines.push(`  - ${step.error}`);
   for (const failure of step.failures) {

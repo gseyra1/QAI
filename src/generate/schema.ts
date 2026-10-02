@@ -118,7 +118,7 @@ function assertions(): Record<string, unknown> {
             value: {
               type: 'string',
               description:
-                'urlContains: a fragment is enough (e.g. "/login"). urlEquals: the whole URL, compared as-is, trailing slash and query included.',
+                'urlContains: a fragment of the address (e.g. "/login"), never the full address. urlEquals: the whole URL, compared as-is, trailing slash and query included; an address of the application is stored relative to its root.',
             },
           },
           required: ['check', 'value'],
@@ -168,6 +168,9 @@ export function stepProposalSchema(): Record<string, unknown> {
   return {
     type: 'object',
     properties: {
+      // Au moins un geste : ce schéma n'est présenté qu'aux étapes qui ont une
+      // intention. Une étape qui ne fait que vérifier passe directement au
+      // second tour, dont le schéma n'a pas d'actions du tout.
       actions: {
         type: 'array',
         minItems: 1,

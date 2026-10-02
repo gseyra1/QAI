@@ -1,5 +1,6 @@
 import type { ConsoleEntry, Locator, NetworkEntry, Observations, UINode } from '../driver/types.ts';
 import type { Check, ExtractKind } from '../resolution/types.ts';
+import { hasScheme, isDegenerateUrlValue, resolveAgainstBase } from '../resolution/url.ts';
 import { matchNodes } from './match.ts';
 
 export class InterpolationError extends Error {
@@ -228,6 +229,12 @@ export interface CheckContext {
    * par une capture ou une observation.
    */
   secrets?: SecretRegistry;
+  /**
+   * La base de l'exécution, contre laquelle se résout un `urlEquals` relatif.
+   * Absente — sur mobile, ou pour un harnais qui ne la donne pas — la
+   * comparaison reste brute.
+   */
+  baseUrl?: string;
 }
 
 /** Une requête est en échec si elle n'a pas abouti, ou si le serveur a refusé. */
@@ -296,19 +303,33 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
    * les effacer ferait passer une redirection vers « /connexion?next=/admin »
    * pour une redirection vers « /connexion », alors que la différence est
    * précisément ce qu'un parcours de droits d'accès cherche à prouver.
+   *
+   * Seule la base est résolue, pas la comparaison assouplie : un `urlEquals`
+   * relatif devient l'adresse complète sous la base de l'exécution, puis est
+   * comparé strictement. C'est ce qui le rend rejouable sur un autre port sans
+   * rien céder sur ce qu'il affirme. `urlContains`, lui, reste une sous-chaîne
+   * brute : un fragment n'a pas de base.
    */
   if (check.check === 'urlContains' || check.check === 'urlEquals') {
-    const expected = interpolate(check.value, bag);
-    const shown = usesEnv(check.value) ? '***' : expected;
+    const interpolated = interpolate(check.value, bag);
     const observed = context.location;
     if (check.check === 'urlContains') {
-      return observed.includes(expected)
+      const shown = usesEnv(check.value) ? '***' : interpolated;
+      return observed.includes(interpolated)
         ? { ok: true }
         : { ok: false, reason: `"${shown}" not found in URL "${observed}"` };
     }
-    return observed === expected
-      ? { ok: true }
-      : { ok: false, reason: `expected URL "${shown}", observed "${observed}"` };
+    const expected = resolveAgainstBase(interpolated, context.baseUrl);
+    if (observed === expected) return { ok: true };
+    const shown = usesEnv(check.value) ? '***' : expected;
+    // Une valeur relative sans base, ou vide, ne peut jamais passer : le dire
+    // évite de chercher la régression dans l'application.
+    const unresolved = isDegenerateUrlValue(interpolated)
+      ? ' (empty value, or surrounding blanks: not resolved against the base)'
+      : context.baseUrl === undefined && !hasScheme(interpolated)
+        ? ' (relative value, but no base URL is known to resolve it)'
+        : '';
+    return { ok: false, reason: `expected URL "${shown}", observed "${observed}"${unresolved}` };
   }
 
   /**

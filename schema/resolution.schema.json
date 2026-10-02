@@ -11,7 +11,7 @@
     "version": {
       "type": "integer",
       "minimum": 1,
-      "description": "Version of the resolution format, not of the application. Absent means 1. It only goes up when the observation changes."
+      "description": "Version of the resolution format, not of the application. Absent means 1. It goes up when the observation changes (v2) or when the meaning of a stored field changes (v3: a relative urlEquals value is resolved against the base URL; actions may be empty for a verification-only step). A file is written with the lowest version its content needs. A QAI refuses a file newer than the version it reads."
     },
     "scenario": {
       "type": "string",
@@ -204,7 +204,7 @@
           "type": "object",
           "required": ["check", "value"],
           "additionalProperties": false,
-          "description": "Check on the current address. No target: a URL is not a node. The comparison is raw, trailing slash and query parameters included.",
+          "description": "Check on the current address. No target: a URL is not a node. urlEquals: a relative value (\".\", \"orders?id=3\", \"/login\") is resolved against the run's base URL, then compared strictly; an absolute value is compared raw; an empty or blank value is never resolved and fails. urlContains: raw substring. Trailing slash, query and fragment are always part of what is asserted.",
           "properties": {
             "check": { "enum": ["urlContains", "urlEquals"] },
             "value": { "type": "string" }
@@ -234,7 +234,7 @@
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/action" },
-          "description": "The gestures that carry out the intent, in order. Assertions and captures are evaluated once, after the last one."
+          "description": "The gestures that carry out the intent, in order. Assertions and captures are evaluated once, after the last one. Empty if and only if the step is verification-only (no intent on this platform)."
         },
         "captures": {
           "type": "object",

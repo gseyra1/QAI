@@ -772,6 +772,75 @@ describe('IosDriver', () => {
       assert.match(report.steps[0]?.warnings?.[0] ?? '', /watchdog consoleErrors cannot run on ios/);
     });
 
+    /** Sans intention sur iOS, l'étape ne fait que vérifier : aucun geste sur l'appareil. */
+    const verifyOnly = (
+      actions: StepActions,
+    ): { scenario: Scenario; resolution: Resolution } => ({
+      scenario: {
+        id: 'journey',
+        title: 'A journey',
+        steps: [{ id: 's1', per_platform: { web: 'open the login page' }, expect: ['shown'] }],
+      },
+      resolution: {
+        scenario: 'journey',
+        platform: 'ios',
+        recordedAt: '2026-10-02T00:00:00.000Z',
+        steps: { s1: { actions, assertions: { shown } } },
+      },
+    });
+
+    const GESTURE = /\/click$|\/value$|\/clear$|\/actions$|mobile: (?!activeAppInfo|alert)/;
+
+    it('replays a verification-only step with no gesture, and asserts on the tree', async () => {
+      const report = await runScenario({ ...verifyOnly([]), driver, assertTimeoutMs: 0 });
+      assert.equal(report.status, 'passed', JSON.stringify(report.steps));
+      assert.ok(fake.commands().includes('GET /source'), fake.commands().join('\n'));
+      assert.deepEqual(fake.commands().filter((command) => GESTURE.test(command)), []);
+    });
+
+    it('fails a verification-only step whose cache still holds gestures, before any of them', async () => {
+      const report = await runScenario({
+        ...verifyOnly([{ kind: 'click', target: SIGN_IN }]),
+        driver,
+        assertTimeoutMs: 0,
+      });
+      assert.equal(report.status, 'failed');
+      assert.match(report.steps[0]?.error ?? '', /verification-only step, but the cached resolution still has 1 action/);
+      assert.deepEqual(fake.commands().filter((command) => GESTURE.test(command)), []);
+    });
+
+    /**
+     * iOS n'a pas d'URL : `location` est un identifiant d'écran. Une base
+     * passée au rejeu ne doit pas le réécrire — résolue contre
+     * « https://app.test/ », la valeur attendue ne correspondrait plus.
+     */
+    it('compares urlEquals raw on iOS, even when a base URL is given', async () => {
+      const at = (value: string): { scenario: Scenario; resolution: Resolution } =>
+        journey([
+          {
+            id: 's1',
+            expect: ['on the login screen'],
+            actions: [{ kind: 'click', target: SIGN_IN }],
+            assertions: { 'on the login screen': { check: 'urlEquals', value } },
+          },
+        ]);
+      const raw = await runScenario({
+        ...at('com.example.acme/Sign In'),
+        driver,
+        assertTimeoutMs: 0,
+        baseUrl: 'https://app.test/',
+      });
+      assert.equal(raw.status, 'passed', JSON.stringify(raw.steps));
+
+      const resolved = await runScenario({
+        ...at('https://app.test/com.example.acme/Sign%20In'),
+        driver,
+        assertTimeoutMs: 0,
+        baseUrl: 'https://app.test/',
+      });
+      assert.equal(resolved.status, 'failed');
+    });
+
     /**
      * Une erreur affichée en alerte reste à l'écran : elle s'asserte, et le
      * geste suivant échoue en la nommant au lieu de passer dessous.
@@ -837,6 +906,51 @@ describe('IosDriver', () => {
         result.steps[0]?.rejections.join('\n') ?? '',
         /noFailedRequests cannot be observed on this platform/,
       );
+    });
+
+    it('resolves a verification-only step with no gesture and no actions', async () => {
+      const provider = new FixedProvider({
+        captures: {},
+        assertions: { 'the form is shown': { check: 'visible', target: SIGN_IN.primary } },
+      });
+      const result = await generateResolution({
+        scenario: {
+          id: 'login',
+          title: 'Sign in',
+          steps: [{ id: 's1', per_platform: { web: 'open the login page' }, expect: ['the form is shown'] }],
+        },
+        driver,
+        provider,
+        attemptsPerStep: 1,
+      });
+      assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+      assert.deepEqual(result.resolution.steps['s1']?.actions, []);
+      assert.deepEqual(result.steps[0]?.rejections, []);
+      assert.equal(fake.commands().some((command) => /\/click$|mobile: deepLink/.test(command)), false);
+    });
+
+    /**
+     * Une base n'a de sens que sur le web. Sous un schéma non spécial, toutes
+     * les adresses partagent l'origine « null » : relativisé contre
+     * « acme://home/ », le lien profond deviendrait le chemin « orders », que
+     * ce pilote refuse — et sans base, il ne doit pas non plus être signalé
+     * comme une adresse liée à une machine.
+     */
+    it('keeps a deep link as written, with or without a base URL', async () => {
+      const navigate: Action = { kind: 'navigate', to: 'acme://home/orders' };
+      for (const baseUrl of [undefined, 'acme://home/']) {
+        const provider = new FixedProvider({ actions: [navigate], captures: {}, assertions: {} });
+        const result = await generateResolution({
+          scenario: { id: 'orders', title: 'Orders', steps: [{ id: 's1', do: 'open the orders' }] },
+          driver,
+          provider,
+          attemptsPerStep: 1,
+          ...(baseUrl !== undefined ? { baseUrl } : {}),
+        });
+        assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+        assert.deepEqual(result.resolution.steps['s1']?.actions, [navigate]);
+        assert.deepEqual(result.steps[0]?.rejections, []);
+      }
     });
 
     it('records the #id fallback the model reads in the tree, and replays through it', async () => {

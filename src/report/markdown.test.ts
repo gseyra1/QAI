@@ -166,4 +166,32 @@ describe('markdown report', () => {
     assert.match(markdown, /execution error/);
     assert.match(markdown, /browser unreachable/);
   });
+
+  it('names a verification-only step instead of leaving its intent blank', () => {
+    const markdown = formatMarkdown(
+      suite(
+        [
+          {
+            scenarioId: 'checkout',
+            resolutionPath: 'r.json',
+            report: scenario({
+              status: 'failed',
+              steps: [
+                {
+                  stepId: 's2',
+                  intent: '',
+                  status: 'failed',
+                  failures: [{ assertion: 'the order is listed', reason: 'absent' }],
+                  durationMs: 10,
+                },
+              ],
+            }),
+          },
+        ],
+        'failed',
+      ),
+    );
+
+    assert.match(markdown, /\*\*s2\*\* — \(verification only\)/);
+  });
 });

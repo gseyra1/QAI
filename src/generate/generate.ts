@@ -13,8 +13,15 @@ import { suggestNearest } from '../engine/nearest.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withValue } from '../resolution/types.ts';
+import { checkBaseFor, isAbsoluteUrl, relativeToBase } from '../resolution/url.ts';
 import type { Scenario, Step } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
+import {
+  appliesTo,
+  expectationsOf,
+  intentFor,
+  isEmptyOn,
+  isVerificationOnly,
+} from '../scenario/types.ts';
 import { checksMessage, retryMessage, stepMessage, SYSTEM_PROMPT } from './prompt.ts';
 import { renderTree } from './render.ts';
 import { checksProposalSchema, stepProposalSchema } from './schema.ts';
@@ -35,9 +42,9 @@ export interface GenerateInput {
    */
   baseDir?: string;
   /**
-   * Racine de l'application testée. Sert à ramener une navigation absolue à un
-   * chemin relatif : une résolution versionnée doit rejouer ailleurs que sur la
-   * machine qui l'a écrite.
+   * Racine de l'application testée. Sert à ramener une navigation absolue, ou
+   * une vérification d'adresse absolue, à une forme relative : une résolution
+   * versionnée doit rejouer ailleurs que sur la machine qui l'a écrite.
    */
   baseUrl?: string;
   appVersion?: string;
@@ -72,6 +79,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const MALFORMED = 'malformed response: "actions" must be a non-empty list of known gestures';
+
 /**
  * Contrôle structurel minimal.
  *
@@ -79,14 +88,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * un locator mal formé échouera à se résoudre contre l'application réelle, ce
  * qui est un signal plus sûr qu'un schéma — et le message d'erreur qui revient
  * au modèle décrit alors l'application, pas le schéma.
+ *
+ * Rend la proposition, ou la raison de son refus. Une liste vide a son propre
+ * message : sur une étape qui a une intention, zéro geste n'est pas une forme
+ * mal écrite mais une intention jamais accomplie — un vert qui ne prouverait
+ * rien.
  */
-function asProposal(output: unknown): Proposal | null {
-  if (!isRecord(output)) return null;
+function asProposal(output: unknown): Proposal | string {
+  if (!isRecord(output)) return MALFORMED;
   const actions = output['actions'];
-  if (!Array.isArray(actions) || actions.length === 0) return null;
+  if (!Array.isArray(actions)) return MALFORMED;
+  if (actions.length === 0) {
+    return '"actions" is empty, but this step has an intent: propose the gestures that carry it out';
+  }
   for (const action of actions) {
-    if (!isRecord(action) || typeof action['kind'] !== 'string') return null;
-    if (!ACTION_KINDS.has(action['kind'])) return null;
+    if (!isRecord(action) || typeof action['kind'] !== 'string') return MALFORMED;
+    if (!ACTION_KINDS.has(action['kind'])) return MALFORMED;
   }
   return {
     actions: actions as Action[],
@@ -210,6 +227,7 @@ function verifyChecks(
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
   secrets: SecretRegistry,
+  baseUrl: string | undefined,
   observable: boolean,
 ): CheckOutcome {
   const errors: string[] = [];
@@ -264,7 +282,13 @@ function verifyChecks(
       continue;
     }
     try {
-      const result = evaluateCheck(check, { root, location, bag: merged, secrets });
+      const result = evaluateCheck(check, {
+        root,
+        location,
+        bag: merged,
+        secrets,
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
+      });
       if (!result.ok) {
         errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
       }
@@ -310,7 +334,9 @@ function modelFailure(error: unknown): string {
  * génération — c'est plus tard, ailleurs, qu'elle casse.
  *
  * Une URL d'un AUTRE domaine est conservée : c'est alors une navigation
- * délibérée hors de l'application, pas une adresse recopiée par accident.
+ * délibérée hors de l'application, pas une adresse recopiée par accident. Les
+ * règles elles-mêmes vivent dans `resolution/url.ts`, partagées avec les
+ * vérifications d'adresse.
  */
 function relativize(action: Action, baseUrl: string | undefined, warn: (m: string) => void): Action {
   if (action.kind !== 'navigate') return action;
@@ -318,54 +344,71 @@ function relativize(action: Action, baseUrl: string | undefined, warn: (m: strin
     // `generateResolution` est exporté : un harnais qui omet `baseUrl`
     // n'obtient aucune relativisation. Se taire lui livrerait une résolution
     // liée à sa machine sans qu'il l'apprenne jamais.
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(action.to)) {
+    if (isAbsoluteUrl(action.to)) {
       warn(
         `navigate "${action.to}" is saved as an absolute URL: pass baseUrl to generateResolution so the resolution replays elsewhere`,
       );
     }
     return action;
   }
-  try {
-    const root = normalizedBase(baseUrl);
-    const target = new URL(action.to, root);
-    if (target.origin !== root.origin) return action;
-
-    /**
-     * Relatif à la BASE, pas à l'origine.
-     *
-     * Une application servie sous un préfixe — « https://staging/ecole/ » —
-     * perdait ce préfixe : un chemin absolu « /ecole/eleves » écrit à la
-     * génération devient « https://autre-hote/ecole/eleves » au rejeu si la
-     * base change de préfixe, et « /eleves » écrasait carrément le préfixe.
-     * Une forme relative suit la base où qu'elle soit montée.
-     */
-    if (!target.pathname.startsWith(root.pathname)) {
-      return { ...action, to: `${target.pathname}${target.search}${target.hash}` };
-    }
-    const relative = target.pathname.slice(root.pathname.length);
-    // La base elle-même ne donne pas une chaîne vide, qui se lirait comme un
-    // champ oublié : « . » est la référence relative au dossier courant, et
-    // `new URL('.', base)` rend exactement la base.
-    const to = relative === '' && target.search === '' && target.hash === '' ? '.' : relative;
-    return { ...action, to: `${to}${target.search}${target.hash}` };
-  } catch {
-    // Ni une URL absolue ni un chemin résolvable : on n'y touche pas, la
-    // vérification en dira plus que nous.
-    return action;
-  }
+  const to = relativeToBase(action.to, baseUrl);
+  return to === null ? action : { ...action, to };
 }
 
 /**
- * La base, terminée par « / ».
+ * Ramène un `urlEquals` absolu à la forme relative à la base.
  *
- * Sans la barre finale, `new URL('eleves', 'https://x/ecole')` rend
- * `https://x/eleves` : le dernier segment est traité comme un fichier, pas
- * comme un dossier, et le préfixe disparaît silencieusement.
+ * Même défaut que `navigate`, même remède, mêmes règles : le modèle recopie
+ * l'adresse observée, port compris, et l'assertion passe ici puis échoue
+ * partout ailleurs. Appliqué AVANT la vérification, pour que ce qui est
+ * versionné soit ce qui a été prouvé — et seulement à la génération : une
+ * réparation change la façon d'atteindre un élément, jamais ce qui est
+ * affirmé. Le sens est intact : la valeur relative est résolue contre la base
+ * puis comparée strictement, l'adresse attendue est la même.
+ *
+ * `urlContains` n'est PAS réécrit, mais rendu au modèle. Une sous-chaîne
+ * absolue ancre l'origine et le début du chemin ; la forme relative les perd —
+ * « http://h/orders » devenu « orders » est vrai sur « /login?next=/orders »,
+ * précisément la redirection qu'une vérification de droits d'accès doit
+ * attraper. Aucune réécriture d'une sous-chaîne n'en garde le sens : c'est au
+ * modèle de choisir entre l'égalité et un fragment qu'il assume.
+ *
+ * Un gabarit (« {{…}} ») n'est pas touché : sa valeur n'existe qu'à
+ * l'exécution. Une autre origine non plus, comme pour `navigate`.
  */
-function normalizedBase(baseUrl: string): URL {
-  const url = new URL(baseUrl);
-  if (!url.pathname.endsWith('/')) url.pathname = `${url.pathname}/`;
-  return url;
+function portableChecks(
+  assertions: Record<string, Check>,
+  baseUrl: string | undefined,
+  warn: (message: string) => void,
+): { assertions: Record<string, Check>; errors: string[] } {
+  const out: Record<string, Check> = {};
+  const errors: string[] = [];
+
+  for (const [key, check] of Object.entries(assertions)) {
+    out[key] = check;
+    if (check.check !== 'urlEquals' && check.check !== 'urlContains') continue;
+    const value: unknown = check.value;
+    if (typeof value !== 'string' || value.includes('{{') || !isAbsoluteUrl(value)) continue;
+
+    if (baseUrl === undefined) {
+      warn(
+        `${check.check} "${value}" is saved as an absolute URL: pass baseUrl to generateResolution so the resolution replays elsewhere`,
+      );
+      continue;
+    }
+    const relative = relativeToBase(value, baseUrl);
+    if (relative === null) continue;
+
+    if (check.check === 'urlContains') {
+      errors.push(
+        `assertion "${key}": urlContains "${value}" is an absolute address of the application under test, which only matches on this host and port — use urlEquals (stored relative to the root, compared exactly), or urlContains with a fragment that alone identifies the page`,
+      );
+      continue;
+    }
+    out[key] = { ...check, value: relative };
+  }
+
+  return { assertions: out, errors };
 }
 
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
@@ -381,18 +424,54 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   // rejets rapportés, ni — surtout — dans les messages renvoyés au fournisseur
   // de modèle, qui est un tiers.
   const secrets = new SecretRegistry();
+  // Même base qu'au rejeu pour les vérifications d'adresse : web seulement.
+  const checkBase = checkBaseFor(platform, input.baseUrl);
+  // Un pilote qui ne rapporte ni réseau ni console ne peut pas prouver leur
+  // absence : les vérifications d'observation y sont refusées dès l'écriture.
+  const observable = driver.drainObservations !== undefined;
   let aborted = false;
 
   for (const step of scenario.steps) {
     const intent = intentFor(step, platform);
+    /**
+     * Sans intention, rien à demander au modèle côté gestes : la phase A est
+     * sautée, et la résolution n'aura AUCUNE action. C'est garanti ici, pas
+     * confié à la consigne — un geste inventé pour une étape qui ne fait que
+     * vérifier serait joué et versionné comme s'il prouvait quelque chose.
+     */
+    const verificationOnly = isVerificationOnly(step, platform);
 
     if (aborted || !appliesTo(step, platform)) {
       reports.push({ stepId: step.id, intent, status: 'skipped', attempts: 0, rejections: [] });
       continue;
     }
 
+    // Ni geste ni vérification ici : résolue, l'étape serait un vert vide.
+    // On ne demande rien au modèle, il n'y a rien à lui demander.
+    if (isEmptyOn(step, platform)) {
+      reports.push({
+        stepId: step.id,
+        intent,
+        status: 'failed',
+        attempts: 0,
+        rejections: [
+          `no intent and nothing to verify on ${platform}: add expect or capture, or restrict the step with "only"`,
+        ],
+      });
+      aborted = true;
+      continue;
+    }
+
     const rejections: string[] = [];
     let used = 0;
+    // Un avertissement, pas un rejet : il est rapporté une fois, quel que soit
+    // le nombre de tours qui le recroisent.
+    // Masqué comme les rejets : l'adresse avertie peut porter un secret déjà
+    // saisi, et `qai resolve` imprime ces lignes.
+    const warn = (message: string): void => {
+      const redacted = secrets.redact(message);
+      if (!rejections.includes(redacted)) rejections.push(redacted);
+    };
 
     await driver.settle();
     const before = await driver.observe({ interactiveOnly: true });
@@ -416,7 +495,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       },
     ];
 
-    let proposal: Proposal | null = null;
+    let proposal: Proposal | null = verificationOnly
+      ? { actions: [], captures: {}, assertions: {} }
+      : null;
 
     while (used < attempts && proposal === null) {
       used += 1;
@@ -443,8 +524,8 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       const candidate = asProposal(response.output);
       const raw =
-        candidate === null
-          ? ['malformed response: "actions" must be a non-empty list of known gestures']
+        typeof candidate === 'string'
+          ? [candidate]
           : [
               ...verifyEnvTemplates(candidate.actions, intent),
               ...(await verifyActions(driver, candidate.actions)),
@@ -453,7 +534,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       // recopier un nom d'écran, et un secret d'une étape antérieure y figure.
       const errors = raw.map((error) => secrets.redact(error));
 
-      if (errors.length === 0 && candidate !== null) {
+      if (errors.length === 0 && typeof candidate !== 'string') {
         proposal = candidate;
         break;
       }
@@ -481,9 +562,12 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
      */
     proposal = {
       ...proposal,
-      actions: proposal.actions.map((action) =>
-        relativize(action, input.baseUrl, (message) => rejections.push(message)),
-      ),
+      // Web seulement : ailleurs, une navigation est un lien profond ou une
+      // relance, et l'entrée de lancement (un bundle) n'est pas une base.
+      actions:
+        platform === 'web'
+          ? proposal.actions.map((action) => relativize(action, input.baseUrl, warn))
+          : proposal.actions,
     };
 
     try {
@@ -517,13 +601,52 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
     await driver.settle();
     let after = await driver.observe({ interactiveOnly: true });
-    let checks: Pick<Proposal, 'captures' | 'assertions'> = proposal;
-    let outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets, driver.drainObservations !== undefined);
+
+    /**
+     * Réécrit les adresses, PUIS vérifie : la forme prouvée contre l'écran est
+     * celle qui sera versionnée.
+     */
+    const assess = (
+      screen: { root: UINode; location: string },
+      candidate: Pick<Proposal, 'captures' | 'assertions'>,
+    ): { checks: Pick<Proposal, 'captures' | 'assertions'>; outcome: CheckOutcome } => {
+      // La base des vérifications, pas celle des navigations : réécrire une
+      // adresse que le rejeu ne résoudra pas la rendrait fausse partout.
+      const portable = portableChecks(
+        candidate.assertions,
+        checkBase,
+        platform === 'web' ? warn : () => {},
+      );
+      const checks = { captures: candidate.captures, assertions: portable.assertions };
+      const verified = verifyChecks(
+        screen.root,
+        screen.location,
+        bag,
+        checks,
+        step,
+        secrets,
+        checkBase,
+        observable,
+      );
+      return {
+        checks,
+        outcome: {
+          errors: [...portable.errors.map((error) => secrets.redact(error)), ...verified.errors],
+          produced: verified.produced,
+        },
+      };
+    };
+
+    let { checks, outcome } = assess(after, proposal);
 
     const checksConversation: ModelMessage[] = [];
+    // Une étape qui ne fait que vérifier n'a encore rien proposé : ses
+    // manques initiaux sont la question posée au modèle, pas un rejet.
+    let proposed = !verificationOnly;
     while (outcome.errors.length > 0 && used < attempts) {
       used += 1;
-      rejections.push(...outcome.errors);
+      if (proposed) rejections.push(...outcome.errors);
+      proposed = true;
 
       if (checksConversation.length === 0) {
         checksConversation.push({
@@ -537,6 +660,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
                 expectations: expectationsOf(step),
                 captures: step.capture ?? {},
                 availableCaptures: bag,
+                verificationOnly,
               }),
             },
           ],
@@ -567,15 +691,33 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         content: [{ type: 'text', text: JSON.stringify(response.output) }],
       });
 
-      const candidate = asChecks(response.output);
+      // Le schéma de ce tour n'a pas de champ « actions », mais un
+      // fournisseur sans décodage contraint peut en renvoyer : sur une étape
+      // qui ne fait que vérifier, ce serait un geste inventé.
+      const output: unknown = response.output;
+      if (
+        verificationOnly &&
+        isRecord(output) &&
+        Array.isArray(output['actions']) &&
+        output['actions'].length > 0
+      ) {
+        outcome = {
+          errors: [
+            'this step has no intent, it only verifies the current screen: return no "actions", only captures and assertions',
+          ],
+          produced: {},
+        };
+        continue;
+      }
+
+      const candidate = asChecks(output);
       if (candidate === null) {
         outcome = { errors: ['malformed response'], produced: {} };
         continue;
       }
 
       after = await driver.observe({ interactiveOnly: true });
-      checks = candidate;
-      outcome = verifyChecks(after.root, after.location, bag, checks, step, secrets, driver.drainObservations !== undefined);
+      ({ checks, outcome } = assess(after, candidate));
     }
 
     if (outcome.errors.length > 0) {

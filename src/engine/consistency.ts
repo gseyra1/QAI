@@ -1,7 +1,7 @@
 import type { Platform } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
-import type { Scenario } from '../scenario/types.ts';
-import { appliesTo, expectationsOf } from '../scenario/types.ts';
+import type { Scenario, Step } from '../scenario/types.ts';
+import { appliesTo, expectationsOf, isEmptyOn, isVerificationOnly } from '../scenario/types.ts';
 
 export type IssueKind =
   | 'missing-step'
@@ -9,6 +9,8 @@ export type IssueKind =
   | 'missing-assertion'
   | 'missing-capture'
   | 'no-actions'
+  | 'unexpected-actions'
+  | 'empty-step'
   | 'platform-mismatch'
   | 'relative-navigate';
 
@@ -16,6 +18,32 @@ export interface ConsistencyIssue {
   kind: IssueKind;
   stepId: string;
   detail?: string;
+}
+
+/**
+ * La forme qu'impose l'étape à ses gestes, sur cette plateforme.
+ *
+ * Les trois sens comptent. Une intention sans geste n'est jamais accomplie ;
+ * une étape devenue simple vérification qui garde ses gestes les rejoue en
+ * silence — ceux d'une version antérieure de l'étape, que plus personne ne
+ * demande ni ne relit ; une étape qui n'agit ni ne vérifie ici serait un vert
+ * vide. Partagé avec le rejeu, qui ne doit pas dépendre d'un appel préalable
+ * à ce contrôle pour refuser ces trois cas.
+ */
+export function actionsIssue(
+  step: Step,
+  platform: Platform,
+  actionCount: number,
+): ConsistencyIssue | null {
+  if (isEmptyOn(step, platform)) {
+    return { kind: 'empty-step', stepId: step.id, detail: platform };
+  }
+  if (isVerificationOnly(step, platform)) {
+    return actionCount > 0
+      ? { kind: 'unexpected-actions', stepId: step.id, detail: String(actionCount) }
+      : null;
+  }
+  return actionCount === 0 ? { kind: 'no-actions', stepId: step.id } : null;
 }
 
 /**
@@ -54,9 +82,8 @@ export function checkConsistency(
       continue;
     }
 
-    if (cached.actions.length === 0) {
-      issues.push({ kind: 'no-actions', stepId: step.id });
-    }
+    const shape = actionsIssue(step, platform, cached.actions.length);
+    if (shape !== null) issues.push(shape);
 
     // Hors du web, il n'y a pas d'URL de base : un chemin relatif ne désigne
     // rien. Le dire avant de jouer vaut mieux qu'un échec à mi-parcours,
@@ -101,7 +128,11 @@ export function formatIssue(issue: ConsistencyIssue): string {
     case 'missing-capture':
       return `step "${issue.stepId}": capture "${issue.detail}" not resolved`;
     case 'no-actions':
-      return `step "${issue.stepId}": no actions`;
+      return `step "${issue.stepId}": no actions, but the step has an intent — regenerate with "qai resolve"`;
+    case 'empty-step':
+      return `step "${issue.stepId}": no intent and nothing to verify on ${issue.detail} — add expect or capture, or restrict the step with "only"`;
+    case 'unexpected-actions':
+      return `step "${issue.stepId}": verification-only step, but the cached resolution still has ${issue.detail} action(s) — regenerate with "qai resolve"`;
     case 'platform-mismatch':
       return `the resolution was written for another platform (${issue.detail ?? ''}): regenerate it with "qai resolve"`;
     case 'relative-navigate':

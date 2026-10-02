@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { parse } from 'yaml';
 import type { Scenario, Step } from './types.ts';
+import { verifies } from './types.ts';
 
 export class ScenarioError extends Error {
   readonly path: string;
@@ -22,6 +23,13 @@ const YAML_BOOLEAN_KEYS = new Set(['true', 'false', 'on', 'off', 'yes', 'no', 'y
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+/** Un texte qui dit quelque chose : ni vide, ni fait que de blancs. */
+function isIntent(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+const TARGET_PLATFORMS = new Set(['web', 'mobile', 'ios', 'android']);
 
 function assertNoBooleanKeys(raw: string, path: string): void {
   for (const match of raw.matchAll(/^\s*([A-Za-z_]+)\s*:/gm)) {
@@ -45,18 +53,77 @@ function parseStep(value: unknown, index: number, path: string): Step {
 
   const step: Step = { id };
 
-  if (typeof value['do'] === 'string') step.do = value['do'];
-  if (isRecord(value['per_platform'])) {
-    step.per_platform = value['per_platform'] as NonNullable<Step['per_platform']>;
+  /**
+   * Une intention présente mais vide n'est pas une intention absente qu'on
+   * aurait mal écrite : ignorée, elle ferait de l'étape une simple
+   * vérification, et son geste disparaîtrait sans un mot. `do:` sans valeur
+   * (null en YAML), `do: ""`, `per_platform: {}` ou une plateforme mal
+   * orthographiée sont donc refusés, comme le fait le schéma.
+   */
+  if (value['do'] !== undefined) {
+    if (!isIntent(value['do'])) {
+      throw new ScenarioError(`step "${id}": "do" must be a non-empty string`, path);
+    }
+    step.do = value['do'];
+  }
+  if (value['per_platform'] !== undefined) {
+    const perPlatform = value['per_platform'];
+    if (!isRecord(perPlatform) || Object.keys(perPlatform).length === 0) {
+      throw new ScenarioError(
+        `step "${id}": "per_platform" must map at least one platform to an intent`,
+        path,
+      );
+    }
+    for (const [platform, intent] of Object.entries(perPlatform)) {
+      if (!TARGET_PLATFORMS.has(platform)) {
+        throw new ScenarioError(
+          `step "${id}": unknown platform "${platform}" in per_platform (web, mobile, ios, android)`,
+          path,
+        );
+      }
+      if (!isIntent(intent)) {
+        throw new ScenarioError(
+          `step "${id}": per_platform.${platform} must be a non-empty string`,
+          path,
+        );
+      }
+    }
+    step.per_platform = perPlatform as NonNullable<Step['per_platform']>;
   }
   if (Array.isArray(value['only'])) step.only = value['only'] as NonNullable<Step['only']>;
-  if (typeof value['expect'] === 'string' || Array.isArray(value['expect'])) {
-    step.expect = value['expect'] as NonNullable<Step['expect']>;
+  if (value['expect'] !== undefined) {
+    const expect = value['expect'];
+    // Une assertion vide n'affirme rien, et une liste vide non plus : la
+    // compter comme une vérification laisserait passer une étape qui ne prouve
+    // rien.
+    const valid = Array.isArray(expect)
+      ? expect.length > 0 && expect.every(isIntent)
+      : isIntent(expect);
+    if (!valid) {
+      throw new ScenarioError(
+        `step "${id}": "expect" must be a non-empty string or a non-empty list of them`,
+        path,
+      );
+    }
+    step.expect = expect as NonNullable<Step['expect']>;
   }
   if (isRecord(value['capture'])) step.capture = value['capture'] as Record<string, string>;
 
-  if (step.do === undefined && step.per_platform === undefined) {
-    throw new ScenarioError(`step "${id}" has neither do nor per_platform`, path);
+  /**
+   * Une étape agit, vérifie, ou les deux. Sans intention, elle ne fait que
+   * vérifier l'écran laissé par la précédente — « la commande figure dans
+   * l'historique » quand l'historique est déjà affiché. L'exiger obligeait à
+   * inventer un geste, qui était ensuite joué et versionné comme s'il
+   * prouvait quelque chose.
+   *
+   * Ni l'un ni l'autre, en revanche, n'est pas une étape : on refuse plutôt
+   * que de laisser passer un bloc vide qui serait compté comme vert.
+   */
+  if (step.do === undefined && step.per_platform === undefined && !verifies(step)) {
+    throw new ScenarioError(
+      `step "${id}" has neither do nor per_platform, nor expect or capture — a step must act, verify, or both`,
+      path,
+    );
   }
 
   return step;

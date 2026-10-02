@@ -112,6 +112,33 @@ describe('exécution d\'une suite', () => {
     assert.equal(report.status, 'passed');
   });
 
+  /**
+   * `qai run` passe par la suite, pas par `runScenario` directement : c'est
+   * elle qui doit transmettre la base aux vérifications d'adresse. Sans elle,
+   * tout urlEquals relatif écrit par la génération v3 échouerait au rejeu.
+   */
+  it('résout un urlEquals relatif contre la base de la suite', async () => {
+    const key = "on est sur la page d'accueil";
+    const item: SuiteItem = {
+      scenario: { id: 'accueil', title: 'Accueil', steps: [{ id: 's1', expect: key }] },
+      resolution: {
+        version: 3,
+        scenario: 'accueil',
+        platform: 'web',
+        recordedAt: '2026-01-01T00:00:00Z',
+        steps: { s1: { actions: [], assertions: { [key]: { check: 'urlEquals', value: '.' } } } },
+      },
+      resolutionPath: 'accueil.web.json',
+    };
+    const report = await runSuite({ items: [item], baseUrl, createDriver, workers: 1 });
+
+    assert.equal(
+      report.entries[0]?.report?.status,
+      'passed',
+      JSON.stringify(report.entries[0]?.report?.steps ?? report.entries[0]?.error),
+    );
+  });
+
   it('isole les parcours : aucun état ne fuit d\'un scénario à l\'autre', async () => {
     const states = new DemoStates();
     // Deux fois le parcours connecté et deux fois le parcours invité, mélangés :

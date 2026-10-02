@@ -12,6 +12,7 @@ import type {
 } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
+import { checkBaseFor } from '../resolution/url.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, expectationsOf, intentFor, platformMatches } from '../scenario/types.ts';
 import {
@@ -24,6 +25,7 @@ import {
   SecretRegistry,
   usesEnv,
 } from './assert.ts';
+import { actionsIssue, formatIssue } from './consistency.ts';
 import { resolveUpload } from './files.ts';
 import { matchOne } from './match.ts';
 import { suggestNearest } from './nearest.ts';
@@ -172,6 +174,14 @@ export interface RunInput {
   baseDir?: string;
   /** Garde-fous réseau et console. Tout à `off` par défaut. */
   watchdogs?: Watchdogs;
+  /**
+   * Racine de l'application, celle passée au lancement du driver.
+   *
+   * Un `urlEquals` relatif s'y résout : sans elle, il est comparé tel quel et
+   * ne peut pas passer. La résolution ne porte pas l'hôte, justement pour
+   * rejouer ailleurs que sur la machine qui l'a écrite.
+   */
+  baseUrl?: string;
 }
 
 function supports(driver: Driver, action: Action): boolean {
@@ -534,6 +544,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   // Un seul registre pour toute l'exécution : un secret saisi tôt reste masqué
   // dans les rapports des étapes suivantes, où il pourrait revenir par capture.
   const secrets = new SecretRegistry();
+  const baseUrl = checkBaseFor(platform, input.baseUrl);
   const context: ActionsContext = {
     driver,
     baseDir: input.baseDir ?? process.cwd(),
@@ -600,8 +611,22 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
       continue;
     }
 
+    /**
+     * Le rejeu refuse lui-même un cache dont les gestes contredisent l'étape,
+     * sans compter sur un `checkConsistency` préalable : un harnais qui
+     * l'oublie rejouerait en silence les gestes d'une version antérieure de
+     * l'étape, ou compterait comme vert une intention jamais accomplie.
+     */
+    const shape = actionsIssue(step, platform, cached.actions.length);
+    if (shape !== null) {
+      await fail(formatIssue(shape));
+      continue;
+    }
+
     context.stepId = step.id;
     context.intent = intent;
+    // Une étape qui ne fait que vérifier n'a aucune action : aucun geste, puis
+    // le même repos, la même fenêtre d'assertion et les mêmes captures.
     const outcome = await performActions(cached.actions, context);
     if (!outcome.ok) {
       // Le message peut porter un nom d'écran (suggestNearest) ou une note de
@@ -662,7 +687,13 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         // pendant tout le délai d'assertion.
         if (isObservationCheck(check)) continue;
         try {
-          const result = evaluateCheck(check, { root, location, bag, secrets });
+          const result = evaluateCheck(check, {
+            root,
+            location,
+            bag,
+            secrets,
+            ...(baseUrl !== undefined ? { baseUrl } : {}),
+          });
           if (!result.ok) failures.push({ assertion, reason: result.reason });
         } catch (error) {
           failures.push({
@@ -725,6 +756,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
         bag,
         observations,
         secrets,
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
       });
       if (!result.ok) failures.push({ assertion, reason: result.reason });
     }

@@ -7,9 +7,11 @@ import { chromium } from 'playwright';
 import { PlaywrightWebDriver } from '../driver/web/PlaywrightWebDriver.ts';
 import { runScenario } from '../engine/run.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
-import { loadResolution } from '../resolution/load.ts';
+import { loadResolution, parseResolution } from '../resolution/load.ts';
+import { serializeResolution } from '../resolution/save.ts';
 import type { Resolution } from '../resolution/types.ts';
-import { loadScenario } from '../scenario/load.ts';
+import { RESOLUTION_VERSION } from '../resolution/types.ts';
+import { loadScenario, parseScenario } from '../scenario/load.ts';
 import type { Scenario } from '../scenario/types.ts';
 import { generateResolution } from './generate.ts';
 
@@ -176,6 +178,207 @@ describe('génération de résolution', () => {
       assert.equal(report.captures['article'], 'Chaise de bureau');
     } finally {
       await driver.dispose();
+    }
+  });
+});
+
+/** Rend les réponses dans l'ordre et garde chaque requête. */
+class ScriptedProvider implements ModelProvider {
+  readonly name = 'scripted';
+  readonly requests: ModelRequest[] = [];
+  readonly #outputs: unknown[];
+
+  constructor(outputs: unknown[]) {
+    this.#outputs = outputs;
+  }
+
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    this.requests.push(request);
+    const output = this.#outputs[this.requests.length - 1];
+    assert.ok(output !== undefined, `réponse ${this.requests.length} non scénarisée`);
+    return { output, usage: { inputTokens: 10, outputTokens: 10 } };
+  }
+}
+
+async function serveLibrary(): Promise<{ server: Server; port: number }> {
+  const html = await readFile('fixtures/library/index.html', 'utf8');
+  // Toute adresse rend la page : l'application est montée sous un préfixe.
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(html);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server, port: (server.address() as AddressInfo).port };
+}
+
+/**
+ * Le format v3 de bout en bout, dans un vrai navigateur : une étape qui ne
+ * fait que vérifier, et une adresse recopiée avec son port par le modèle.
+ * Généré sur un port, rejoué sur un autre — ce que la v2 ne savait pas faire
+ * dès qu'une assertion portait sur l'adresse.
+ */
+describe('format v3 contre l\'application réelle', () => {
+  let generation: { server: Server; port: number };
+  let replay: { server: Server; port: number };
+
+  before(async () => {
+    generation = await serveLibrary();
+    replay = await serveLibrary();
+  });
+
+  after(async () => {
+    for (const { server } of [generation, replay]) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('génère sans geste inventé, puis rejoue vert sur un autre port', async () => {
+    assert.notEqual(generation.port, replay.port);
+
+    const scenario = parseScenario(`
+id: emprunt-v3
+title: Un adhérent emprunte un ouvrage
+steps:
+  - id: s1
+    do: ouvrir le catalogue en vue liste
+  - id: s2
+    expect: l'adresse est celle du catalogue en vue liste
+  - id: s3
+    do: chercher "Damasio"
+    expect: la liste des notices contient au moins deux entrées
+  - id: s4
+    do: ouvrir la première notice
+    capture:
+      ouvrage: le titre de l'ouvrage
+  - id: s5
+    do: emprunter l'ouvrage
+    expect: l'emprunt est enregistré
+  - id: s6
+    expect: la liste des emprunts contient "{{ouvrage}}"
+`);
+
+    // Une base à préfixe, sans barre finale : la normalisation est éprouvée
+    // à l'écriture comme à la relecture.
+    const base = `http://127.0.0.1:${generation.port}/mediatheque`;
+    const notices = { role: 'list', name: 'Notices trouvées' };
+    const provider = new ScriptedProvider([
+      // Le modèle recopie l'adresse qu'il voit, port compris.
+      { actions: [{ kind: 'navigate', to: `${base}/?vue=liste` }] },
+      {
+        assertions: {
+          "l'adresse est celle du catalogue en vue liste": {
+            check: 'urlEquals',
+            value: `${base}/?vue=liste`,
+          },
+        },
+      },
+      {
+        actions: [
+          {
+            kind: 'fill',
+            target: { primary: { role: 'searchbox', name: 'Chercher une notice' } },
+            value: 'Damasio',
+          },
+          { kind: 'press', key: 'Enter' },
+        ],
+        assertions: {
+          'la liste des notices contient au moins deux entrées': {
+            check: 'countAtLeast',
+            target: { role: 'listitem', within: notices },
+            value: 2,
+          },
+        },
+      },
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'link', nth: 0, within: notices } } }],
+        captures: {
+          ouvrage: {
+            from: { role: 'heading', within: { role: 'group', name: 'Notice détaillée' } },
+            extract: 'text',
+          },
+        },
+      },
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Emprunter' } } }],
+        assertions: {
+          "l'emprunt est enregistré": {
+            check: 'visible',
+            target: { role: 'heading', name: 'Emprunt enregistré' },
+          },
+        },
+      },
+      {
+        assertions: {
+          'la liste des emprunts contient "{{ouvrage}}"': {
+            check: 'textContains',
+            target: { role: 'listitem', nth: 0, within: { role: 'list', name: 'Liste des emprunts' } },
+            value: '{{ouvrage}}',
+          },
+        },
+      },
+    ]);
+
+    const generator = new PlaywrightWebDriver(() => chromium.launch());
+    let generated;
+    try {
+      await generator.launch({ entry: base, viewport: { width: 1280, height: 800 } });
+      generated = await generateResolution({ scenario, driver: generator, provider, baseUrl: base });
+    } finally {
+      await generator.dispose();
+    }
+
+    assert.deepEqual(
+      generated.steps.filter((step) => step.status !== 'resolved').map((s) => [s.stepId, s.rejections]),
+      [],
+    );
+    const steps = generated.resolution.steps;
+    // Aucun geste pour les deux étapes qui ne font que vérifier, et aucune
+    // action ne leur a été demandée.
+    assert.deepEqual(steps['s2']?.actions, []);
+    assert.deepEqual(steps['s6']?.actions, []);
+    for (const index of [1, 5]) {
+      const schema = provider.requests[index]?.responseSchema['properties'] as object;
+      assert.equal('actions' in schema, false);
+    }
+    // Ni l'hôte ni le port ne sont versionnés.
+    assert.deepEqual(steps['s1']?.actions, [{ kind: 'navigate', to: '?vue=liste' }]);
+    assert.deepEqual(steps['s2']?.assertions, {
+      "l'adresse est celle du catalogue en vue liste": { check: 'urlEquals', value: '?vue=liste' },
+    });
+    assert.doesNotMatch(JSON.stringify(generated.resolution), new RegExp(String(generation.port)));
+
+    // Le fichier tel qu'il serait versionné, relu par le chargeur.
+    const resolution = parseResolution(serializeResolution(generated.resolution));
+    assert.equal(resolution.version, RESOLUTION_VERSION);
+
+    const replayBase = `http://127.0.0.1:${replay.port}/mediatheque`;
+    const driver = new PlaywrightWebDriver(() => chromium.launch());
+    try {
+      await driver.launch({ entry: replayBase, viewport: { width: 1280, height: 800 } });
+      const report = await runScenario({ scenario, resolution, driver, baseUrl: replayBase });
+
+      assert.deepEqual(
+        report.steps
+          .filter((step) => step.status !== 'passed')
+          .map((s) => [s.stepId, s.error, s.failures]),
+        [],
+      );
+      assert.equal(report.status, 'passed');
+      assert.equal(report.captures['ouvrage'], 'La Horde du Contrevent');
+    } finally {
+      await driver.dispose();
+    }
+
+    // Sans la base, la même assertion d'adresse ne peut pas passer : c'est
+    // bien la base du rejeu qui la rend vraie, pas une comparaison assouplie.
+    const blind = new PlaywrightWebDriver(() => chromium.launch());
+    try {
+      await blind.launch({ entry: replayBase, viewport: { width: 1280, height: 800 } });
+      const report = await runScenario({ scenario, resolution, driver: blind, assertTimeoutMs: 0 });
+      assert.equal(report.status, 'failed');
+      assert.equal(report.steps.find((step) => step.status === 'failed')?.stepId, 's2');
+    } finally {
+      await blind.dispose();
     }
   });
 });
