@@ -88,7 +88,7 @@ describe('the packaged binary', () => {
 
     const expected = [
       'runScenario', 'runSuite', 'generateResolution', 'checkConsistency', 'formatIssue',
-      'ModelHealer', 'PlaywrightWebDriver', 'parseScenario', 'loadScenario', 'loadResolution',
+      'ModelHealer', 'PlaywrightWebDriver', 'IosDriver', 'parseScenario', 'loadScenario', 'loadResolution',
       'saveResolution', 'serializeResolution', 'applyHeals', 'artifactWriter', 'formatSuite',
       'formatReport', 'formatMarkdown', 'formatJUnit', 'loadConfig', 'BudgetedProvider', 'costOf',
     ];

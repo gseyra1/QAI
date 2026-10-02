@@ -115,23 +115,23 @@ intersection of what the three platforms expose natively.
 | `link` | `link` | `.link` | `TextView` + `URLSpan` |
 | `text` | text content | `.staticText` | `TextView` |
 | `heading` | `heading` | `.staticText` + `header` trait | `AccessibilityHeading` |
-| `image` | `img` | `.image` | `ImageView` |
-| `textbox` | `textbox` | `.textField` | `EditText` |
+| `image` | `img` | `.image`, `.icon` | `ImageView` |
+| `textbox` | `textbox` | `.textField`, `.secureTextField`, `.textView` | `EditText` |
 | `searchbox` | `searchbox` | `.searchField` | `SearchView` |
 | `combobox` | `combobox` | `.pickerWheel` | `Spinner` |
 | `checkbox` | `checkbox` | `.checkBox` | `CheckBox` |
 | `radio` | `radio` | `.radioButton` | `RadioButton` |
-| `switch` | `switch` | `.switch` | `Switch` |
+| `switch` | `switch` | `.switch`, `.toggle` | `Switch` |
 | `slider` | `slider` | `.slider` | `SeekBar` |
 | `list` | `list` | `.table`, `.collectionView` | `RecyclerView` |
 | `listitem` | `listitem` | `.cell` | direct child of the list |
-| `table` / `row` / `cell` | same | `.table` / `.cell` / `.staticText` | `GridView` |
+| `table` / `row` / `cell` | same | — (a `.table` is a `list`) | `GridView` |
 | `tab` / `tablist` | same | `.button` inside `.tabBar` / `.tabBar` | `TabLayout.Tab` |
 | `dialog` | `dialog` | `.alert`, `.sheet` | `AlertDialog` |
 | `menu` / `menuitem` | same | `.menu` / `.menuItem` | `Menu` / `MenuItem` |
-| `progressbar` | `progressbar` | `.progressIndicator` | `ProgressBar` |
-| `alert` | `alert` | `.alert` | `Toast`, `Snackbar` |
-| `group` | `group` | `.other` | `ViewGroup` |
+| `progressbar` | `progressbar` | `.progressIndicator`, `.activityIndicator` | `ProgressBar` |
+| `alert` | `alert` | — (an `.alert` is modal: `dialog`) | `Toast`, `Snackbar` |
+| `group` | `group` | `.other`, and any type not listed | `ViewGroup` |
 
 The accessible name follows the same principle: `aria-label` and accname
 computation on the web, `accessibilityLabel` on iOS, `contentDescription` then
@@ -155,6 +155,92 @@ This is the real porting difficulty, and it is as much product as technical:
 either help customers label their apps correctly — valuable in itself, as
 accessibility regulation tightens — or accept a more expensive vision tier on
 mobile. Decide before promising price parity between the two platforms.
+
+## iOS driver — EXPERIMENTAL
+
+`IosDriver` (`src/driver/ios/`) drives an iOS app through an
+[Appium](https://appium.io) server running the XCUITest driver, over the W3C
+WebDriver protocol. **Status: experimental — not yet validated on a device.**
+It was written against the documented protocol and is tested against a fake
+Appium server that checks every HTTP call; expect rough edges on a real app.
+
+### Prerequisites
+
+None of these is a QAI dependency — like a browser for the web driver:
+
+- macOS with Xcode and an iOS simulator (or a provisioned device);
+- Appium 2 or 3: `npm i -g appium`;
+- the XCUITest driver: `appium driver install xcuitest`;
+- a running server: `appium` (default `http://127.0.0.1:4723`).
+
+```bash
+qai run qa/ --platform ios --app com.example.app --device "iPhone 16"
+qai resolve qa/login.qai.yaml --platform ios --app build/Acme.app --provider ./qa/provider.ts
+```
+
+Resolutions land in `.qai/resolutions/<id>.ios.json`, next to the web ones.
+One device plays one journey at a time: `--workers` must be 1.
+
+### Session
+
+`--app` is a bundle id (`appium:bundleId`, app already installed) or a path to
+a `.app`, `.ipa` or zipped `.app` (`appium:app`, installed by Appium; relative
+paths resolve from the current directory). `--device` is a UDID
+(`appium:udid`) or a device name (`appium:deviceName`). The session uses
+`platformName: iOS` and `appium:automationName: XCUITest`. `dispose()` deletes
+the session and never throws on a session already gone.
+
+### What is observed
+
+`GET /session/:id/source` (the XCUITest XML page source) is parsed into the
+normalized tree with the role table above, and:
+
+- **name** — the accessibility label; for an empty text field, its
+  placeholder; then the `name` attribute (identifier, else label);
+- **testId** — the accessibility identifier, when it differs from the label.
+  It is the target of `fallback.accessibilityId`; `fallback.testId` and
+  `fallback.selector` are web-only and ignored here;
+- **heading** — a `StaticText` (or `Other`) carrying the `Header` trait;
+- **state** — `visible`, `enabled`, switch value `1`/`0` as `checked`, the
+  `Selected` trait as `selected`;
+- **value** — never the value of a `SecureTextField`, as `type=password` on
+  the web. A text field whose value equals its placeholder is empty;
+- **location** — `<bundle id>/<visible navigation bar title>`, or the bundle id
+  alone without a navigation bar. iOS has no URL: `urlContains` checks this;
+- the keyboard and the status bar are left out: keys are pressed with `press`,
+  and the clock would keep the screen from ever settling.
+
+### Actions
+
+| Action | Protocol |
+|---|---|
+| `click` | `mobile: tap` at the centre of the resolved node |
+| `fill` | find the exact node by positional XPath, then element click, clear, send keys |
+| `select` | send the **displayed label** to the `PickerWheel` (XCTest `adjustToPickerWheelValue`) |
+| `press` | send `Enter`/`Return`, `Tab`, `Backspace`/`Delete`, `Space` or one character to the active element |
+| `swipe` | `mobile: swipe` with the direction |
+| `scrollTo` | `mobile: scroll` toward the target until it is visible, 8 scrolls at most |
+| `navigate` | an absolute URL opens as `mobile: deepLink` into the app; `.` relaunches it (`mobile: terminateApp` + `mobile: activateApp`); a relative path is refused |
+| `expectDialog` | after the next gesture, `/alert/accept` or `/alert/dismiss` (prompt text via `POST /alert/text`) |
+| `hover`, `upload` | refused — `hover` at planning (`capabilities.hover: false`) |
+
+`click` taps coordinates rather than an element: one documented command, and
+the coordinates come from the very tree `resolve()` just validated.
+
+**Dialogs.** After every gesture and while settling, `GET /alert/text` tells
+whether an alert is open. An armed `expectDialog` answers it; with nothing
+armed, it is **dismissed**, as on the web. Consequence: an alert's text cannot
+be asserted on iOS today.
+
+**`settle()`** polls the page source until two consecutive reads are
+identical, or the timeout (5 s by default) runs out. iOS exposes no in-flight
+requests: a tree that stops changing is the only observable sign of rest.
+
+**`applyState()`** — there are no cookies or local storage to install:
+non-empty `cookies` or `storage` are refused with an explicit error. `entry` is
+opened as a deep link.
+
+Network and console observation (`drainObservations`) is not available.
 
 ## Writing a new driver
 

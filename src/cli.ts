@@ -3,7 +3,9 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
-import type { Driver } from './driver/types.ts';
+import { isAppPath, isBundleId } from './driver/ios/entry.ts';
+import { IosDriver } from './driver/ios/IosDriver.ts';
+import type { Driver, Platform } from './driver/types.ts';
 import { PlaywrightWebDriver } from './driver/web/PlaywrightWebDriver.ts';
 import { checkConsistency, formatIssue } from './engine/consistency.ts';
 import { generateResolution } from './generate/generate.ts';
@@ -12,7 +14,8 @@ import { runSuite } from './engine/suite.ts';
 import { ModelHealer } from './heal/ModelHealer.ts';
 import { BudgetedProvider } from './model/budget.ts';
 import type { ModelProvider, Pricing } from './model/types.ts';
-import { loadConfig } from './config.ts';
+import { CLI_PLATFORMS, loadConfig } from './config.ts';
+import type { CliPlatform } from './config.ts';
 import { artifactWriter } from './report/artifacts.ts';
 import { formatJUnit } from './report/junit.ts';
 import { formatMarkdown } from './report/markdown.ts';
@@ -32,10 +35,16 @@ const USAGE = `qai — QA agent
   qai check   <scenarios…>
   qai resolve <scenarios…> --base-url <url> --provider <module>
 
+  iOS (experimental): --platform ios --app <bundle-id|path.app> instead of --base-url
+
 <scenarios…> accepts files, directories, or a shell pattern.
 
 Options
   --base-url <url>      root of the application under test
+  --platform <p>        web (default) or ios (experimental, needs Appium)
+  --app <id|path>       iOS app under test: bundle id, or a .app/.ipa path
+  --device <udid|name>  iOS device or simulator (default: Appium's choice)
+  --appium-url <url>    Appium server (default http://127.0.0.1:4723)
   --states <module>     module default-exporting a StateProvider, used to
                         install the state declared by "given"
   --provider <module>   module default-exporting a ModelProvider, and
@@ -61,8 +70,9 @@ Options
 Exit codes: 0 passed or healed, 1 failed or inconsistent.
 `;
 
-function resolutionPathFor(scenarioPath: string, scenario: Scenario): string {
-  return join(dirname(scenarioPath), '.qai', 'resolutions', `${scenario.id}.web.json`);
+/** Une résolution par plateforme : `<id>.web.json`, `<id>.ios.json`. */
+function resolutionPathFor(scenarioPath: string, scenario: Scenario, platform: Platform): string {
+  return join(dirname(scenarioPath), '.qai', 'resolutions', `${scenario.id}.${platform}.json`);
 }
 
 /** Un dossier vaut pour tous les scénarios qu'il contient. */
@@ -99,6 +109,10 @@ export async function main(argv: string[]): Promise<number> {
     allowPositionals: true,
     options: {
       'base-url': { type: 'string' },
+      platform: { type: 'string' },
+      app: { type: 'string' },
+      device: { type: 'string' },
+      'appium-url': { type: 'string' },
       resolution: { type: 'string' },
       states: { type: 'string' },
       provider: { type: 'string' },
@@ -138,6 +152,10 @@ export async function main(argv: string[]): Promise<number> {
     tags: parseTags(values.tags ?? config.tags),
     artifacts: values.artifacts ?? config.artifacts ?? '.qai/artifacts',
     strict: values.strict === true || config.strict === true,
+    platform: values.platform ?? config.platform ?? 'web',
+    app: values.app ?? config.app,
+    device: values.device ?? config.device,
+    appiumUrl: values['appium-url'] ?? config.appiumUrl,
   };
 
   const requested = scenarioArgs.length > 0 ? scenarioArgs : (config.scenarios ?? []);
@@ -162,6 +180,9 @@ export async function main(argv: string[]): Promise<number> {
     ['--max-cost', values['max-cost']],
     ['--attempts', values.attempts],
     ['--assert-timeout', values['assert-timeout']],
+    ['--app', values.app],
+    ['--device', values.device],
+    ['--appium-url', values['appium-url']],
   ];
   for (const [flag, raw] of bruts) {
     if (raw !== undefined && raw.trim() === '') return invalide(flag, 'a non-empty value');
@@ -178,6 +199,44 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (assertTimeout !== undefined && (!Number.isFinite(assertTimeout) || assertTimeout < 0)) {
     return invalide('--assert-timeout', 'a number of milliseconds ≥ 0');
+  }
+
+  /**
+   * La plateforme se valide avant tout chargement, comme les réglages
+   * numériques : une valeur inconnue retombant sur le web jouerait la suite
+   * web en croyant tester l'application mobile.
+   */
+  if (!CLI_PLATFORMS.has(settings.platform)) return invalide('--platform', '"web" or "ios"');
+  const platform = settings.platform as CliPlatform;
+  if (platform === 'web') {
+    // Un réglage iOS passé à une exécution web serait ignoré en silence :
+    // l'utilisateur croirait viser son application et testerait le site.
+    const iosOnly: [string, string | undefined][] = [
+      ['--app', values.app],
+      ['--device', values.device],
+      ['--appium-url', values['appium-url']],
+    ];
+    for (const [flag, given] of iosOnly) {
+      if (given !== undefined) return invalide(flag, '--platform ios');
+    }
+  } else {
+    if (values['base-url'] !== undefined) return invalide('--base-url', '--platform web (use --app on iOS)');
+    if ((command === 'run' || command === 'resolve') && settings.app === undefined) {
+      return invalide('--platform ios', '--app (a bundle id or a .app/.ipa path)');
+    }
+    const app = settings.app;
+    if (app !== undefined && !isAppPath(app) && !isBundleId(app)) {
+      return invalide('--app', 'a bundle id (com.example.app) or a .app/.ipa path');
+    }
+    const server = settings.appiumUrl;
+    if (server !== undefined && !/^https?:\/\/[^/]/i.test(server)) {
+      return invalide('--appium-url', 'an http(s) URL');
+    }
+    // Un appareil ne joue qu'un parcours à la fois : quatre sessions sur le
+    // même simulateur se voleraient l'écran et produiraient des verdicts faux.
+    if (workers !== undefined && workers !== 1) {
+      return invalide('--workers', '1 with --platform ios (one device runs one journey at a time)');
+    }
   }
   if (command === undefined || requested.length === 0) {
     // Une invocation incomplète doit échouer : passer en silence ferait
@@ -215,7 +274,21 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const createDriver = (): Driver =>
-    new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
+    platform === 'ios'
+      ? new IosDriver({
+          ...(settings.appiumUrl !== undefined ? { serverUrl: settings.appiumUrl } : {}),
+          ...(settings.device !== undefined ? { device: settings.device } : {}),
+        })
+      : new PlaywrightWebDriver(() => chromium.launch({ headless: values.headed !== true }));
+
+  /**
+   * Ce que le pilote lance : l'URL de base sur le web, l'application sur iOS.
+   * Le même champ sert d'entrée à `launch` et de `baseUrl` au fournisseur
+   * d'état, qui sait ainsi pour quelle cible préparer la session.
+   */
+  const entry = platform === 'ios' ? settings.app : settings.baseUrl;
+  const entryFlag = platform === 'ios' ? '--app' : '--base-url';
+  const viewport = platform === 'ios' ? undefined : { width: 1280, height: 800 };
 
   const maxCost = settings.maxCost;
 
@@ -237,9 +310,9 @@ export async function main(argv: string[]): Promise<number> {
       : (await loadModule<StateProvider>(settings.states, 'StateProvider')).value;
 
   if (command === 'resolve') {
-    const baseUrl = settings.baseUrl;
+    const baseUrl = entry;
     if (baseUrl === undefined || settings.provider === undefined) {
-      process.stderr.write('--base-url and --provider are required\n');
+      process.stderr.write(`${entryFlag} and --provider are required\n`);
       return 1;
     }
     const provider = await modelProvider(settings.provider);
@@ -248,7 +321,7 @@ export async function main(argv: string[]): Promise<number> {
     for (const { path, scenario } of selected) {
       const driver = createDriver();
       try {
-        await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
+        await driver.launch({ entry: baseUrl, ...(viewport !== undefined ? { viewport } : {}) });
 
         // Générer sans installer l'état déclaré produirait une résolution
         // pour un écran que le scénario ne verra jamais.
@@ -297,7 +370,7 @@ export async function main(argv: string[]): Promise<number> {
           continue;
         }
 
-        const out = values.resolution ?? resolutionPathFor(path, scenario);
+        const out = values.resolution ?? resolutionPathFor(path, scenario, platform);
         await saveResolution(out, result.resolution);
         process.stdout.write(`  written to ${out}\n`);
       } finally {
@@ -316,7 +389,7 @@ export async function main(argv: string[]): Promise<number> {
   let inconsistent = false;
 
   for (const { path, scenario } of selected) {
-    const resolutionPath = values.resolution ?? resolutionPathFor(path, scenario);
+    const resolutionPath = values.resolution ?? resolutionPathFor(path, scenario, platform);
 
     /**
      * Un scénario sans résolution est un cas NORMAL d'une suite en cours
@@ -354,7 +427,7 @@ export async function main(argv: string[]): Promise<number> {
       );
     }
 
-    const issues = checkConsistency(scenario, resolution, 'web');
+    const issues = checkConsistency(scenario, resolution, platform);
 
     if (issues.length > 0) {
       inconsistent = true;
@@ -380,9 +453,9 @@ export async function main(argv: string[]): Promise<number> {
   // Rejouer sur une paire incohérente produit des verts qui ne prouvent rien.
   if (inconsistent) return 1;
 
-  const baseUrl = settings.baseUrl;
+  const baseUrl = entry;
   if (baseUrl === undefined) {
-    process.stderr.write('--base-url is required\n');
+    process.stderr.write(`${entryFlag} is required\n`);
     return 1;
   }
   if (values.heal === true && settings.provider === undefined) {
@@ -399,12 +472,16 @@ export async function main(argv: string[]): Promise<number> {
     items,
     baseUrl,
     createDriver,
-    viewport: { width: 1280, height: 800 },
+    ...(viewport !== undefined ? { viewport } : {}),
     ...(states !== undefined ? { states } : {}),
     ...(provider !== undefined
       ? { createHealer: (driver: Driver) => new ModelHealer({ driver, provider }) }
       : {}),
-    ...(settings.workers !== undefined ? { workers: settings.workers } : {}),
+    ...(settings.workers !== undefined
+      ? { workers: settings.workers }
+      : platform === 'ios'
+        ? { workers: 1 }
+        : {}),
     ...(settings.assertTimeout !== undefined ? { assertTimeoutMs: settings.assertTimeout } : {}),
     ...(config.watchdogs !== undefined ? { watchdogs: config.watchdogs } : {}),
     captureArtifact: artifactWriter(settings.artifacts),

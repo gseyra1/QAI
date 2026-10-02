@@ -127,4 +127,35 @@ describe('configuration file', () => {
     assert.equal(config, null, 'a missing explicit path must throw, not return an empty config');
     assert.equal(path, null);
   });
+
+  it('reads the iOS keys, and resolves an app path relative to the file', async () => {
+    const path = join(dir, 'ios.json');
+    await writeFile(
+      path,
+      JSON.stringify({ platform: 'ios', app: 'build/Acme.app', device: 'iPhone 16', appiumUrl: 'http://127.0.0.1:4723' }),
+    );
+    const { config } = await loadConfig(path);
+
+    assert.equal(config.platform, 'ios');
+    assert.equal(config.app, resolve(dir, 'build/Acme.app'));
+    assert.equal(config.device, 'iPhone 16');
+    assert.equal(config.appiumUrl, 'http://127.0.0.1:4723');
+  });
+
+  /** Un identifiant de bundle n'est pas un chemin : l'absolutiser le casserait. */
+  it('leaves a bundle id untouched', async () => {
+    const path = join(dir, 'bundle.json');
+    await writeFile(path, JSON.stringify({ platform: 'ios', app: 'com.example.acme' }));
+    assert.equal((await loadConfig(path)).config.app, 'com.example.acme');
+  });
+
+  /**
+   * « iso » retombant sur le web jouerait la suite web en croyant tester
+   * l'application mobile : un vert qui ne prouve rien.
+   */
+  it('rejects an unknown platform instead of falling back to web', async () => {
+    const path = join(dir, 'platform.json');
+    await writeFile(path, JSON.stringify({ platform: 'iso' }));
+    await assert.rejects(() => loadConfig(path), /platform must be "web" or "ios"/);
+  });
 });

@@ -178,6 +178,38 @@ describe('runScenario', () => {
     assert.match(report.steps[0]?.failures[0]?.reason ?? '', /expected "3", observed "1"/);
   });
 
+  it('laisse scrollTo agir sur une cible présente mais hors écran, sans réparer', async () => {
+    const hidden: ResolveOutcome = { found: false, reason: 'not-visible', matches: 1 };
+    const driver = new FakeDriver(TREE, () => hidden);
+    const healer = new SpyHealer({ healed: false, reason: 'ne doit pas arriver' });
+
+    const report = await runScenario({
+      driver,
+      healer,
+      scenario: scenario([{ id: 's1', do: 'faire défiler jusqu\'au bouton' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'scrollTo', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'passed');
+    assert.equal(healer.calls.length, 0, 'défiler est la réponse attendue à « hors écran »');
+    assert.deepEqual(driver.acted.map((action) => action.kind), ['scrollTo']);
+  });
+
+  it('refuse toujours un clic sur une cible hors écran', async () => {
+    const hidden: ResolveOutcome = { found: false, reason: 'not-visible', matches: 1 };
+    const driver = new FakeDriver(TREE, () => hidden);
+
+    const report = await runScenario({
+      driver,
+      scenario: scenario([{ id: 's1', do: 'ajouter au panier' }]),
+      resolution: resolution({ s1: { actions: [{ kind: 'click', target: CLICK }] } }),
+    });
+
+    assert.equal(report.status, 'failed');
+    assert.equal(report.steps[0]?.error, 'target found but not visible');
+    assert.equal(driver.acted.length, 0);
+  });
+
   it('réessaie après repos avant d\'engager une réparation', async () => {
     const driver = new FakeDriver(TREE, (_target, call) => (call === 1 ? MISSING : FOUND));
     const healer = new SpyHealer({ healed: false, reason: 'ne doit pas arriver' });

@@ -189,15 +189,20 @@ function supports(driver: Driver, action: Action): boolean {
 const NEEDS_ENABLED = new Set(['click', 'fill', 'select']);
 
 /**
- * Le seul geste qui vise légitimement un élément invisible.
+ * Les gestes qui visent légitimement un élément invisible.
  *
  * Un `input[type=file]` est presque toujours masqué derrière un bouton stylé —
  * c'est le rendu par défaut de toutes les bibliothèques de composants. Le
  * dépôt de fichier ne passe pas par un clic : il écrit directement dans le
  * champ, ce que le navigateur autorise sur un élément masqué. Exiger la
  * visibilité ici rendrait `upload` inutilisable partout où il sert.
+ *
+ * `scrollTo` existe précisément pour une cible hors écran. Sur iOS, une
+ * cellule sous le pli est présente dans l'arbre mais marquée invisible : la
+ * refuser ici envoyait au réparateur le seul cas que le geste sait traiter.
+ * Le pilote reste juge — il défile, puis échoue s'il n'a rien rendu visible.
  */
-const ALLOWS_INVISIBLE = new Set(['upload']);
+const ALLOWS_INVISIBLE = new Set(['upload', 'scrollTo']);
 
 function describeTarget(target: ResolvedTarget): string {
   const { name, role } = target.primary;

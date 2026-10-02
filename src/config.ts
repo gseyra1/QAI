@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
+import { isAppPath } from './driver/ios/entry.ts';
 import type { WatchdogLevel, Watchdogs } from './engine/run.ts';
+
+/** Les plateformes que la ligne de commande sait piloter. */
+export type CliPlatform = 'web' | 'ios';
+export const CLI_PLATFORMS: ReadonlySet<string> = new Set<CliPlatform>(['web', 'ios']);
 
 export interface QaiConfig {
   scenarios?: string[];
@@ -17,6 +22,14 @@ export interface QaiConfig {
   strict?: boolean;
   /** Garde-fous réseau et console. Absent = tout à « off ». */
   watchdogs?: Watchdogs;
+  /** `web` par défaut. `ios` est expérimental. */
+  platform?: CliPlatform;
+  /** L'application iOS : identifiant de bundle, ou chemin d'un `.app`/`.ipa`. */
+  app?: string;
+  /** UDID ou nom de l'appareil iOS. */
+  device?: string;
+  /** Serveur Appium, pour `ios`. */
+  appiumUrl?: string;
 }
 
 const FILE = 'qai.config.json';
@@ -39,6 +52,12 @@ function absolutize(config: QaiConfig, base: string): QaiConfig {
   }
   if (out.scenarios !== undefined) {
     out.scenarios = out.scenarios.map((path) => (isAbsolute(path) ? path : resolve(base, path)));
+  }
+  // `app` n'est un chemin que s'il désigne un bundle : un identifiant
+  // « com.example.app » absolutisé deviendrait un fichier inexistant.
+  const app = out.app;
+  if (app !== undefined && isAppPath(app) && !isAbsolute(app) && !/^https?:\/\//i.test(app)) {
+    out.app = resolve(base, app);
   }
   return out;
 }
@@ -116,7 +135,7 @@ function parse(raw: string, path: string): QaiConfig {
   if (typeof tags === 'string') config.tags = [tags];
   else if (Array.isArray(tags)) config.tags = tags as string[];
 
-  for (const key of ['baseUrl', 'states', 'provider', 'artifacts'] as const) {
+  for (const key of ['baseUrl', 'states', 'provider', 'artifacts', 'app', 'device', 'appiumUrl'] as const) {
     const value = document[key];
     if (typeof value === 'string') config[key] = value;
   }
@@ -125,6 +144,16 @@ function parse(raw: string, path: string): QaiConfig {
     if (typeof value === 'number') config[key] = value;
   }
   if (typeof document['strict'] === 'boolean') config.strict = document['strict'];
+
+  // Une plateforme inconnue arrête le chargement : « iso » retombant sur le
+  // web ferait passer une suite mobile pour verte sans avoir touché l'appareil.
+  const platform = document['platform'];
+  if (platform !== undefined) {
+    if (typeof platform !== 'string' || !CLI_PLATFORMS.has(platform)) {
+      throw new Error(`${path}: platform must be "web" or "ios"`);
+    }
+    config.platform = platform as CliPlatform;
+  }
 
   const watchdogs = document['watchdogs'];
   if (watchdogs !== undefined) {

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Acme" label="Acme" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="" processId="48213" bundleId="com.example.acme">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="390" height="844" index="0" traits="">
+        <XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="Account" enabled="true" visible="true" accessible="false" x="0" y="47" width="390" height="44" index="0" traits="">
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Account" name="Account" label="Account" enabled="true" visible="true" accessible="true" x="160" y="58" width="70" height="22" index="0" traits="Header, StaticText"/>
+        </XCUIElementTypeNavigationBar>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="delete_account" label="Delete account" enabled="true" visible="true" accessible="true" x="16" y="700" width="358" height="50" index="1" traits="Button"/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+    <XCUIElementTypeAlert type="XCUIElementTypeAlert" name="Delete account?" label="Delete account?" enabled="true" visible="true" accessible="false" x="60" y="335" width="270" height="174" index="1" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="60" y="335" width="270" height="174" index="0" traits="">
+        <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="60" y="335" width="270" height="130" index="0" traits="">
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Delete account?" name="Delete account?" label="Delete account?" enabled="true" visible="true" accessible="true" x="76" y="355" width="238" height="22" index="0" traits="StaticText"/>
+          <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="This cannot be undone." name="This cannot be undone." label="This cannot be undone." enabled="true" visible="true" accessible="true" x="76" y="381" width="238" height="18" index="1" traits="StaticText"/>
+        </XCUIElementTypeScrollView>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Cancel" label="Cancel" enabled="true" visible="true" accessible="true" x="60" y="465" width="135" height="44" index="1" traits="Button"/>
+        <XCUIElementTypeButton type="XCUIElementTypeButton" name="Delete" label="Delete" enabled="true" visible="true" accessible="true" x="195" y="465" width="135" height="44" index="2" traits="Button"/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeAlert>
+  </XCUIElementTypeApplication>
+</AppiumAUT>
