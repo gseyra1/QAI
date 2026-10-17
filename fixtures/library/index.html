@@ -35,7 +35,12 @@
 
     <section id="confirmation" hidden aria-label="Emprunt enregistré">
       <h2>Emprunt enregistré</h2>
-      <p>Référence <span id="recu"></span></p>
+      <!-- La référence dans son propre nœud : une capture lit un nœud entier,
+           et une valeur noyée dans une phrase ne s'isole pas. -->
+      <dl>
+        <dt>Référence</dt>
+        <dd id="recu"></dd>
+      </dl>
       <p id="retour"></p>
     </section>
 

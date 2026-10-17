@@ -150,6 +150,43 @@ displayed status was wrong — captured the wrong element, or stopped converging
 within 5 attempts. Both show up as warnings in the `qai resolve` output; the
 model never sees them.
 
+**An assertion already true before the gesture is sent back once.** On a step
+with an intent, each assertion is also evaluated against the screen the step
+started from (with the step's own captures; `noFailedRequests` and
+`noConsoleErrors` excepted). True there, it does not depend on the gesture.
+Measured with DeepSeek: a step resolved by a `navigate` that reloads the app,
+with an assertion true anyway — green, proving nothing. Legitimate invariants
+exist ("the header still shows the shop name", "no error is shown" as
+`absent`), so it is not refused: it goes back to the model once, before acting
+when it can (the only moment the gestures can still be fixed), otherwise after.
+The model asserts what the step changes, or resends the check unchanged if it is
+a deliberate invariant; then it is accepted with a warning, as is any answer
+that still holds before (no second turn). At most one extra turn per assertion;
+before acting only when a turn is left after the answer to repair the checks;
+never on the last attempt (warning instead), never on a verification-only step.
+It is a question, not a rejection, and it never fails a step: when the answer is
+refused and no turn repairs it, the questioned proposal is kept, with the
+warning.
+
+**A capture the expectation names is not frozen as a literal.** "the loan list
+contains the reference "{{reference}}"" came back as `textContains "EMP-4418"`:
+today's value, which keeps passing at replay whatever the capture reads. When
+the expectation names `{{name}}` and the check uses it nowhere (value or
+target):
+
+| The check's value | Outcome |
+|---|---|
+| equals the capture's current value (as a number for `numberEquals`) | rewritten to `{{name}}`, warning |
+| equals it, under 3 characters | asked once: `{{name}}`, or resent unchanged; kept as is with a warning |
+| contains it | refused, with the exact rewrite: `write {{reference}} in place of "EMP-4418": "{{reference}} — en cours"` |
+| is only part of it (the capture read `Référence EMP-4418`) | warning: the fix belongs to the capture, at a step already resolved |
+
+Containment counts on word boundaries only, and from 3 characters: "1" inside
+"Livraison en 1 jour" proves nothing, so a shorter value is reported, never
+refused. Equality with every named capture is tried before containment, the
+longest value first: `EMP-4418` is `{{reference}}`, not `{{prefix}}-4418`.
+Values from `{{env.…}}` are masked as `***` in the message.
+
 **Every proposal is checked key by key against the shape
 [schema/resolution.schema.json](../schema/resolution.schema.json) allows.** A
 locator takes `role`, `name`, `nth` and `within` only; checks, actions,

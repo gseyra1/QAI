@@ -36,6 +36,7 @@ class FakeDriver implements Driver {
   readonly #location: string;
   readonly #root: UINode;
   readonly #found: ResolveOutcome;
+  #blankUntilActed = false;
 
   constructor(location: string, root: UINode = TREE, found: ResolveOutcome = FOUND, platform: Platform = 'web') {
     this.#location = location;
@@ -44,15 +45,27 @@ class FakeDriver implements Driver {
     this.platform = platform;
   }
 
+  /**
+   * Un écran vide tant qu'aucun geste n'a été joué. Sans lui, l'écran figé
+   * rend chaque assertion vraie AVANT le geste, et la génération la renvoie au
+   * modèle (voir « déjà vraie avant le geste ») — ce que ces tests-là
+   * n'examinent pas.
+   */
+  startsBlank(): this {
+    this.#blankUntilActed = true;
+    return this;
+  }
+
   async launch(): Promise<void> {}
   async applyState(): Promise<void> {}
   async observe(): Promise<UISnapshot> {
+    const blank = this.#blankUntilActed && this.acted.length === 0;
     return {
       platform: this.platform,
       at: new Date().toISOString(),
-      location: this.#location,
+      location: blank ? 'about:blank' : this.#location,
       viewport: { x: 0, y: 0, width: 1280, height: 800 },
-      root: this.#root,
+      root: blank ? node('group', 'blank') : this.#root,
     };
   }
   async resolve(): Promise<ResolveOutcome> {
@@ -247,7 +260,7 @@ steps:
     ]);
     const result = await generateResolution({
       scenario,
-      driver: new FakeDriver(location),
+      driver: new FakeDriver(location).startsBlank(),
       provider,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
       attemptsPerStep: 3,
@@ -418,7 +431,7 @@ steps:
       ]);
       const result = await generateResolution({
         scenario: withSecret,
-        driver: new FakeDriver(url),
+        driver: new FakeDriver(url).startsBlank(),
         provider,
       });
 
@@ -540,7 +553,7 @@ steps:
     const [first, ...rest] = checks;
     const result = await generateResolution({
       scenario,
-      driver: new FakeDriver('http://app.test/', SCREEN),
+      driver: new FakeDriver('http://app.test/', SCREEN).startsBlank(),
       provider: new ScriptedProvider([
         { actions: [CLICK], assertions: { [KEY]: first } },
         ...rest.map((check) => ({ assertions: { [KEY]: check } })),
@@ -579,7 +592,7 @@ steps:
     ]);
     const result = await generateResolution({
       scenario,
-      driver: new FakeDriver('http://app.test/', SCREEN),
+      driver: new FakeDriver('http://app.test/', SCREEN).startsBlank(),
       provider,
       attemptsPerStep: 2,
     });
@@ -592,7 +605,7 @@ steps:
     try {
       const result = await generateResolution({
         scenario,
-        driver: new FakeDriver('http://app.test/', node('group', 'page', [node('text', 'S3CR3T-badge'), BUTTON])),
+        driver: new FakeDriver('http://app.test/', node('group', 'page', [node('text', 'S3CR3T-badge'), BUTTON])).startsBlank(),
         provider: new ScriptedProvider([
           {
             actions: [CLICK],
@@ -638,7 +651,7 @@ steps:
     const [first, ...rest] = specs;
     const result = await generateResolution({
       scenario: CAPTURED,
-      driver: new FakeDriver('http://app.test/', SCREEN),
+      driver: new FakeDriver('http://app.test/', SCREEN).startsBlank(),
       provider: new ScriptedProvider([
         { actions: [CLICK], captures: { prix: first } },
         ...rest.map((spec) => ({ captures: { prix: spec } })),
@@ -767,7 +780,7 @@ steps:
   async function propose(output: Record<string, unknown>) {
     const result = await generateResolution({
       scenario,
-      driver: new FakeDriver('http://app.test/'),
+      driver: new FakeDriver('http://app.test/').startsBlank(),
       provider: new ScriptedProvider([
         { captures: CAPTURE, assertions: { [KEY]: SHOWN }, ...output },
         { captures: CAPTURE, assertions: { [KEY]: SHOWN } },

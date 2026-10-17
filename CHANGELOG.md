@@ -3,7 +3,63 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [0.4.1] - 2026-10-17
+
+First npm release since 0.3.0: it ships 0.4.0 and 0.3.1, never published on
+their own — read both.
+
+### Added
+
+- **Generation sends back, once, an assertion already true before the
+  gesture.** On a step with an intent, each assertion is also evaluated on the
+  screen the step started from. True there, it proves nothing about the step
+  (measured: a `navigate` reload with an assertion true anyway). It goes back to
+  the model before acting when possible, so the gestures can still be fixed,
+  otherwise after. Resent unchanged (a deliberate invariant), or still true
+  before, it is accepted with a warning. One extra turn per assertion at most;
+  before acting only if a turn is left to repair the checks after it; never on
+  the last attempt, nor on a verification-only step, nor for
+  `noFailedRequests` / `noConsoleErrors`. It is asked as a question, not a
+  rejection, and never fails a step: if the answer is refused and no turn
+  repairs it, the questioned proposal is kept, with the warning.
+- **Generation no longer freezes a capture as a literal.** When the
+  expectation names `{{name}}` and the check does not use it: a value equal to
+  the capture's current value is rewritten to `{{name}}` (warning); a value
+  containing it is refused with the exact rewrite; a value that is only part of
+  it is reported. Under 3 characters, equality is asked once as a question
+  (`1` may be another number) and never rewritten, containment only reported.
+  Containment needs word boundaries; equality is tried on every named capture
+  before containment, longest value first.
+- **Action input `package`**: install any npm spec (a local `.tgz`) instead of
+  `tilmiqai@<version>`. The selftest now builds the branch and runs the Action
+  on that tarball, so a pull request tests its own code; a separate workflow
+  still tests the published `latest`.
+- **iOS first-session checklist** in `docs/driver.md`: what to check, and send
+  back, on the first real device or simulator run.
+
+Measured with DeepSeek: the question catches what it should and raised no
+false alarm, but a model can insist on a check that proves nothing — then only
+the warning remains. Read the `warning:` lines of `qai resolve`.
+
+### Changed
+
+- The library example's last step (`s5`) is now verification-only: it no
+  longer invents a gesture to state what the screen already shows. The demo
+  library shows the loan reference in its own node (a capture reads a whole
+  node; a value inside a sentence cannot be isolated), so `s5` now checks
+  `{{reference}}` instead of a frozen `EMP-4418`. Resolution regenerated with
+  DeepSeek, format v3.
+
+### Fixed
+
+- The first checks turn after the actions now tells the model why the captures
+  and assertions proposed with the gestures were rejected. It used to ask again
+  without the reason. A verification-only step, which proposed nothing yet,
+  gets no such list.
+
 ## [0.4.0] - 2026-10-02
+
+Tagged, never published to npm: ships with 0.4.1.
 
 Resolution format v3 (portable URL checks, verification-only steps), an
 **experimental** iOS driver, and generation that refuses more of what proves
@@ -161,7 +217,7 @@ too — it was never published, and its changes reach npm with this release.
 
 ## [0.3.1] - 2026-09-29
 
-Not published to npm; shipped with 0.4.0.
+Not published to npm; shipped with 0.4.1.
 
 ### Added
 
@@ -213,6 +269,7 @@ Not published to npm; shipped with 0.4.0.
 - A misspelled or non-object `watchdogs` block stops the command.
 - Runtime messages in English.
 
-[0.4.0]: https://github.com/gseyra1/QAI/compare/d9b5430...v0.4.0
+[0.4.1]: https://github.com/gseyra1/QAI/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/gseyra1/QAI/compare/v0.3.0...v0.4.0
 [0.3.1]: https://github.com/gseyra1/QAI/compare/d9b5430...43ceebe
-[0.3.0]: https://github.com/gseyra1/QAI/tree/d9b5430
+[0.3.0]: https://github.com/gseyra1/QAI/tree/v0.3.0

@@ -173,6 +173,19 @@ export function retryMessage(errors: string[], tree?: string): string {
   return parts.join('\n');
 }
 
+/**
+ * Une question, pas un refus : la proposition tient, mais une vérification ne
+ * prouve peut-être pas ce que l'attente demande. Présentée comme un refus
+ * (« Fix it »), elle poussait à changer ce qu'il fallait parfois maintenir —
+ * un invariant voulu, un littéral qui n'est pas la capture.
+ */
+export function questionMessage(questions: string[]): string {
+  const parts = ['Your proposal holds, but before it is accepted:'];
+  for (const question of questions) parts.push(`- ${question}`);
+  parts.push('', 'Propose again, all of it: change what needs changing, resend the rest unchanged.');
+  return parts.join('\n');
+}
+
 export function checksMessage(input: {
   tree: string;
   /** Sans elle, une assertion d'URL serait à deviner. */
@@ -185,6 +198,10 @@ export function checksMessage(input: {
    * gestes ont mené là ; le refus d'éventuelles actions, lui, est dans le code.
    */
   verificationOnly?: boolean;
+  /** Ce qui a été refusé dans les vérifications proposées avec les gestes. */
+  rejected?: string[];
+  /** Les questions sur ces vérifications, quand rien n'y a été refusé. */
+  questioned?: string[];
 }): string {
   const parts = [
     input.verificationOnly === true
@@ -206,6 +223,16 @@ export function checksMessage(input: {
   if (available.length > 0) {
     parts.push('', 'Available captures:');
     for (const [name, value] of available) parts.push(`- {{${name}}} = ${value}`);
+  }
+  if (input.rejected !== undefined && input.rejected.length > 0) {
+    parts.push('', 'The captures and assertions proposed with the actions were rejected:');
+    for (const error of input.rejected) parts.push(`- ${error}`);
+    parts.push('', 'Fix them and propose again, all of them.');
+  }
+  if (input.questioned !== undefined && input.questioned.length > 0) {
+    parts.push('', 'The captures and assertions proposed with the actions hold, but before they are accepted:');
+    for (const question of input.questioned) parts.push(`- ${question}`);
+    parts.push('', 'Propose them again, all of them: change what needs changing, resend the rest unchanged.');
   }
   return parts.join('\n');
 }

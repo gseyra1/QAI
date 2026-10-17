@@ -328,3 +328,181 @@ export async function fallbackIssue(
     ? `fallback "${wrong}" is the identifier of another element (${carried}): once the label changes, the gesture would silently land on that element — use the targeted line's own #id, or no fallback`
     : `fallback "${wrong}" designates no element on this screen (${carried}): a fallback must be the targeted line's own #id — otherwise give no fallback`;
 }
+
+const CAPTURE_REFERENCE = /\{\{(\w+)\}\}/g;
+
+/** Les captures qu'un texte d'attente nomme (`{{nom}}`, hors `env.`), sans doublon. */
+export function namedCaptures(expectation: string): string[] {
+  CAPTURE_REFERENCE.lastIndex = 0;
+  return [...new Set([...expectation.matchAll(CAPTURE_REFERENCE)].map((match) => match[1] as string))];
+}
+
+const WORD = /[\p{L}\p{N}]/u;
+
+/** Les positions où `part` figure dans `text` comme un mot entier, pas au milieu d'un autre. */
+function aloneAt(text: string, part: string): number[] {
+  const found: number[] = [];
+  for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
+    const before = text[at - 1];
+    const after = text[at + part.length];
+    if ((before === undefined || !WORD.test(before)) && (after === undefined || !WORD.test(after))) {
+      found.push(at);
+    }
+  }
+  return found;
+}
+
+function standsAlone(text: string, part: string): boolean {
+  return aloneAt(text, part).length > 0;
+}
+
+/**
+ * Remplace `part` là où il est un mot entier, et nulle part ailleurs.
+ *
+ * La réécriture proposée au modèle doit garder le sens du reste : « 442 »
+ * remplacé partout dans « Commande 442, lot 44218 » donnait « lot {{n}}18 »,
+ * une vérification que le rejeu ferait dépendre de la capture à tort.
+ */
+function replaceAlone(text: string, part: string, by: string): string {
+  let out = '';
+  let from = 0;
+  for (const at of aloneAt(text, part)) {
+    // Deux occurrences peuvent se chevaucher (« 1-1 » dans « 1-1-1 ») : la
+    // première l'emporte, la seconde n'existe plus une fois remplacée.
+    if (at < from) continue;
+    out += text.slice(from, at) + by;
+    from = at + part.length;
+  }
+  return out + text.slice(from);
+}
+
+/**
+ * En deçà, une valeur capturée retrouvée dans un littéral n'est pas une preuve.
+ *
+ * « 1 », capturé comme quantité, se retrouve dans « Livraison en 1 jour » sans
+ * en être la source, et un refus pousserait le modèle à écrire « Livraison en
+ * {{quantite}} jour » — une vérification corrompue par la règle censée la
+ * protéger. L'égalité exacte n'y échappe pas : « livré en 1 jour », comparé à
+ * « 1 » quand la quantité vaut 1, n'est pas la quantité, et le réécrire en
+ * silence changerait ce que la vérification prouve. Trois caractères, le seuil
+ * du registre des secrets et pour la même raison : en dessous, la valeur ne se
+ * distingue plus du texte ordinaire. Sous le seuil, l'égalité est une question
+ * posée au modèle, l'inclusion est signalée ; aucune n'est réécrite ni refusée.
+ * La frontière de mot écarte en plus « 12 » dans « 2012 ».
+ */
+const MIN_EMBEDDED = 3;
+
+const LITERAL_CHECKS = new Set(['textEquals', 'textContains', 'numberEquals', 'urlEquals', 'urlContains']);
+
+export interface FrozenOutcome {
+  /** La vérification réécrite, quand le littéral ÉTAIT la capture. */
+  check?: Record<string, unknown>;
+  error?: string;
+  warning?: string;
+  /**
+   * À poser une fois au modèle, quand un tour le permet ; sinon, ou s'il
+   * maintient le littéral, `warning` s'applique et rien n'est réécrit.
+   */
+  question?: string;
+}
+
+/**
+ * Une capture nommée par l'attente, mais figée en littéral dans la vérification.
+ *
+ * « la liste des emprunts contient la référence "{{reference}}" » est devenue
+ * `textContains "EMP-4418"` : la valeur du jour, recopiée. Elle passe à la
+ * génération, et passera encore au rejeu tant que l'application affiche ce
+ * littéral-là — même si la référence capturée, elle, a changé. L'attente
+ * disait « celle qu'on vient de lire » ; le fichier dit « celle d'hier ». Rien
+ * ne le voit à la génération, puisque les deux coïncident.
+ *
+ * Quatre cas, du plus sûr au plus douteux :
+ * - le littéral est la valeur capturée (au nombre près pour `numberEquals`) :
+ *   réécrit en `{{nom}}`. Aucun sens n'est perdu aujourd'hui, et c'est ce que
+ *   l'attente demandait. Un refus n'apprendrait rien de plus au modèle et lui
+ *   coûterait un tour ; signalé, pour que la relecture le sache.
+ * - la même égalité, sur une valeur trop courte pour être une preuve (voir
+ *   `MIN_EMBEDDED`) : question au modèle, qui sait seul ce qu'il comparait.
+ *   Les deux réponses sont univoques : `{{nom}}`, ou le littéral maintenu.
+ * - le littéral CONTIENT la valeur capturée (« Référence EMP-4418 ») : refusé,
+ *   avec la réécriture exacte à recopier. La réponse attendue est univoque, et
+ *   c'est ce qui sépare ce refus de ceux qui ont dégradé les vérifications
+ *   (voir `tautologicalCheck`).
+ * - le littéral n'est qu'une PARTIE de la valeur capturée (« EMP-4418 » quand
+ *   la capture a lu « Référence EMP-4418 ») : signalé seulement. Ni `{{nom}}`
+ *   ni un littéral ne sont justes ici : le défaut est dans la capture, à une
+ *   étape déjà résolue, et le modèle ne peut pas l'y corriger.
+ *
+ * Chaque cas est cherché sur TOUTES les captures nommées avant de passer au
+ * suivant, les plus longues d'abord : « EMP-4418 » est {{reference}}, pas
+ * « {{prefixe}}-4418 » parce que {{prefixe}} vaut « EMP » et vient avant dans
+ * la phrase. Une fois cette réécriture-là recopiée, la valeur porte un
+ * gabarit et la règle ne la verrait plus.
+ *
+ * Une vérification qui référence déjà `{{nom}}`, dans sa valeur ou sa cible,
+ * n'est pas concernée ; une valeur qui porte un autre gabarit non plus — elle
+ * n'est pas un littéral.
+ */
+export function frozenCapture(
+  key: string,
+  check: unknown,
+  known: Readonly<Record<string, string>>,
+): FrozenOutcome | null {
+  if (!isRecord(check) || !isString(check['check']) || !LITERAL_CHECKS.has(check['check'])) return null;
+  const given = check['value'];
+  if (!isString(given) && typeof given !== 'number') return null;
+  const literal = String(given);
+  if (literal.includes('{{')) return null;
+  const numeric = check['check'] === 'numberEquals';
+  const written = JSON.stringify(check);
+
+  const candidates = namedCaptures(key)
+    .map((name) => ({ name, value: known[name], template: `{{${name}}}` }))
+    .filter(
+      (capture): capture is { name: string; value: string; template: string } =>
+        capture.value !== undefined && capture.value.trim() !== '' && !written.includes(capture.template),
+    )
+    // Stable : à longueur égale, l'ordre de la phrase départage.
+    .sort((a, b) => b.value.trim().length - a.value.trim().length);
+
+  for (const { value, template } of candidates) {
+    const same =
+      literal === value ||
+      (numeric && toNumber(literal) !== null && toNumber(literal) === toNumber(value));
+    if (!same) continue;
+    if (value.trim().length < MIN_EMBEDDED) {
+      return {
+        question: `assertion "${key}" compares "${literal}", today's value of ${template}, but a value this short can match by chance: if it is that capture, write ${template} in its place, so replay compares against the value captured then; if it is another value that happens to be equal, resend it unchanged`,
+        warning: `assertion "${key}" compares the literal "${literal}", today's value of ${template}, too short to tell whether it is the capture: kept as is; if it is, write ${template} in its place, or replay keeps comparing against today's value`,
+      };
+    }
+    return {
+      check: { ...check, value: template },
+      warning: `assertion "${key}" compared the literal "${literal}", today's value of ${template}: rewritten to ${template}, so replay compares against the value captured then`,
+    };
+  }
+
+  // Un nombre comparé numériquement n'a pas de sous-chaîne qui fasse sens.
+  if (numeric) return null;
+
+  for (const { value, template } of candidates) {
+    if (!standsAlone(literal, value)) continue;
+    if (value.trim().length < MIN_EMBEDDED) {
+      return {
+        warning: `assertion "${key}" compares the literal "${literal}", which holds "${value}", today's value of ${template}: if that is the capture, write ${template} in its place, or replay keeps comparing against today's value`,
+      };
+    }
+    return {
+      error: `assertion "${key}": the scenario names ${template}, but "${literal}" freezes its current value "${value}", and replay would keep comparing against it once the capture changes — write ${template} in place of "${value}": "${replaceAlone(literal, value, template)}"`,
+    };
+  }
+
+  for (const { value, template } of candidates) {
+    if (literal.trim().length >= MIN_EMBEDDED && standsAlone(value, literal)) {
+      return {
+        warning: `assertion "${key}" compares the literal "${literal}", only part of today's value of ${template} ("${value}"): replay keeps comparing against today's value — capture exactly that part at the step that reads it, then use ${template}`,
+      };
+    }
+  }
+  return null;
+}
