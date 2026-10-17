@@ -1,0 +1,42 @@
+name: Action (published)
+
+# Un workflow à part, pas un job de plus à côté de selftest : l'action publie
+# ses captures sous un nom fixe, « qai-captures », et une exécution de
+# workflow refuse deux artefacts du même nom. Quand les deux jobs rougissaient
+# ensemble — un exemple modifié suffit —, l'un perdait ses captures, et le
+# commentaire de selftest pouvait renvoyer vers celles de l'autre.
+on: [push, pull_request]
+
+jobs:
+  # Le chemin réel des utilisateurs : « uses: gseyra1/QAI@main » avec la
+  # version publiée. Il attrape un action.yml qui exigerait un QAI pas encore
+  # publié. Hors contrôle requis : il peut aussi rougir quand les exemples de
+  # la branche dépassent la version publiée — c'est alors le signal de
+  # publier avant de fusionner ce qui les rend nécessaires.
+  published:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+
+      - name: Demo shop
+        run: |
+          node fixtures/serve.mjs --port 8899 &
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8899/ >/dev/null && break
+            sleep 0.5
+          done
+
+      # Pas de commentaire : selftest le tient déjà, et deux jobs qui mettent
+      # à jour le même commentaire l'écraseraient à tour de rôle.
+      - uses: ./
+        with:
+          comment: 'false'
+          base-url: http://127.0.0.1:8899/
+          scenarios: examples/checkout-guest.qai.yaml
+          states: ./examples/states-example.ts

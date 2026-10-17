@@ -30,12 +30,13 @@ import {
   isEmptyOn,
   isVerificationOnly,
 } from '../scenario/types.ts';
-import { checksMessage, retryMessage, stepMessage, systemPrompt } from './prompt.ts';
+import { checksMessage, questionMessage, retryMessage, stepMessage, systemPrompt } from './prompt.ts';
 import {
   actionIssue,
   captureIssue,
   checkIssue,
   fallbackIssue,
+  frozenCapture,
   tautologicalCapture,
   tautologicalCheck,
 } from './proposal.ts';
@@ -263,6 +264,11 @@ interface CheckOutcome {
   produced: Record<string, string>;
   /** Rapportés à l'utilisateur si la proposition est retenue, jamais rendus au modèle. */
   warnings?: string[];
+  /**
+   * `errors` ne sont que des questions : la proposition tient, et `kept` est
+   * ce qui sera retenu si la réponse fait pire.
+   */
+  questions?: true;
 }
 
 /**
@@ -583,6 +589,85 @@ function hostBoundChecks(assertions: Record<string, Check>, baseUrl: string | un
   return errors;
 }
 
+/**
+ * Les captures nommées par une attente, figées en littéral : voir
+ * `frozenCapture`. `known` comprend les captures produites à cette étape.
+ */
+function frozenLiterals(
+  assertions: Record<string, Check>,
+  expectations: readonly string[],
+  known: Readonly<Record<string, string>>,
+): {
+  assertions: Record<string, Check>;
+  rewritten: boolean;
+  errors: string[];
+  warnings: string[];
+  questions: { key: string; question: string; warning: string }[];
+} {
+  const out: Record<string, Check> = { ...assertions };
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const questions: { key: string; question: string; warning: string }[] = [];
+  let rewritten = false;
+  for (const key of expectations) {
+    const outcome = frozenCapture(key, assertions[key], known);
+    if (outcome === null) continue;
+    if (outcome.check !== undefined) {
+      out[key] = outcome.check as unknown as Check;
+      rewritten = true;
+    }
+    if (outcome.error !== undefined) errors.push(outcome.error);
+    if (outcome.question !== undefined) {
+      questions.push({ key, question: outcome.question, warning: outcome.warning ?? '' });
+    } else if (outcome.warning !== undefined) {
+      warnings.push(outcome.warning);
+    }
+  }
+  return { assertions: out, rewritten, errors, warnings, questions };
+}
+
+/**
+ * Une vérification vraie sur cet écran, évaluée comme au rejeu.
+ *
+ * Une forme invalide, une observation (réseau, console : elles ne parlent
+ * d'aucun écran) ou une capture encore inconnue ne « tiennent » pas : c'est
+ * le côté prudent, puisque ce qui tient avant le geste est renvoyé au modèle.
+ */
+function holdsOn(
+  check: unknown,
+  screen: { root: UINode; location: string },
+  bag: Readonly<Record<string, string>>,
+  baseUrl: string | undefined,
+): boolean {
+  if (checkIssue(check, 'check') !== null) return false;
+  const typed = check as Check;
+  if (isObservationCheck(typed)) return false;
+  try {
+    return evaluateCheck(typed, {
+      root: screen.root,
+      location: screen.location,
+      bag,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    }).ok;
+  } catch {
+    // Une interpolation impossible avant le geste — la capture de cette étape
+    // n'existe pas encore — n'est pas une vérification déjà vraie.
+    return false;
+  }
+}
+
+function alreadyTrueBefore(key: string): string {
+  return `assertion "${key}" is already true on the current screen, before any gesture: it would pass even if the actions did nothing. If the step is meant to change this, assert what the step changes, and check that the actions carry out the intent; if it is a deliberate invariant, something the step must leave as it is, resend it unchanged`;
+}
+
+function alreadyTrueAfter(key: string, check: Check): string {
+  return `assertion "${key}" was already true on the screen before the gestures, so it does not show they did anything: ${JSON.stringify(check)}. If the step is meant to change this, assert what the step changed on this screen; if it is a deliberate invariant, something the step must leave as it is, resend it unchanged`;
+}
+
+function staleWarning(key: string): string {
+  return `assertion "${key}" was already true before the gesture: it holds, but does not prove the step did anything`;
+}
+
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
   const { scenario, driver, provider } = input;
   const attempts = input.attemptsPerStep ?? 5;
@@ -655,6 +740,29 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     await driver.settle();
     const before = await driver.observe({ interactiveOnly: true });
 
+    /**
+     * Une assertion déjà vraie AVANT le geste ne prouve pas qu'il a eu lieu.
+     *
+     * Mesuré avec DeepSeek : une étape résolue par une navigation qui recharge
+     * l'application, avec une assertion vraie de toute façon — vert, et rien
+     * de prouvé sur l'étape. Un invariant légitime existe pourtant (« l'en-tête
+     * affiche toujours le nom de la boutique », « aucune erreur » en `absent`) :
+     * l'assertion est donc renvoyée UNE fois au modèle, jamais refusée. S'il la
+     * maintient, elle est acceptée avec un avertissement.
+     *
+     * Un seul renvoi par attente, pour toute l'étape, phases A et B confondues,
+     * et pour toutes les questions (voir aussi `frozenCapture`) : la clé entre
+     * ici quand le renvoi part, et n'est plus jamais renvoyée. Un renvoi qui
+     * pousserait le modèle à tourner en rond, ou à lâcher la valeur pour un
+     * `visible` qui ne tient plus avant, ferait pire que l'avertissement.
+     *
+     * Et une question ne fait jamais échouer une étape qui aurait été résolue
+     * sans elle : la proposition interrogée est gardée, et retenue si la
+     * réponse fait pire (refusée, ou à court de tours).
+     */
+    const challenged = new Set<string>();
+    const expectations = expectationsOf(step);
+
     const conversation: ModelMessage[] = [
       {
         role: 'user',
@@ -677,6 +785,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     let proposal: Proposal | null = verificationOnly
       ? { actions: [], captures: {}, assertions: {} }
       : null;
+    let questioned: Proposal | null = null;
 
     while (used < attempts && proposal === null) {
       used += 1;
@@ -715,8 +824,37 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       const errors = raw.map((error) => secrets.redact(error));
 
       if (errors.length === 0 && !Array.isArray(candidate)) {
-        proposal = candidate;
-        break;
+        /**
+         * Le renvoi part ICI, avant d'agir, quand il le peut : c'est le seul
+         * moment où le modèle peut encore corriger ses gestes. Une recharge
+         * proposée pour « chercher un article » se voit à ce stade — après, le
+         * geste est joué et seule l'assertion reste à revoir. Jamais à
+         * l'avant-dernier tour ni au dernier : la réponse en prendrait un, et
+         * la phase B n'en aurait plus pour réparer une vérification fausse
+         * après le geste, que la proposition interrogée aurait pu réparer. Une
+         * assertion vraie avant mais fausse après serait refusée en phase B de
+         * toute façon : la renvoyer ici ne coûte pas un vert légitime.
+         */
+        const challenges =
+          used < attempts - 1
+            ? Object.entries(portableChecks(candidate.assertions, checkBase, () => {}).assertions)
+                .filter(([key]) => expectations.includes(key) && !challenged.has(key))
+                .filter(([, check]) => holdsOn(check, before, bag, checkBase))
+                .map(([key]) => key)
+            : [];
+        if (challenges.length === 0) {
+          proposal = candidate;
+          break;
+        }
+        for (const key of challenges) challenged.add(key);
+        questioned = candidate;
+        const questions = challenges.map((key) => secrets.redact(alreadyTrueBefore(key)));
+        rejections.push(...questions);
+        conversation.push(
+          { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(response.output) }] },
+          { role: 'user', content: [{ type: 'text', text: questionMessage(questions) }] },
+        );
+        continue;
       }
 
       rejections.push(...errors);
@@ -725,6 +863,11 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         { role: 'user', content: [{ type: 'text', text: retryMessage(errors) }] },
       );
     }
+
+    // La réponse à la question n'a donné aucune proposition recevable : la
+    // proposition interrogée reste ce qu'on avait de mieux, et ses gestes ont
+    // été vérifiés. L'assertion déjà vraie avant y sera signalée en phase B.
+    if (proposal === null && questioned !== null) proposal = questioned;
 
     if (proposal === null) {
       reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections, warnings });
@@ -789,7 +932,11 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     const assess = (
       screen: { root: UINode; location: string },
       candidate: Pick<Proposal, 'captures' | 'assertions'>,
-    ): { checks: Pick<Proposal, 'captures' | 'assertions'>; outcome: CheckOutcome } => {
+    ): {
+      checks: Pick<Proposal, 'captures' | 'assertions'>;
+      outcome: CheckOutcome;
+      kept?: { checks: Pick<Proposal, 'captures' | 'assertions'>; outcome: CheckOutcome };
+    } => {
       // La base des vérifications, pas celle des navigations : réécrire une
       // adresse que le rejeu ne résoudra pas la rendrait fausse partout.
       const portable = portableChecks(
@@ -797,7 +944,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         checkBase,
         platform === 'web' ? warn : () => {},
       );
-      const checks = { captures: candidate.captures, assertions: portable.assertions };
+      let checks = { captures: candidate.captures, assertions: portable.assertions };
       const agnostic = [
         ...screenAgnosticChecks(
           portable.assertions,
@@ -805,30 +952,74 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         ),
         ...hostBoundChecks(portable.assertions, checkBase),
       ];
-      const verified = verifyChecks(
-        screen.root,
-        screen.location,
-        bag,
-        checks,
-        step,
-        secrets,
-        checkBase,
-        observable,
-      );
+      const verify = (): CheckOutcome =>
+        verifyChecks(screen.root, screen.location, bag, checks, step, secrets, checkBase, observable);
+      let verified = verify();
+      // Les captures de cette étape comptent : « contient {{reference}} » peut
+      // nommer la valeur qu'on vient de lire. La réécriture est vérifiée comme
+      // le reste — c'est la forme versionnée qui doit passer ici.
+      const known = { ...bag, ...verified.produced };
+      const frozen = frozenLiterals(checks.assertions, expectations, known);
+      if (frozen.rewritten) {
+        checks = { captures: checks.captures, assertions: frozen.assertions };
+        verified = verify();
+      }
+
+      const errors = [
+        ...[...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),
+        ...verified.errors,
+      ];
+      const warnings = [
+        ...(verified.warnings ?? []),
+        ...frozen.warnings.map((warning) => secrets.redact(warning)),
+      ];
+
+      if (errors.length > 0) {
+        return { checks, outcome: { errors, produced: verified.produced, warnings } };
+      }
+
+      // Seulement sur une proposition par ailleurs acceptable : le renvoi est
+      // une question, pas un motif de plus noyé parmi des refus. Une étape qui
+      // ne fait que vérifier n'a pas de geste dont l'effet serait à prouver.
+      const pending: { key: string; question: string; warning: string }[] = [...frozen.questions];
+      if (!verificationOnly) {
+        for (const key of expectations) {
+          const check = checks.assertions[key];
+          if (check === undefined || !holdsOn(check, before, known, checkBase)) continue;
+          pending.push({ key, question: alreadyTrueAfter(key, check), warning: staleWarning(key) });
+        }
+      }
+      const questions: string[] = [];
+      // Ce que la proposition retenue telle quelle signalerait : les questions
+      // devenues avertissements.
+      const settled: string[] = [];
+      // Les clés interrogées à ce tour-ci : une clé à deux questions les reçoit
+      // ensemble, en un seul renvoi.
+      const asking = new Set<string>();
+      for (const { key, question, warning } of pending) {
+        const redacted = secrets.redact(warning);
+        if (asking.has(key) || (!challenged.has(key) && used < attempts)) {
+          // La boucle repart dès qu'une erreur reste et qu'un tour reste : ce
+          // renvoi part donc bien, et compte pour l'unique renvoi de la clé.
+          asking.add(key);
+          questions.push(secrets.redact(question));
+          settled.push(redacted);
+        } else {
+          warnings.push(redacted);
+        }
+      }
+      for (const key of asking) challenged.add(key);
+
+      const outcome = { errors: [], produced: verified.produced, warnings };
+      if (questions.length === 0) return { checks, outcome };
       return {
         checks,
-        outcome: {
-          errors: [
-            ...[...portable.errors, ...agnostic].map((error) => secrets.redact(error)),
-            ...verified.errors,
-          ],
-          produced: verified.produced,
-          warnings: verified.warnings ?? [],
-        },
+        outcome: { ...outcome, errors: questions, questions: true },
+        kept: { checks, outcome: { ...outcome, warnings: [...warnings, ...settled] } },
       };
     };
 
-    let { checks, outcome } = assess(after, proposal);
+    let { checks, outcome, kept } = assess(after, proposal);
 
     const checksConversation: ModelMessage[] = [];
     // Une étape qui ne fait que vérifier n'a encore rien proposé : ses
@@ -837,6 +1028,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     while (outcome.errors.length > 0 && used < attempts) {
       used += 1;
       if (proposed) rejections.push(...outcome.errors);
+      const hadProposal = proposed;
       proposed = true;
 
       if (checksConversation.length === 0) {
@@ -852,6 +1044,16 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
                 captures: step.capture ?? {},
                 availableCaptures: bag,
                 verificationOnly,
+                // Ce qui a été refusé dans la proposition de la phase A : sans
+                // ce rappel, le modèle repartait de zéro sans savoir pourquoi —
+                // et ne pouvait pas maintenir un invariant qu'on lui renvoie.
+                // Rien pour une étape qui ne fait que vérifier : elle n'a encore
+                // rien proposé, ses manques sont la question elle-même.
+                ...(hadProposal
+                  ? outcome.questions === true
+                    ? { questioned: outcome.errors }
+                    : { rejected: outcome.errors }
+                  : {}),
               }),
             },
           ],
@@ -859,7 +1061,12 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       } else {
         checksConversation.push({
           role: 'user',
-          content: [{ type: 'text', text: retryMessage(outcome.errors) }],
+          content: [
+            {
+              type: 'text',
+              text: outcome.questions === true ? questionMessage(outcome.errors) : retryMessage(outcome.errors),
+            },
+          ],
         });
       }
 
@@ -908,7 +1115,19 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
 
       after = await driver.observe({ interactiveOnly: true });
-      ({ checks, outcome } = assess(after, candidate));
+      const assessed = assess(after, candidate);
+      ({ checks, outcome } = assessed);
+      // La dernière proposition valide : une réponse qui tient, mais
+      // interrogée à son tour, la remplace.
+      if (assessed.kept !== undefined) kept = assessed.kept;
+    }
+
+    // La réponse à une question a fait pire, et plus aucun tour ne la répare :
+    // la proposition interrogée tenait, elle est retenue, avec l'avertissement
+    // qu'aurait donné l'absence de question. Ses refus restent au rapport.
+    if (outcome.errors.length > 0 && kept !== undefined) {
+      if (outcome.questions !== true) rejections.push(...outcome.errors);
+      ({ checks, outcome } = kept);
     }
 
     if (outcome.errors.length > 0) {

@@ -309,6 +309,82 @@ opened as a deep link.
 observable", are rejected during generation, and active `watchdogs` are refused
 by the CLI — they would otherwise pass without having looked.
 
+### First session on a device
+
+Every check below is one the fake Appium server cannot answer. Go through them
+once, in order, before trusting a green on iOS.
+
+**Setup**
+
+- [ ] For the deep-link checks below: Xcode 14.3+ and iOS 16.4+ on the device
+  or simulator (see Prerequisites).
+- [ ] `appium driver list --installed` shows `xcuitest` 4.17 or later.
+- [ ] Real device: `--device <UDID>` (`xcrun xctrace list devices`), and
+  WebDriverAgent signed through
+  `--capabilities '{"appium:xcodeOrgId":"<TEAMID>","appium:xcodeSigningId":"Apple Development"}'`.
+
+**Session start**
+
+- [ ] `appium:noReset` defaults to `false`: the app's data is wiped at every
+  session. Keep a signed-in state with `--capabilities '{"appium:noReset":true}'`,
+  or open it from a StateProvider deep-link `entry`.
+- [ ] With a `.app` path, the run starts in the app: `mobile: activeAppInfo`
+  names its bundle id, not SpringBoard.
+
+**Page source.** Open a session by hand and dump the source:
+
+```bash
+A=http://127.0.0.1:4723
+SID=$(curl -s -X POST $A/session -H 'content-type: application/json' -d '{"capabilities":{"alwaysMatch":{
+  "platformName":"iOS","appium:automationName":"XCUITest","appium:noReset":true,
+  "appium:bundleId":"com.example.app","appium:udid":"<UDID>"}}}' | node -p 'JSON.parse(require("fs").readFileSync(0)).value.sessionId')
+curl -s $A/session/$SID/source | node -p 'JSON.parse(require("fs").readFileSync(0)).value' > screen.xml
+grep -c '<XCUIElementType' screen.xml   # node count
+```
+
+On real screens covering a navigation bar, a table longer than the screen, a
+`SecureTextField`, and at least one SwiftUI view:
+
+- [ ] elements carry `traits`, `placeholderValue` and `visible`;
+- [ ] cells below the fold have a non-zero `width` and `height` — QAI reads a
+  zero frame as not rendered;
+- [ ] the dump looks like `fixtures/ios/*.xml`, which the driver is tested
+  against. Any difference is a finding.
+
+**XPath round-trip.** QAI targets an element by
+`//XCUIElementTypeApplication[1]/…/<tag>[<rank>][@name="…"]`: each step is the
+tag and its rank among same-tag siblings in the source; the last one carries
+`name`, else `label`. Build it by hand from the dump:
+
+```bash
+time curl -s -X POST $A/session/$SID/elements -H 'content-type: application/json' \
+  -d '{"using":"xpath","value":"//XCUIElementTypeApplication[1]/…"}' \
+  | node -p 'JSON.parse(require("fs").readFileSync(0)).value.length'
+curl -s -X DELETE $A/session/$SID
+```
+
+- [ ] a table cell and an alert button each return exactly `1`;
+- [ ] note the latency on a screen of more than 300 nodes.
+
+**Gestures.** One small scenario per check, through `qai resolve` then `qai run`:
+
+- [ ] `click` on a button below the fold: XCTest scrolls to it and taps it;
+- [ ] `click` on a button under the keyboard: the step fails — no key is typed
+  into the focused field;
+- [ ] `fill` on a `TextField` and a `SecureTextField`: the value is in the next
+  source; the password is in no report (text, JSON, markdown) and the source
+  shows it masked;
+- [ ] `press` Enter submits the form; Backspace deletes exactly one character;
+- [ ] a real `UIAlertController` with three buttons stays in the tree as a
+  `dialog`, and each button is clickable by its label;
+- [ ] `navigate` to a deep link opens its screen; `navigate` to `.` relaunches
+  the app on its first screen.
+
+**Report back** in an [issue](https://github.com/gseyra1/QAI/issues): device
+model or simulator, iOS, Xcode, Appium and xcuitest versions; each check passed
+or failed, with the error line; the source dumps, personal data removed;
+the XPath latency with its node count.
+
 ## Writing a new driver
 
 Implement `Driver` from `src/driver/types.ts`, then pass the same test suite

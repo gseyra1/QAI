@@ -29,6 +29,7 @@ steps:
     capture:
       reference: la référence de l'emprunt
 
+  # Une vérification, pas un geste : sans « do », l'étape relit l'écran laissé
+  # par s4 au lieu d'inventer une action qui serait rejouée comme une preuve.
   - id: s5
-    do: vérifier que l'emprunt figure dans la liste
     expect: la liste des emprunts contient la référence "{{reference}}"

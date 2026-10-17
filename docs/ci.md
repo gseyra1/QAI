@@ -37,7 +37,7 @@ The final line matters. It tells the reviewer *why* nothing was repaired — the
 
 ## Captures
 
-A capture is taken **only on failure** — 300 KiB per step would make a fifty-journey suite unmanageable. Captures land in `.qai/artifacts/`, which the action publishes as `qai-captures`; the comment links to it.
+A capture is taken **only on failure** — 300 KiB per step would make a fifty-journey suite unmanageable. Captures land in `.qai/artifacts/`, which the action publishes as `qai-captures`; the comment links to it. The name is fixed and a workflow run refuses two artifacts with the same name: call the action from one job per workflow, not from a matrix or from two jobs of the same workflow.
 
 The engine never writes to disk: it returns bytes and a name, the caller decides where they go. That is what will later allow sending captures somewhere other than a CI artifact without touching the engine.
 
@@ -70,9 +70,39 @@ Repaired resolutions are rewritten in the runner's working copy. What you do wit
 | `strict` | `false` | a repair fails the job |
 | `comment` | `true` | post the report |
 | `github-token` | `github.token` | token for posting the comment |
-| `version` | `latest` | QAI version |
+| `version` | `latest` | QAI version installed from npm |
+| `package` | — | npm install spec used instead of `tilmiqai@<version>` |
 
 `states` and `provider` modules are loaded as ESM (`.mts`/`.mjs`, or `"type": "module"`). The action runs Node 22; a `.ts`/`.mts` module needs 22.18 or later.
+
+## Installing another build
+
+`package` replaces `tilmiqai@<version>` with another `npm install` spec —
+typically a tarball packed earlier in the job. QAI's own self-test runs each
+pull request's code through the action this way:
+
+```yaml
+- id: pack
+  run: |
+    npm ci && npm run build
+    name=$(npm pack --pack-destination "$RUNNER_TEMP" --json \
+      | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename')
+    echo "tarball=$RUNNER_TEMP/$name" >> "$GITHUB_OUTPUT"
+- uses: gseyra1/QAI@main
+  with:
+    base-url: http://127.0.0.1:8899/
+    package: ${{ steps.pack.outputs.tarball }}
+```
+
+The spec must install a built `tilmiqai` package, or the job fails at install.
+A git URL does not qualify: `dist/` is not committed and QAI has no `prepare`
+script to build it. `version` is ignored, with a warning when it is not
+`latest`. Chromium is installed for the Playwright QAI resolves, not for
+another version your project may pin.
+
+`version` and `package` decide which code runs in the job, with its
+environment and token: never set them from pull-request-controlled data (a
+title, a branch name, a comment).
 
 ## Without GitHub
 

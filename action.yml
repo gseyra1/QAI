@@ -38,9 +38,13 @@ inputs:
     required: false
     default: ${{ github.token }}
   version:
-    description: QAI version to install
+    description: QAI version to install from npm (ignored when package is set)
     required: false
     default: latest
+  package:
+    description: What to install instead of tilmiqai@<version> — any npm install spec, such as a local .tgz built by npm pack
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -50,22 +54,46 @@ runs:
       with:
         node-version: '22'
 
-    # Installed before the browser: "playwright install" must resolve the
-    # Playwright version QAI depends on. A separately obtained version would
-    # download a binary QAI cannot drive.
+    # Installed before the browser: the browser must be the build of the
+    # Playwright QAI depends on. A separately obtained version would download
+    # a binary QAI cannot drive.
     #
     # No input is interpolated (${{ }}) inside a script: the shell would
     # evaluate whatever a hostile caller slips in. Everything goes through the
-    # environment, which bash expands without ever re-interpreting it.
+    # environment, which bash expands without ever re-interpreting it. "--"
+    # keeps a package value starting with a dash a spec, never an npm flag.
     - name: Install
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
-      run: npm i --no-save --no-audit --no-fund --ignore-scripts "tilmiqai@$VERSION"
+        PACKAGE: ${{ inputs.package }}
+      run: |
+        spec="${PACKAGE:-tilmiqai@$VERSION}"
+        if [ -n "$PACKAGE" ] && [ "$VERSION" != latest ]; then
+          echo "::warning::version ($VERSION) is ignored: package is set"
+        fi
+        npm i --no-save --no-audit --no-fund --ignore-scripts -- "$spec"
+        # A spec naming another package, or an unbuilt tilmiqai (a git URL:
+        # dist/ is not committed), would leave no qai to run: say so here,
+        # rather than as a missing command three steps later.
+        if [ ! -f node_modules/tilmiqai/package.json ] || [ ! -e node_modules/.bin/qai ]; then
+          echo "::error::$spec did not install a runnable tilmiqai"
+          exit 1
+        fi
+        echo "QAI $(node -p 'require("./node_modules/tilmiqai/package.json").version') from $spec"
 
+    # "npx playwright" would run whichever Playwright sits at the top of
+    # node_modules: the project's own, when it pins another version, and QAI's
+    # copy then lives nested under tilmiqai. Resolving from tilmiqai's
+    # directory, as Node does when QAI imports it, installs the browser of the
+    # Playwright that will actually launch it.
     - name: Browser
       shell: bash
-      run: npx playwright install --with-deps chromium
+      run: |
+        cli=$(node -p 'const { dirname, join } = require("path");
+          const from = require("fs").realpathSync("node_modules/tilmiqai");
+          join(dirname(require.resolve("playwright/package.json", { paths: [from] })), "cli.js")')
+        node "$cli" install --with-deps chromium
 
     - name: Replay journeys
       id: qai
@@ -93,7 +121,11 @@ runs:
         [ "$STRICT" = "true" ] && args+=(--strict)
         args+=(--format markdown --out "$RUNNER_TEMP/qai-report.md" --run-url "$RUN_URL")
         set +e
-        npx qai "${args[@]}"
+        # --no: without a local qai, CI makes npx fetch whatever the registry
+        # publishes under that name and run it amid the job's secrets. "--"
+        # is needed with it: after --no, npx would take --help or --version
+        # for itself.
+        npx --no -- qai "${args[@]}"
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
         set -e
 

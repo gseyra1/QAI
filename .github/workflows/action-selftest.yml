@@ -6,6 +6,10 @@ name: Action
 on: [push, pull_request]
 
 jobs:
+  # Le contrôle requis. Il joue le QAI de CETTE branche, empaqueté comme npm
+  # le publierait : installer « latest » depuis le registre ferait valider une
+  # pull request par le code d'une autre version — voire, avant publication,
+  # par la version précédente.
   selftest:
     runs-on: ubuntu-latest
     permissions:
@@ -17,6 +21,20 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
+          cache: npm
+
+      # L'archive va dans RUNNER_TEMP, hors du dépôt. node_modules et dist
+      # sont retirés ensuite : l'action trouve un dépôt comme celui d'un
+      # utilisateur, et rien de construit ici ne peut répondre à sa place.
+      - name: Package
+        id: pack
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          name=$(npm pack --pack-destination "$RUNNER_TEMP" --json \
+            | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename')
+          echo "tarball=$RUNNER_TEMP/$name" >> "$GITHUB_OUTPUT"
+          rm -rf node_modules dist
 
       - name: Demo shop
         run: |
@@ -28,9 +46,19 @@ jobs:
 
       - uses: ./
         with:
+          package: ${{ steps.pack.outputs.tarball }}
           comment: ${{ github.event.pull_request.head.repo.fork && 'false' || 'true' }}
           base-url: http://127.0.0.1:8899/
           scenarios: examples/checkout-guest.qai.yaml
           # The scenario declares « given » : since 0.1.0 the engine refuses to
           # play it without a StateProvider, instead of running it anonymous.
           states: ./examples/states-example.ts
+
+      # Un vert qui n'a pas joué la branche ne prouve rien : le CLI installé
+      # doit être, octet pour octet, celui de l'archive construite plus haut.
+      - name: Ran this branch
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          tar -xzOf "$TARBALL" package/dist/cli.js | cmp - node_modules/tilmiqai/dist/cli.js
+          echo "ran $(basename "$TARBALL")"
