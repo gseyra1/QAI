@@ -119,40 +119,41 @@ prints it at the end of the command ("model spend: …") whenever a cap is set.
 A provider is a third party. Everything sent to it, on generation and on
 repair, passes through `SecretRegistry` at one single point: the screen tree,
 the current address, capture values, rejections. Known secret values become
-`***`. The model writes `{{env.NAME}}` or `{{capture}}`, and QAI substitutes the
-value locally. Screenshots are never sent.
+`[secret]`. The model writes `{{env.NAME}}` or `{{capture}}`, and QAI substitutes
+the value locally. Screenshots are never sent.
+
+The same registry masks reports, which end up in CI logs.
 
 What the scenario's author wrote goes as written: an expectation that names a
 value must come back word for word, and it is already versioned in clear. The
-same value stays masked on the screen and in the address.
+same value stays masked inside any other text, on the screen and in the address.
+Only a value the scenario spells out as a whole sentence on its own, an
+expectation that is just `alice@acme.test`, is left in clear everywhere.
 
-A proposal that copies `***` is refused, in a typed value, a name or an address:
-it would pass generation on a value that does not exist. `{{env.NAME}}` works in
-typed values only, so a step that must `navigate` to an address holding a secret
-cannot be resolved that way: go through the form that builds it. A `***` the real
-screen displays is left alone.
-
-The same registry masks reports, which end up in CI logs.
+A proposal that copies `[secret]` is refused, in a typed value, a name or an
+address: it would pass generation on a value that does not exist. `{{env.NAME}}`
+works in typed values only, so a step that must `navigate` to an address holding
+a secret cannot be resolved that way: go through the form that builds it.
 
 "Known" is the whole limit. QAI can only redact what it knows to be a secret,
 and it knows that by origin:
 
 - **Generation** learns a value before the first screen when an intent or an
-  expectation names its variable in capitals (`sign in with QAI_PASS`), and
-  otherwise when `{{env.NAME}}` is typed or asserted.
+  expectation names its variable in capitals, four characters or more
+  (`sign in with QAI_PASS`; `CI` or `API` read as acronyms), and otherwise when
+  `{{env.NAME}}` is typed or asserted.
 - **Replay and repair** learn every `{{env.NAME}}` of the resolution before the
   first gesture.
 
 A token the application exposes on its own, never routed through the
-environment, stays out of reach. So does anything the screen shows on its own
+environment, stays out of reach. So does anything the screen shows of its own
 accord, such as a customer's name in test data: use data you can send to your
 provider, or a provider you host.
 
-The registry matches the value itself and the forms QAI or the browser give it:
-in a path, a query or a fragment (`p@ss` as `p%40ss`), with spaces collapsed the
-way observation collapses them, and escaped in JSON. Two symmetric blind spots
-follow from matching on substrings. Both are real, and neither is fixable at
-this layer:
+The registry compares character by character, each one in clear or
+percent-encoded (`p@ss`, `p%40ss`), escaped in JSON, with spaces reduced the way
+observation reduces them. Two blind spots remain, and neither is fixable at this
+layer:
 
 - **A value the application reformats is no longer recognised.** `1000` typed
   into a field and redisplayed as `1 000` no longer matches, and appears in

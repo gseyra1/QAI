@@ -21,7 +21,7 @@ describe('SecretRegistry', () => {
   it('masque une valeur enregistrée, où qu\'elle apparaisse', () => {
     const reg = new SecretRegistry();
     reg.add(SECRET);
-    assert.equal(reg.redact(`saw ${SECRET} in the url`), 'saw *** in the url');
+    assert.equal(reg.redact(`saw ${SECRET} in the url`), 'saw [secret] in the url');
   });
 
   it('refuse une valeur trop courte, et le DIT au lieu de le taire', () => {
@@ -33,7 +33,7 @@ describe('SecretRegistry', () => {
     assert.equal(reg.add('ab'), false);
     assert.equal(reg.redact('label ab here'), 'label ab here');
     assert.equal(reg.add('abc'), true);
-    assert.equal(reg.redact('x abc y'), 'x *** y');
+    assert.equal(reg.redact('x abc y'), 'x [secret] y');
   });
 
   it("masque aussi les formes qu'une adresse donne à la valeur", () => {
@@ -41,35 +41,35 @@ describe('SecretRegistry', () => {
     // sous-chaîne en clair n'y est jamais, et le secret passait.
     const reg = new SecretRegistry();
     reg.add('p@ss w/rd');
-    assert.equal(reg.redact(`/q?a=${encodeURIComponent('p@ss w/rd')}&b=1`), '/q?a=***&b=1');
-    assert.equal(reg.redact(`/q?a=${encodeURI('p@ss w/rd')}`), '/q?a=***');
-    assert.equal(reg.redact('/q?a=p%40ss+w%2Frd'), '/q?a=***');
+    assert.equal(reg.redact(`/q?a=${encodeURIComponent('p@ss w/rd')}&b=1`), '/q?a=[secret]&b=1');
+    assert.equal(reg.redact(`/q?a=${encodeURI('p@ss w/rd')}`), '/q?a=[secret]');
+    assert.equal(reg.redact('/q?a=p%40ss+w%2Frd'), '/q?a=[secret]');
   });
 
   it("ne laisse pas la fin d'un secret qui en contient un autre", () => {
     const reg = new SecretRegistry();
     reg.add('abc');
     reg.add('abcdefgh');
-    assert.equal(reg.redact('x abcdefgh y'), 'x *** y');
+    assert.equal(reg.redact('x abcdefgh y'), 'x [secret] y');
   });
 
   it('masque en entier deux secrets qui se chevauchent', () => {
     const reg = new SecretRegistry();
     reg.add('abcdefgh');
     reg.add('efghijkl');
-    assert.equal(reg.redact('x abcdefghijkl y'), 'x *** y');
+    assert.equal(reg.redact('x abcdefghijkl y'), 'x [secret] y');
   });
 
   it("masque une valeur telle que l'observation la réécrit", () => {
     const reg = new SecretRegistry();
     reg.add('  tok   en\n');
-    assert.equal(reg.redact('text "tok en"'), 'text "***"');
+    assert.equal(reg.redact('text "tok en"'), 'text "[secret]"');
   });
 
   it('masque une valeur sérialisée en JSON', () => {
     const reg = new SecretRegistry();
     reg.add('pa"ss-word');
-    assert.equal(reg.redact(JSON.stringify({ name: 'pa"ss-word' })), '{"name":"***"}');
+    assert.equal(reg.redact(JSON.stringify({ name: 'pa"ss-word' })), '{"name":"[secret]"}');
   });
 
   it("rend tel quel ce que l'auteur a écrit, et masque le reste", () => {
@@ -77,14 +77,14 @@ describe('SecretRegistry', () => {
     reg.add('admin@acme.test');
     assert.equal(
       reg.redact('- the header shows admin@acme.test\ntext "admin@acme.test"'),
-      '- the header shows admin@acme.test\ntext "***"',
+      '- the header shows admin@acme.test\ntext "[secret]"',
     );
   });
 
   it('ne casse pas sur une valeur que les fonctions d\'encodage refusent', () => {
     const reg = new SecretRegistry();
     assert.equal(reg.add('abc\ud800'), true);
-    assert.equal(reg.redact('x abc\ud800 y'), 'x *** y');
+    assert.equal(reg.redact('x abc\ud800 y'), 'x [secret] y');
   });
 
   it('enregistre la variable seule, pas seulement la valeur composée', () => {
@@ -95,7 +95,7 @@ describe('SecretRegistry', () => {
         { check: 'textEquals', target: { role: 'text' }, value: 'Bearer {{env.QAI_TEST_PW}}' },
         { root: node('group', 'page', [node('text', 'autre')]), location: '/', bag: {}, secrets: reg },
       );
-      assert.equal(reg.redact(`jeton ${SECRET}`), 'jeton ***');
+      assert.equal(reg.redact(`jeton ${SECRET}`), 'jeton [secret]');
     } finally {
       delete process.env['QAI_TEST_PW'];
     }
@@ -112,7 +112,7 @@ describe('SecretRegistry', () => {
         { root: tree, location: '/', bag: {}, secrets: reg },
       );
       // …qui masque désormais ce même secret arrivé autrement (ici une capture).
-      assert.equal(reg.redact(`captured ${SECRET}`), 'captured ***');
+      assert.equal(reg.redact(`captured ${SECRET}`), 'captured [secret]');
     } finally {
       delete process.env['QAI_TEST_PW'];
     }
@@ -163,7 +163,21 @@ class ReflectingDriver implements Driver {
  * et `encodeURI` n'encode ni `'` ni `<`... de la même façon.
  */
 describe("les formes d'une valeur dans une adresse réelle", () => {
-  const VALUES = ['k9<Tz|Qw', "it's@ok", 'p@ss w/rd', 'a"b>c', 'é€-tok', 'x+y=z&k', 'a`b{c}d', 'tab\\sl'];
+  const VALUES = [
+    'k9<Tz|Qw',
+    "it's@ok",
+    'p@ss w/rd',
+    'a"b>c',
+    'é€-tok',
+    'x+y=z&k',
+    'a`b{c}d',
+    'tab\\sl',
+    'p|ss@wd',
+    'k9<Tz|Qw ',
+    'line1\nline2',
+    'a[b]c^d',
+    '100%sûr',
+  ];
   let browser: Browser;
   let page: Page;
 
@@ -184,10 +198,10 @@ describe("les formes d'une valeur dans une adresse réelle", () => {
       for (const write of ['/p/', '/search?q=', '/page#']) {
         await page.evaluate(([prefix, typed]) => history.pushState({}, '', `${prefix}${typed}`), [write, value]);
         const url = page.url();
-        assert.ok(reg.redact(url).endsWith('***'), `${url} -> ${reg.redact(url)}`);
+        assert.match(reg.redact(url), /\[secret\](%20)?$/, url);
       }
       await page.evaluate((typed) => history.pushState({}, '', `/search?q=${encodeURIComponent(typed)}`), value);
-      assert.ok(reg.redact(page.url()).endsWith('***'), page.url());
+      assert.match(reg.redact(page.url()), /\[secret\](%20)?$/, page.url());
     });
   }
 });
@@ -220,7 +234,7 @@ describe('fuite de secret de bout en bout', () => {
       const serialized = JSON.stringify(report);
       assert.ok(!serialized.includes(SECRET), 'the secret must not appear anywhere in the report');
       // La capture a bien eu lieu (elle contient le secret) mais est masquée.
-      assert.match(report.captures['shown'] ?? '', /\*\*\*/);
+      assert.match(report.captures['shown'] ?? '', /\[secret\]/);
     } finally {
       delete process.env['QAI_LOGIN_PW'];
     }

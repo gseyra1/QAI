@@ -19,11 +19,11 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   an expectation names in capitals before the first screen; replay registers
   every `{{env.NAME}}` of the resolution before the first gesture. A value
   displayed before the step that types it was missed.
-- **A secret in an address is recognised.** `p@ss` in `?q=p%40ss`, in the current
-  address or a network URL, was not masked, in reports either. The forms the
-  browser really emits are now registered with the value, checked against
-  Chromium. So are the value with its spaces collapsed, as observation does, and
-  escaped in JSON.
+- **A secret is recognised however it is encoded.** `p@ss` in `?q=p%40ss`, in the
+  current address or a network URL, was not masked, in reports either. The
+  comparison now runs character by character, each one in clear or
+  percent-encoded, escaped in JSON, with spaces reduced as observation reduces
+  them.
 - **A secret is masked whole.** A secret containing or overlapping another left
   its end in clear. `Bearer {{env.X}}` registered only the whole string: `X` on
   its own was missed.
@@ -31,10 +31,13 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
 
 ### Changed
 
-- **A proposal copying `***` is refused.** The model now sees the mask, and could
-  type it or store it in an address. A step that must `navigate` to an address
-  holding a secret can no longer be resolved that way: it used to store the
-  secret itself in the versioned file.
+- **Masked values read `[secret]`, not `***`**, in reports and for the model. An
+  application displays `Card **** 4242`: the mask could not be told from real
+  text.
+- **A proposal copying `[secret]` is refused.** The model now sees the mask, and
+  could type it or store it in an address. A step that must `navigate` to an
+  address holding a secret can no longer be resolved that way: it used to store
+  the secret itself in the versioned file.
 - `HealRequest` has a required `redact` function. A custom `Healer` must pass what
   it sends to a third party through it: `snapshot` stays unmasked.
 - Playwright 1.64.1, development dependencies and CI actions updated.

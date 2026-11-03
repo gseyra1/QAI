@@ -617,7 +617,7 @@ steps:
         attemptsPerStep: 1,
       });
       const reported = result.steps[0]?.warnings.join(' | ') ?? '';
-      assert.match(reported, /located by the very value it asserts \("\*\*\*"\)/);
+      assert.match(reported, /located by the very value it asserts \("\[secret\]"\)/);
       assert.equal(result.status, 'complete');
       assert.doesNotMatch(reported, /S3CR3T/);
     } finally {

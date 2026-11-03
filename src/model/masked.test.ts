@@ -120,7 +120,7 @@ async function withSecret<T>(run: () => Promise<T>, value = SECRET): Promise<T> 
 describe('maskedProvider', () => {
   it('masque chaque texte, sans toucher au reste de la requête', async () => {
     const provider = new RecordingProvider();
-    const masked = maskedProvider(provider, (text) => text.replaceAll('zzz', '***'));
+    const masked = maskedProvider(provider, (text) => text.replaceAll('zzz', '[secret]'));
     assert.equal(masked.name, 'recording');
     await masked.complete({
       system: 'consigne',
@@ -134,8 +134,8 @@ describe('maskedProvider', () => {
       system: 'consigne',
       responseSchema: { type: 'object' },
       messages: [
-        { role: 'user', content: [{ type: 'text', text: 'a *** b' }] },
-        { role: 'assistant', content: [{ type: 'text', text: '***' }] },
+        { role: 'user', content: [{ type: 'text', text: 'a [secret] b' }] },
+        { role: 'assistant', content: [{ type: 'text', text: '[secret]' }] },
       ],
     });
   });
@@ -192,9 +192,9 @@ class ScriptedProvider implements ModelProvider {
 const textbox = { primary: { role: 'textbox' } };
 
 describe('le masque ne remplace pas la valeur', () => {
-  it('refuse un *** recopié dans une saisie', async () => {
+  it('refuse un [secret] recopié dans une saisie', async () => {
     const provider = new ScriptedProvider([
-      { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'fill', target: textbox, value: '[secret]' }], captures: {}, assertions: {} },
       { actions: [{ kind: 'fill', target: textbox, value: '{{env.QAI_MASK_PW}}' }], captures: {}, assertions: {} },
     ]);
     const result = await withSecret(() =>
@@ -206,11 +206,11 @@ describe('le masque ne remplace pas la valeur', () => {
     );
     assert.equal(result.status, 'complete', JSON.stringify(result.steps));
     assert.ok(result.steps[0]?.rejections.some((r) => r.includes('never copy it')));
-    assert.ok(!JSON.stringify(result.resolution).includes('***'));
+    assert.ok(!JSON.stringify(result.resolution).includes('[secret]'));
   });
 
-  it('refuse un *** recopié dans une adresse, sans rien écrire', async () => {
-    const copied = { actions: [{ kind: 'navigate', to: '/compte?jeton=***' }], captures: {}, assertions: {} };
+  it('refuse un [secret] recopié dans une adresse, sans rien écrire', async () => {
+    const copied = { actions: [{ kind: 'navigate', to: '/compte?jeton=[secret]' }], captures: {}, assertions: {} };
     const result = await withSecret(() =>
       generateResolution({
         scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'rouvrir le compte avec QAI_MASK_PW' }] },
@@ -223,13 +223,13 @@ describe('le masque ne remplace pas la valeur', () => {
     assert.deepEqual(result.resolution.steps, {});
   });
 
-  it('refuse un *** recopié dans une vérification', async () => {
+  it('refuse un [secret] recopié dans une vérification', async () => {
     const proposal = (value: string): unknown => ({
       captures: {},
       assertions: { 'le bandeau est là': { check: 'textContains', target: { role: 'text' }, value } },
     });
     const provider = new ScriptedProvider([
-      { actions: [{ kind: 'click', target: textbox }], ...(proposal('Connecté : ***') as object) },
+      { actions: [{ kind: 'click', target: textbox }], ...(proposal('Connecté : [secret]') as object) },
       proposal('Connecté'),
     ]);
     const result = await withSecret(() =>
@@ -247,14 +247,30 @@ describe('le masque ne remplace pas la valeur', () => {
     assert.ok(result.steps[0]?.rejections.some((r) => r.includes('never copy it')));
   });
 
-  it('laisse passer un *** que le vrai écran affiche', async () => {
+  it('refuse le masque même quand l\'écran affiche de vraies étoiles', async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '[secret]' }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'fill', target: textbox, value: '{{env.QAI_MASK_PW}}' }], captures: {}, assertions: {} },
+    ]);
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'se connecter avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver('Carte **** 4242'),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.ok(result.steps[0]?.rejections.some((r) => r.includes('never copy it')));
+  });
+
+  it("n'oppose rien à des étoiles écrites par l'auteur", async () => {
     const provider = new ScriptedProvider([
       { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
     ]);
     const result = await withSecret(() =>
       generateResolution({
-        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'recopier avec QAI_MASK_PW' }] },
-        driver: new ExposingDriver('***'),
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'saisir *** avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(),
         provider,
       }),
     );
@@ -263,7 +279,7 @@ describe('le masque ne remplace pas la valeur', () => {
 
   it('ne touche à rien quand aucun secret n\'est connu', async () => {
     const provider = new ScriptedProvider([
-      { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'fill', target: textbox, value: '[secret]' }], captures: {}, assertions: {} },
     ]);
     const result = await generateResolution({
       scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'recopier' }] },
@@ -276,6 +292,31 @@ describe('le masque ne remplace pas la valeur', () => {
 
 describe("ce que l'auteur a écrit", () => {
   const value = 'admin@acme.test';
+
+  it("garde le nom d'une capture, qu'une variable peut valoir", async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: textbox }],
+        captures: { reference: { from: { role: 'text' }, extract: 'text' } },
+        assertions: {},
+      },
+      { captures: { reference: { from: { role: 'text' }, extract: 'text' } }, assertions: {} },
+    ]);
+    const result = await withSecret(
+      () =>
+        generateResolution({
+          scenario: {
+            id: 'm',
+            title: 't',
+            steps: [{ id: 's1', do: 'continuer avec QAI_MASK_PW', capture: { reference: 'la référence' } }],
+          },
+          driver: new ExposingDriver(),
+          provider,
+        }),
+      'reference',
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
 
   it('revient mot pour mot quand une attente nomme la valeur', async () => {
     const key = `le bandeau affiche ${value}`;
@@ -298,7 +339,7 @@ describe("ce que l'auteur a écrit", () => {
     assert.equal(result.status, 'complete', JSON.stringify(result.steps));
     const sent = JSON.stringify(provider.requests[0]?.messages);
     assert.ok(sent.includes(key), 'the expectation goes as written');
-    assert.ok(sent.includes('Connecté : ***'), 'the screen stays masked');
+    assert.ok(sent.includes('Connecté : [secret]'), 'the screen stays masked');
   });
 
   it("garde dans l'intention la valeur qu'elle donne à saisir", async () => {
@@ -322,6 +363,21 @@ describe("ce que l'auteur a écrit", () => {
 
 describe('les variables connues avant le premier écran', () => {
   const click = { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} };
+
+  it("ne lit pas un sigle comme une variable", async () => {
+    const provider = new ScriptedProvider([click]);
+    process.env['QAI'] = 'valeur-publique';
+    try {
+      await generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'ouvrir le tableau QAI' }] },
+        driver: new ExposingDriver('valeur-publique'),
+        provider,
+      });
+    } finally {
+      delete process.env['QAI'];
+    }
+    assert.ok(JSON.stringify(provider.requests[0]?.messages).includes('valeur-publique'));
+  });
 
   it("n'en déduit rien d'une étiquette ou du titre", async () => {
     const provider = new ScriptedProvider([click]);

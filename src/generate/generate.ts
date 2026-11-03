@@ -153,26 +153,25 @@ const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
  * Les valeurs d'environnement que le scénario désigne par leur nom.
  *
  * À masquer dès le premier écran : un compte déjà affiché au chargement partait
- * en clair, avant l'étape qui le saisit. Seul le texte envoyé au modèle compte :
- * une étiquette `CI` n'est pas une demande de lire `CI`, et masquerait « true »
- * sur tous les écrans. Le nom s'écrit en capitales (voir la consigne).
+ * en clair, avant l'étape qui le saisit. Seul le texte envoyé au modèle compte,
+ * et le nom s'écrit en capitales (voir la consigne). Pas moins de quatre : `CI`,
+ * `API` ou `URL` dans une intention sont des sigles, et `CI=true` masquerait
+ * « true » sur tous les écrans. Saisie, une telle variable reste enregistrée.
  */
 function namedEnvValues(authored: readonly string[]): string[] {
-  const names = new Set(authored.flatMap((text) => text.match(/\b[A-Z][A-Z0-9_]+\b/g) ?? []));
+  const names = new Set(authored.flatMap((text) => text.match(/\b[A-Z][A-Z0-9_]{3,}\b/g) ?? []));
   return [...names].flatMap((name) => process.env[name] ?? []);
 }
 
 /**
  * Le masque recopié dans une proposition.
  *
- * Masquer l'écran donne au modèle un `***` qu'il recopie volontiers : saisi dans
- * un champ, et versionné dans une adresse (`compte?jeton=***`), il ferait passer
- * la génération sur une valeur qui n'existe pas. Un `***` que l'écran réel
- * affiche, lui, n'est pas le masque.
+ * Masquer l'écran donne au modèle un `[secret]` qu'il recopie volontiers : saisi
+ * dans un champ, et versionné dans une adresse (`compte?jeton=[secret]`), il
+ * ferait passer la génération sur une valeur qui n'existe pas.
  */
-function copiedMask(proposed: unknown, screen: { root: UINode; location: string }): string[] {
+function copiedMask(proposed: unknown): string[] {
   if (!JSON.stringify(proposed).includes(MASK)) return [];
-  if (renderTree(screen.root).includes(MASK) || screen.location.includes(MASK)) return [];
   return [
     `"${MASK}" stands for a secret you are not shown: never copy it. Write {{env.NAME}} in a typed value if the intent names the variable, or use { "contains": "..." } on what surrounds it`,
   ];
@@ -187,7 +186,7 @@ function copiedMask(proposed: unknown, screen: { root: UINode; location: string 
  * échoue de lui-même. Le cas SILENCIEUX est pire : si la CI définit bien
  * `QAI_USER` pour le parcours de connexion, l'identifiant est saisi dans le
  * champ adresse sans erreur, et comme la valeur vient de l'environnement le
- * registre la masque en `***` dans chaque rapport — mauvaise valeur, et
+ * registre la masque dans chaque rapport — mauvaise valeur, et
  * invisible pour qui relit.
  *
  * C'est garantissable, donc c'est garanti : on ne le confie pas à la consigne.
@@ -395,7 +394,7 @@ function verifyChecks(
         tautological(check, root, merged)
       ) {
         warnings.push(
-          `assertion "${expectation}" is located by the very value it asserts ("${usesEnv(String(check.value)) ? '***' : interpolate(String(check.value), merged)}"): when that value changes, replay reports "no element" instead of "expected …, observed …"`,
+          `assertion "${expectation}" is located by the very value it asserts ("${usesEnv(String(check.value)) ? MASK : interpolate(String(check.value), merged)}"): when that value changes, replay reports "no element" instead of "expected …, observed …"`,
         );
       }
       const result = evaluateCheck(check, {
@@ -720,7 +719,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   const authored = scenario.steps.flatMap((step) => [
     intentFor(step, platform),
     ...expectationsOf(step),
-    ...Object.values(step.capture ?? {}),
+    ...Object.entries(step.capture ?? {}).flat(),
   ]);
   const secrets = new SecretRegistry(authored);
   secrets.addAll(namedEnvValues(authored));
@@ -854,7 +853,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         Array.isArray(candidate)
           ? candidate
           : [
-              ...(secrets.size > 0 ? copiedMask(candidate.actions, before) : []),
+              ...(secrets.size > 0 ? copiedMask(candidate.actions) : []),
               ...verifyEnvTemplates(candidate.actions, intent),
               ...verifyGestures(driver, candidate.actions),
               ...(await verifyActions(driver, candidate.actions)),
@@ -1013,7 +1012,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
 
       const copied =
         secrets.size > 0
-          ? copiedMask([checks.captures, Object.values(checks.assertions)], screen)
+          ? copiedMask([checks.captures, Object.values(checks.assertions)])
           : [];
       const errors = [
         ...[...copied, ...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),

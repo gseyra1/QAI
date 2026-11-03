@@ -26,6 +26,7 @@ Rules:
   "fallback": { "testId": "some-id" } — never the #id of another line, such
   as its container.
 - If several elements match, disambiguate with "within" or "nth".
+- "[secret]" replaces a secret you are not shown: never copy it into a name.
 - The note will be read by a developer in a review diff. Say what changed in
   the application — "the button label went from X to Y" — not what you did.`;
 

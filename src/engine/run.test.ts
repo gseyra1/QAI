@@ -828,7 +828,7 @@ describe('runScenario', () => {
 
       assert.equal(report.status, 'failed');
       assert.doesNotMatch(report.steps[0]?.error ?? '', /hunter2/);
-      assert.match(report.steps[0]?.error ?? '', /\*\*\*/);
+      assert.match(report.steps[0]?.error ?? '', /\[secret\]/);
     } finally {
       delete process.env['QAI_TEST_PASS'];
     }

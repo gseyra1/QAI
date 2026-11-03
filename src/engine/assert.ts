@@ -96,17 +96,56 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
   return out;
 }
 
-/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
-export const MASK = '***';
+/**
+ * Ce que rapports et modèle lisent à la place d'un secret.
+ *
+ * Pas `***` : une application affiche « Carte **** 4242 », et le masque ne se
+ * distinguait plus du vrai texte. Recopié par le modèle, il ne pouvait donc pas
+ * être refusé sans se tromper dans un sens ou dans l'autre.
+ */
+export const MASK = '[secret]';
 
-/** Toutes les occurrences, chevauchements compris. */
-function spansOf(text: string, parts: readonly string[]): [number, number][] {
+/** Un octet en `%xx`, dans les deux casses que produit un encodeur. */
+function percent(byte: number): string {
+  const digits = byte.toString(16).padStart(2, '0');
+  return `%${digits.replace(/[a-f]/g, (digit) => `[${digit}${digit.toUpperCase()}]`)}`;
+}
+
+function charPattern(char: string): string {
+  const forms = [
+    char.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&'),
+    [...new TextEncoder().encode(char)].map(percent).join(''),
+  ];
+  // Échappés dans le JSON d'une cible ; `\\` devient `/` dans une adresse.
+  if (char === '"') forms.push('\\\\"');
+  if (char === '\\') forms.push('\\\\\\\\', '/');
+  return `(?:${forms.join('|')})`;
+}
+
+/** Rien (l'analyseur d'URL retire tabulations et retours), ou un espace sous toutes ses formes. */
+const SPACE = String.raw`(?:\s|%20|%0[9aAdD]|\+|\\[nrt])*`;
+
+/**
+ * Une valeur, sous toutes les formes qu'elle prend sans cesser d'être ce secret.
+ *
+ * Comparer des sous-chaînes laissait passer toute valeur transformée, et aucune
+ * liste de formes ne suffit : le navigateur n'encode pas comme `encodeURI`, et
+ * une application encode ce qu'elle veut (`a%5Bb@c`). On compare donc caractère
+ * par caractère, chacun pouvant être en clair ou encodé, et les espaces réduits
+ * comme l'observation les réduit. Reste hors de portée ce que l'application
+ * reformate (« 1000 » réaffiché « 1 000 »).
+ */
+function secretPattern(value: string): RegExp {
+  const words = value.trim().split(/\s+/);
+  return new RegExp(words.map((word) => [...word].map(charPattern).join('')).join(SPACE), 'g');
+}
+
+function occurrences(text: string, pattern: RegExp): [number, number][] {
   const spans: [number, number][] = [];
-  for (const part of parts) {
-    if (part === '') continue;
-    for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
-      spans.push([at, at + part.length]);
-    }
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+    spans.push([match.index, match.index + match[0].length]);
+    pattern.lastIndex = match.index + 1;
   }
   return spans;
 }
@@ -118,9 +157,16 @@ function spansOf(text: string, parts: readonly string[]): [number, number][] {
  * `keep` protège des passages entiers : une occurrence entièrement à l'intérieur
  * reste telle quelle.
  */
-export function redact(text: string, secrets: readonly string[], keep: readonly string[] = []): string {
-  const kept = spansOf(text, keep);
-  const spans = spansOf(text, secrets)
+function maskSpans(text: string, patterns: readonly RegExp[], keep: readonly string[]): string {
+  const kept: [number, number][] = [];
+  for (const passage of keep) {
+    if (passage === '') continue;
+    for (let at = text.indexOf(passage); at >= 0; at = text.indexOf(passage, at + 1)) {
+      kept.push([at, at + passage.length]);
+    }
+  }
+  const spans = patterns
+    .flatMap((pattern) => occurrences(text, pattern))
     .filter(([start, end]) => !kept.some(([from, to]) => from <= start && end <= to))
     .sort((a, b) => a[0] - b[0]);
   const merged: [number, number][] = [];
@@ -138,37 +184,9 @@ export function redact(text: string, secrets: readonly string[], keep: readonly 
   return out + text.slice(from);
 }
 
-/**
- * Les formes que prend une valeur sans cesser d'être ce secret.
- *
- * Le masquage compare des sous-chaînes : une valeur transformée en chemin lui
- * échappe. Trois transformations sont connues d'avance, parce que QAI ou le
- * navigateur les font eux-mêmes :
- * - l'adresse : `p@ss` y figure en `p%40ss`. Le navigateur n'encode pas comme
- *   `encodeURI` (`'` et `|` diffèrent) : on demande donc à l'analyseur d'URL, le
- *   même algorithme, pour le chemin, la requête et le fragment ; le reste vient
- *   d'une application qui encode elle-même, ou d'un formulaire (`+`) ;
- * - l'observation, qui réduit les espaces d'un nom et le coupe à ses bords ;
- * - un JSON : une cible est envoyée sérialisée, guillemets échappés.
- */
-function encodedForms(value: string): string[] {
-  const forms = [value.replace(/\s+/g, ' ').trim(), JSON.stringify(value).slice(1, -1)];
-  try {
-    const url = new URL('http://h/');
-    url.pathname = `/${value}`;
-    url.search = `?${value}`;
-    url.hash = `#${value}`;
-    forms.push(
-      url.pathname.slice(1),
-      url.search.slice(1),
-      url.hash.slice(1),
-      encodeURIComponent(value),
-      new URLSearchParams({ v: value }).toString().slice('v='.length),
-    );
-  } catch {
-    // Une chaîne mal formée lève ici : elle reste masquée telle quelle.
-  }
-  return forms.filter((form) => form.length > 2);
+/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
+export function redact(text: string, secrets: readonly string[]): string {
+  return maskSpans(text, secrets.filter((secret) => secret.trim() !== '').map(secretPattern), []);
 }
 
 /**
@@ -189,7 +207,7 @@ function encodedForms(value: string): string[] {
  * expose de son propre chef, sans passer par `{{env.X}}`, reste hors de portée.
  */
 export class SecretRegistry {
-  readonly #values = new Set<string>();
+  readonly #patterns = new Map<string, RegExp>();
   readonly #authored: readonly string[];
 
   /**
@@ -214,9 +232,8 @@ export class SecretRegistry {
    * à une protection qui n'existe pas.
    */
   add(value: string): boolean {
-    if (value.length <= 2) return false;
-    this.#values.add(value);
-    for (const form of encodedForms(value)) this.#values.add(form);
+    if (value.trim().length <= 2) return false;
+    if (!this.#patterns.has(value)) this.#patterns.set(value, secretPattern(value));
     return true;
   }
 
@@ -225,11 +242,11 @@ export class SecretRegistry {
   }
 
   redact(text: string): string {
-    return this.#values.size === 0 ? text : redact(text, [...this.#values], this.#authored);
+    return this.#patterns.size === 0 ? text : maskSpans(text, [...this.#patterns.values()], this.#authored);
   }
 
   get size(): number {
-    return this.#values.size;
+    return this.#patterns.size;
   }
 }
 
@@ -417,14 +434,14 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
       if (interpolated === '') {
         return { ok: false, reason: 'urlContains value is empty: every URL contains it, so it proves nothing' };
       }
-      const shown = usesEnv(check.value) ? '***' : interpolated;
+      const shown = usesEnv(check.value) ? MASK : interpolated;
       return observed.includes(interpolated)
         ? { ok: true }
         : { ok: false, reason: `"${shown}" not found in URL "${observed}"` };
     }
     const expected = resolveAgainstBase(interpolated, context.baseUrl);
     if (observed === expected) return { ok: true };
-    const shown = usesEnv(check.value) ? '***' : expected;
+    const shown = usesEnv(check.value) ? MASK : expected;
     // Une valeur relative sans base, ou vide, ne peut jamais passer : le dire
     // évite de chercher la régression dans l'application.
     const unresolved = isDegenerateUrlValue(interpolated)
@@ -496,7 +513,7 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // Ce qui vient de l'environnement est un secret par hypothèse, et un rapport
   // d'échec finit dans les journaux d'une CI.
   const secret = usesEnv(check.value);
-  const shown = secret ? '***' : expected;
+  const shown = secret ? MASK : expected;
 
   if (check.check === 'textContains') {
     // Même garde que pour urlContains : tout texte contient la chaîne vide, et
@@ -528,5 +545,5 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${secret ? '***' : right}, observed ${left}` };
+    : { ok: false, reason: `expected ${secret ? MASK : right}, observed ${left}` };
 }

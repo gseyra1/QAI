@@ -95,7 +95,7 @@ describe('fuite de secret à la génération', () => {
       // Le rejet a bien eu lieu (l'assertion est fausse) mais est masqué.
       const s2 = result.steps.find((step) => step.stepId === 's2');
       assert.ok((s2?.rejections.length ?? 0) > 0, 's2 must have produced a rejection');
-      assert.ok(s2?.rejections.some((r) => r.includes('***')), 'the rejection must be redacted');
+      assert.ok(s2?.rejections.some((r) => r.includes('[secret]')), 'the rejection must be redacted');
     } finally {
       delete process.env['GEN_PW'];
     }
@@ -220,7 +220,7 @@ class EnvProvider implements ModelProvider {
 describe('garde-fous de génération', () => {
   it('refuse {{env.X}} quand l\'intention ne nomme pas la variable', async () => {
     // Le cas silencieux est le pire : si QAI_USER existe, l'identifiant est
-    // saisi dans le champ adresse sans erreur ET masqué en *** au rapport.
+    // saisi dans le champ adresse sans erreur ET masqué en [secret] au rapport.
     process.env['QAI_USER'] = 'alice@example.test';
     try {
       const result = await generateResolution({
