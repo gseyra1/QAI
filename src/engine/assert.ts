@@ -1,5 +1,5 @@
 import type { ConsoleEntry, Locator, NetworkEntry, Observations, UINode } from '../driver/types.ts';
-import type { Check, ExtractKind } from '../resolution/types.ts';
+import type { CaptureSpec, Check, ExtractKind } from '../resolution/types.ts';
 import { hasScheme, isDegenerateUrlValue, resolveAgainstBase } from '../resolution/url.ts';
 import { matchNodes } from './match.ts';
 
@@ -412,10 +412,15 @@ export function interpolateLocator(locator: Locator, bag: Readonly<Record<string
   if (locator.role !== undefined) out.role = locator.role;
   if (locator.nth !== undefined) out.nth = locator.nth;
   if (locator.name !== undefined) {
-    out.name =
-      typeof locator.name === 'string'
-        ? interpolate(locator.name, bag)
-        : { contains: interpolate(locator.name.contains, bag) };
+    const name = typeof locator.name === 'string' ? locator.name : locator.name.contains;
+    const resolved = interpolate(name, bag);
+    // Un nom vidé par une capture vide désignerait tout, ou les nœuds sans nom, et
+    // `absent` passerait sans rien prouver. L'échec dit la cause. Un nom écrit vide
+    // n'est pas concerné : il a son sens dans une résolution existante.
+    if (name.trim() !== '' && resolved.trim() === '') {
+      throw new Error(`the target name "${name}" is empty: the capture it uses read nothing`);
+    }
+    out.name = typeof locator.name === 'string' ? resolved : { contains: resolved };
   }
   if (locator.within !== undefined) out.within = interpolateLocator(locator.within, bag);
   return out;
@@ -474,6 +479,54 @@ export function extractValue(node: UINode, kind: ExtractKind): string | null {
 export function learnDerived(secrets: SecretRegistry, node: UINode, read: string): void {
   const sources = [node.name, node.value ?? ''];
   if (sources.some((source) => secrets.redact(source) !== source)) secrets.add(read);
+}
+
+/** Ce qui se trouve entre les deux bornes, ou `null` si l'une manque. */
+function between(text: string, after: string | undefined, before: string | undefined): string | null {
+  let rest = text;
+  if (after !== undefined) {
+    const start = rest.indexOf(after);
+    if (start === -1) return null;
+    rest = rest.slice(start + after.length);
+  }
+  if (before !== undefined) {
+    const end = rest.indexOf(before);
+    if (end === -1) return null;
+    rest = rest.slice(0, end);
+  }
+  const part = rest.trim();
+  return part === '' ? null : part;
+}
+
+/** Le texte où une capture est lue, avant bornes et conversion. */
+export function captureSource(node: UINode, spec: CaptureSpec): string {
+  if (spec.extract === 'number') return textOf(node);
+  return spec.extract === 'value' ? (node.value ?? '') : node.name;
+}
+
+/** Un tiret après une lettre est celui d'une référence (`CMD-1042`), pas un signe. */
+const NUMBER_TOKEN = /(?<![\p{L}\p{N}])[-+]\d[\d.,'\s]*|\d[\d.,'\s]*/gu;
+
+/** Les nombres d'un texte, dans leur écriture affichée. */
+export function numberTokens(text: string): string[] {
+  return text.match(NUMBER_TOKEN) ?? [];
+}
+
+/**
+ * La valeur d'une capture, bornée quand la spécification le demande.
+ *
+ * Une borne absente rend `null` plutôt que le texte entier : lire toute la
+ * phrase à la place de la référence ferait échouer une comparaison bien plus
+ * loin, sur un message qui ne dirait rien de la cause. Après bornes, un nombre
+ * est le premier du passage : `toNumber` sur « 129,00 € pour 3 articles »
+ * soudait les chiffres en 129003, sans erreur.
+ */
+export function readCapture(node: UINode, spec: CaptureSpec): string | null {
+  if (spec.after === undefined && spec.before === undefined) return extractValue(node, spec.extract);
+  const part = between(captureSource(node, spec), spec.after, spec.before);
+  if (part === null || spec.extract !== 'number') return part;
+  const parsed = toNumber(numberTokens(part)[0] ?? '');
+  return parsed === null ? null : String(parsed);
 }
 
 export type CheckResult = { ok: true } | { ok: false; reason: string };

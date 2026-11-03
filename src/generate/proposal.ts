@@ -1,5 +1,6 @@
 import type { Locator, ResolvedTarget, UINode } from '../driver/types.ts';
-import { toNumber } from '../engine/assert.ts';
+import type { CaptureSpec } from '../resolution/types.ts';
+import { numberTokens, toNumber } from '../engine/assert.ts';
 import { matchNodes } from '../engine/match.ts';
 
 /**
@@ -204,11 +205,18 @@ export function checkIssue(value: unknown, where: string): string | null {
 
 export function captureIssue(value: unknown, where: string): string | null {
   if (!isRecord(value)) return `${where} must be an object with "from" and "extract"`;
-  const extra = extraKey(value, ['from', 'extract']);
-  if (extra !== undefined) return `${where} has an unknown key "${extra}" (it takes from, extract)`;
+  const extra = extraKey(value, ['from', 'extract', 'after', 'before']);
+  if (extra !== undefined) {
+    return `${where} has an unknown key "${extra}" (it takes from, extract, after, before)`;
+  }
   if (value['from'] === undefined) return `${where} needs a "from" locator`;
   const from = locatorIssue(value['from'], `${where}: from`);
   if (from !== null) return from;
+  for (const bound of ['after', 'before']) {
+    const anchor = value[bound];
+    if (anchor === undefined) continue;
+    if (!isString(anchor) || anchor.trim() === '') return `${where}: "${bound}" must be a non-empty text`;
+  }
   return ['text', 'value', 'number'].includes(String(value['extract']))
     ? null
     : `${where} needs "extract": text, value or number`;
@@ -218,8 +226,13 @@ function flatten(node: UINode): UINode[] {
   return [node, ...node.children.flatMap(flatten)];
 }
 
+/** Hors gabarits : `{{env.TOKEN1}}` ne porte aucun chiffre à l'écran. */
+export function holdsNumber(text: string): boolean {
+  return /\p{Nd}/u.test(text.replace(/\{\{[^}]*\}\}/g, ''));
+}
+
 /** Le littéral qui sert de nom au locator, sans sa forme. */
-function nameLiteral(locator: Locator): string | undefined {
+export function nameLiteral(locator: Locator): string | undefined {
   if (locator.name === undefined) return undefined;
   return typeof locator.name === 'string' ? locator.name : locator.name.contains;
 }
@@ -285,9 +298,13 @@ export function tautologicalCapture(
   if (literal === undefined || literal.trim() === '') return false;
   if (extract === 'value') return false;
   if (extract === 'number' && node.value !== undefined && node.value !== '') return false;
-  if (extract === 'text') return typeof from.name === 'string' || read === literal;
-  const number = toNumber(literal);
-  return number !== null && String(number) === read;
+  // Bornée, la valeur n'est qu'une partie du nom : c'est la voir dans le littéral
+  // qui compte, pas l'égalité.
+  if (extract === 'text') return typeof from.name === 'string' || literal.includes(read);
+  return [literal, ...numberTokens(literal)].some((text) => {
+    const number = toNumber(text);
+    return number !== null && String(number) === read;
+  });
 }
 
 /**
@@ -337,7 +354,40 @@ export function namedCaptures(expectation: string): string[] {
   return [...new Set([...expectation.matchAll(CAPTURE_REFERENCE)].map((match) => match[1] as string))];
 }
 
-const WORD = /[\p{L}\p{N}]/u;
+/**
+ * Lettres et chiffres, sauf les écritures sans espaces : au milieu d'une phrase
+ * japonaise, tout voisin est une lettre, et aucune valeur n'y serait isolée.
+ */
+const SPACELESS = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}\p{sc=Thai}\p{sc=Lao}\p{sc=Khmer}\p{sc=Myanmar}]/u;
+const WORD = new RegExp(`(?!${SPACELESS.source})[\\p{L}\\p{N}]`, 'u');
+
+const SEGMENTS = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+/** Au milieu d'un mot, dans une écriture où seul le découpage en montre les bords. */
+function inSegment(text: string, at: number, part: string): boolean {
+  const end = at + part.length;
+  const neighbours = `${text[at - 1] ?? ''}${text[end] ?? ''}`;
+  if (!SPACELESS.test(`${part}${neighbours}`) || !SPACELESS.test(part)) return false;
+  const edges = new Set<number>();
+  for (const { index, segment } of SEGMENTS.segment(text)) edges.add(index).add(index + segment.length);
+  return !edges.has(at) || !edges.has(end);
+}
+
+/** Dans un `{{gabarit}}` existant : réécrire ici casserait le gabarit. */
+function inTemplate(text: string, at: number): boolean {
+  const open = text.lastIndexOf('{{', at);
+  return open >= 0 && !text.slice(open, at).includes('}}');
+}
+
+/** Un groupe de chiffres de « 1 234,50 » n'est pas un mot : il fait partie du nombre. */
+function inNumber(text: string, at: number, part: string): boolean {
+  if (!/^[\d\s.,]+$/.test(part)) return false;
+  const end = at + part.length;
+  return (
+    (/\d$/.test(part) && /^[\s.,]\d/.test(text.slice(end, end + 2))) ||
+    (/^\d/.test(part) && /\d[\s.,]$/.test(text.slice(Math.max(0, at - 2), at)))
+  );
+}
 
 /** Les positions où `part` figure dans `text` comme un mot entier, pas au milieu d'un autre. */
 function aloneAt(text: string, part: string): number[] {
@@ -345,9 +395,8 @@ function aloneAt(text: string, part: string): number[] {
   for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
     const before = text[at - 1];
     const after = text[at + part.length];
-    if ((before === undefined || !WORD.test(before)) && (after === undefined || !WORD.test(after))) {
-      found.push(at);
-    }
+    const alone = (before === undefined || !WORD.test(before)) && (after === undefined || !WORD.test(after));
+    if (alone && !inTemplate(text, at) && !inNumber(text, at, part) && !inSegment(text, at, part)) found.push(at);
   }
   return found;
 }
@@ -397,6 +446,8 @@ const LITERAL_CHECKS = new Set(['textEquals', 'textContains', 'numberEquals', 'u
 export interface FrozenOutcome {
   /** La vérification réécrite, quand le littéral ÉTAIT la capture. */
   check?: Record<string, unknown>;
+  /** Ce qui a été réécrit : corrigé et revérifié, pas un doute. */
+  note?: string;
   error?: string;
   warning?: string;
   /**
@@ -448,15 +499,32 @@ export function frozenCapture(
   check: unknown,
   known: Readonly<Record<string, string>>,
 ): FrozenOutcome | null {
-  if (!isRecord(check) || !isString(check['check']) || !LITERAL_CHECKS.has(check['check'])) return null;
-  const given = check['value'];
-  if (!isString(given) && typeof given !== 'number') return null;
-  const literal = String(given);
-  if (literal.includes('{{')) return null;
-  const numeric = check['check'] === 'numberEquals';
-  const written = JSON.stringify(check);
+  if (!isRecord(check)) return null;
+  const value = frozenValue(key, check, known);
+  const target = frozenTarget(key, value?.check ?? check, known);
+  if (value === null || target === null) return value ?? target;
+  const joined = (first?: string, second?: string): string | undefined =>
+    first === undefined ? second : second === undefined ? first : `${first}; ${second}`;
+  const rewritten = target.check ?? value.check;
+  const note = joined(value.note, target.note);
+  const warning = joined(value.warning, target.warning);
+  return {
+    ...(rewritten !== undefined ? { check: rewritten } : {}),
+    ...(note !== undefined ? { note } : {}),
+    ...(warning !== undefined ? { warning } : {}),
+    ...(value.error !== undefined ? { error: value.error } : {}),
+    ...(value.question !== undefined ? { question: value.question } : {}),
+  };
+}
 
-  const candidates = namedCaptures(key)
+/** Les captures que l'attente nomme et que `scope` n'emploie nulle part. */
+function unusedCaptures(
+  key: string,
+  scope: Record<string, unknown>,
+  known: Readonly<Record<string, string>>,
+): { name: string; value: string; template: string }[] {
+  const written = JSON.stringify(scope);
+  return namedCaptures(key)
     .map((name) => ({ name, value: known[name], template: `{{${name}}}` }))
     .filter(
       (capture): capture is { name: string; value: string; template: string } =>
@@ -464,21 +532,46 @@ export function frozenCapture(
     )
     // Stable : à longueur égale, l'ordre de la phrase départage.
     .sort((a, b) => b.value.trim().length - a.value.trim().length);
+}
+
+function frozenValue(
+  key: string,
+  check: Record<string, unknown>,
+  known: Readonly<Record<string, string>>,
+): FrozenOutcome | null {
+  if (!isString(check['check']) || !LITERAL_CHECKS.has(check['check'])) return null;
+  const given = check['value'];
+  if (!isString(given) && typeof given !== 'number') return null;
+  const literal = String(given);
+  if (literal.includes('{{')) return null;
+  const numeric = check['check'] === 'numberEquals';
+  // La valeur seule : une cible en `{{nom}}` n'empêche pas de comparer au
+  // littéral du jour, et ce rejeu-là est rouge.
+  const candidates = unusedCaptures(key, { value: literal }, known);
 
   for (const { value, template } of candidates) {
     const same =
       literal === value ||
       (numeric && toNumber(literal) !== null && toNumber(literal) === toNumber(value));
     if (!same) continue;
-    if (value.trim().length < MIN_EMBEDDED) {
+    // Deux captures de même valeur : l'ordre de la phrase ne dit pas laquelle.
+    const tied = candidates.some(
+      (other) =>
+        other.template !== template &&
+        (other.value === value || (numeric && toNumber(other.value) === toNumber(value))),
+    );
+    const short = (numeric ? String(toNumber(value)) : value.trim()).length < MIN_EMBEDDED;
+    if (short || tied) {
+      const doubt = tied ? 'another capture holds the same value' : 'a value this short can match by chance';
+      const reason = tied ? 'shared by several captures' : 'too short';
       return {
-        question: `assertion "${key}" compares "${literal}", today's value of ${template}, but a value this short can match by chance: if it is that capture, write ${template} in its place, so replay compares against the value captured then; if it is another value that happens to be equal, resend it unchanged`,
-        warning: `assertion "${key}" compares the literal "${literal}", today's value of ${template}, too short to tell whether it is the capture: kept as is; if it is, write ${template} in its place, or replay keeps comparing against today's value`,
+        question: `assertion "${key}" compares "${literal}", today's value of ${template}, but ${doubt}: if it is that capture, write ${template} in its place, so replay compares against the value captured then; if it is another value that happens to be equal, resend it unchanged`,
+        warning: `assertion "${key}" compares the literal "${literal}", today's value of ${template}, ${reason} to tell whether it is the capture: kept as is; if it is, write ${template} in its place, or replay keeps comparing against today's value`,
       };
     }
     return {
       check: { ...check, value: template },
-      warning: `assertion "${key}" compared the literal "${literal}", today's value of ${template}: rewritten to ${template}, so replay compares against the value captured then`,
+      note: `assertion "${key}" compared the literal "${literal}", today's value of ${template}: rewritten to ${template}, so replay compares against the value captured then`,
     };
   }
 
@@ -505,4 +598,130 @@ export function frozenCapture(
     }
   }
   return null;
+}
+
+/** Les noms littéraux d'un locator, `within` compris. */
+export function locatorNames(locator: Record<string, unknown>): string[] {
+  const name = locator['name'];
+  const literal = isRecord(name) ? name['contains'] : name;
+  const within = locator['within'];
+  return [...(isString(literal) ? [literal] : []), ...(isRecord(within) ? locatorNames(within) : [])];
+}
+
+function mapNames(locator: Record<string, unknown>, map: (name: string) => string): Record<string, unknown> {
+  const out = { ...locator };
+  const name = locator['name'];
+  if (isString(name)) out['name'] = map(name);
+  else if (isRecord(name) && isString(name['contains'])) out['name'] = { contains: map(name['contains']) };
+  if (isRecord(locator['within'])) out['within'] = mapNames(locator['within'], map);
+  return out;
+}
+
+/**
+ * La même capture figée, dans le nom de la cible.
+ *
+ * « la liste contient {{reference}} » est revenue en `visible` sur `{ contains:
+ * "CMD-7797" }` : vert à la génération, rouge au premier rejeu sur une autre
+ * commande (mesuré, 3 fois sur 3). Réécrit quand le nom porte la valeur
+ * capturée : la cible réécrite est revérifiée comme le reste. Le cas du nom qui
+ * n'est qu'une partie de la capture reste signalé, comme pour une valeur.
+ */
+function frozenTarget(
+  key: string,
+  check: Record<string, unknown>,
+  known: Readonly<Record<string, string>>,
+): FrozenOutcome | null {
+  const target = check['target'];
+  if (!isRecord(target)) return null;
+  // La cible seule : `{{reference}}` dans la valeur n'empêche pas de chercher
+  // l'élément par la référence du jour, et ce rejeu-là échoue.
+  const candidates = unusedCaptures(key, {}, known);
+  const names = locatorNames(target);
+  // Un nombre extrait ne se replace pas dans le texte d'où il vient : « 129 »
+  // dans « 129,00 € » casserait au premier montant à décimales.
+  const numeric = (value: string): boolean => /^-?\d+(\.\d+)?$/.test(value);
+  const rewritable = candidates.filter(
+    ({ value, template }) =>
+      value.trim().length >= MIN_EMBEDDED &&
+      !numeric(value) &&
+      !candidates.some((other) => other.template !== template && other.value === value),
+  );
+
+  let rewritten = target;
+  const fixed: string[] = [];
+  for (const { value, template } of rewritable) {
+    if (!locatorNames(rewritten).some((name) => standsAlone(name, value))) continue;
+    rewritten = mapNames(rewritten, (name) => replaceAlone(name, value, template));
+    fixed.push(`assertion "${key}" located its target by "${value}", today's value of ${template}: rewritten to ${template}, so replay looks for the value captured then`);
+  }
+  if (fixed.length > 0) return { check: { ...check, target: rewritten }, note: fixed.join('; ') };
+
+  for (const { value, template } of candidates) {
+    // Un libellé stable, « À rendre » dans « À rendre avant le 12/11 », reste une
+    // bonne cible. Seul un fragment qui porte une donnée se fige.
+    const part = names.find(
+      (name) => name.trim().length >= MIN_EMBEDDED && holdsNumber(name) && standsAlone(value, name),
+    );
+    if (part !== undefined) {
+      return {
+        warning: `assertion "${key}" locates its target by "${part}", only part of today's value of ${template} ("${value}"): replay keeps looking for today's value — capture exactly that part at the step that reads it, then use ${template}`,
+      };
+    }
+    const holder = names.find(
+      (name) =>
+        standsAlone(name, value) ||
+        (numeric(value) && numberTokens(name).some((token) => toNumber(token) === toNumber(value))),
+    );
+    if (holder !== undefined) {
+      return {
+        warning: `assertion "${key}" locates its target by "${holder}", which holds today's value of ${template}: kept as is, too short or numeric to rewrite; target the structure instead, with "within" or "nth"`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Les mêmes captures figées dans le `from` d'une capture de l'étape.
+ *
+ * « le montant de la commande {{reference}} » lu dans la ligne de CMD-1042 reste
+ * vert au rejeu, et rapporte le montant de l'ancienne commande. La description
+ * joue ici le rôle de l'attente.
+ */
+export function frozenFrom(
+  description: string,
+  from: Locator,
+  known: Readonly<Record<string, string>>,
+): { from: Locator; note?: string; warning?: string } {
+  const outcome = frozenTarget(description, { target: from }, known);
+  if (outcome === null) return { from };
+  const rewritten = outcome.check?.['target'] as Locator | undefined;
+  return {
+    from: rewritten ?? from,
+    ...(outcome.note !== undefined ? { note: outcome.note } : {}),
+    ...(outcome.warning !== undefined ? { warning: outcome.warning } : {}),
+  };
+}
+
+/**
+ * Une capture qui rapporte tout un texte de plusieurs mots.
+ *
+ * Mesuré : avec la consigne seule, le modèle n'a jamais borné « le numéro de
+ * commande » dans « Votre commande CMD-7797 est confirmée » (0 sur 3). Le défaut
+ * ne se voit qu'à l'étape qui compare, déjà trop tard pour corriger celle-ci.
+ * La question part ici, sur la capture, et le modèle tranche : « Chaise de
+ * bureau » est bien un texte entier. Deux mots suffisent : « Référence EMP-4418 »
+ * est le cas courant, et une question coûte moins qu'un rejeu rouge. Une référence
+ * d'un seul tenant n'est pas concernée ; là où l'écriture n'a pas d'espaces, on
+ * compte les segments. Un nombre se soude à ses voisins dès que le texte en porte
+ * deux : « 129,00 € pour 3 articles » lit 129003.
+ */
+export function readsWholeText(spec: CaptureSpec, read: string, source: string): boolean {
+  if (spec.extract === 'number') {
+    return spec.after === undefined && spec.before === undefined && numberTokens(source).length >= 2;
+  }
+  if (spec.after !== undefined || spec.before !== undefined) return false;
+  if (read.trim().split(/\s+/).length >= 2) return true;
+  if (!SPACELESS.test(read)) return false;
+  return [...SEGMENTS.segment(read)].filter((segment) => segment.isWordLike).length >= 3;
 }

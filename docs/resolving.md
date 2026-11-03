@@ -164,28 +164,73 @@ a deliberate invariant; then it is accepted with a warning, as is any answer
 that still holds before (no second turn). At most one extra turn per assertion;
 before acting only when a turn is left after the answer to repair the checks;
 never on the last attempt (warning instead), never on a verification-only step.
-It is a question, not a rejection, and it never fails a step: when the answer is
-refused and no turn repairs it, the questioned proposal is kept, with the
-warning.
+It is a question, not a rejection: when the answer is refused, the questioned
+proposal is kept, with the warning, and the attempts left go to repairing the
+checks. An accepted answer is final, because its gestures are played: it can only
+fail the step if the model made them worse.
 
 **A capture the expectation names is not frozen as a literal.** "the loan list
 contains the reference "{{reference}}"" came back as `textContains "EMP-4418"`:
 today's value, which keeps passing at replay whatever the capture reads. When
-the expectation names `{{name}}` and the check uses it nowhere (value or
-target):
+the expectation names `{{name}}` and the check's value does not use it:
 
 | The check's value | Outcome |
 |---|---|
-| equals the capture's current value (as a number for `numberEquals`) | rewritten to `{{name}}`, warning |
-| equals it, under 3 characters | asked once: `{{name}}`, or resent unchanged; kept as is with a warning |
+| equals the capture's current value (as a number for `numberEquals`) | rewritten to `{{name}}`, note |
+| equals it, under 3 characters, or equals two captures at once | asked once: `{{name}}`, or resent unchanged; kept as is with a warning |
 | contains it | refused, with the exact rewrite: `write {{reference}} in place of "EMP-4418": "{{reference}} — en cours"` |
-| is only part of it (the capture read `Référence EMP-4418`) | warning: the fix belongs to the capture, at a step already resolved |
+| is only part of it (the capture read `Référence EMP-4418`) | warning: the fix belongs to the capture, with `after`/`before`, at a step already resolved |
+
+The target gets the same treatment: "the list contains {{reference}}" written as
+`visible` on `{ "contains": "CMD-7797" }` is green at resolving and red on the
+next order. A name holding the captured value is rewritten to `{{name}}`, every
+named capture included, even when the check's value already uses it. A name that
+is only part of the capture, or holds one too short or numeric to rewrite, is a
+warning. A capture's `from` holding a capture its description names gets the same
+treatment. A rewrite is a `note` in the output: it was fixed and checked again, so
+`--strict` does not stop on it. A check comparing a capture with the element it was
+just read from cannot fail, and is always a warning.
 
 Containment counts on word boundaries only, and from 3 characters: "1" inside
 "Livraison en 1 jour" proves nothing, so a shorter value is reported, never
 refused. Equality with every named capture is tried before containment, the
 longest value first: `EMP-4418` is `{{reference}}`, not `{{prefix}}-4418`.
 Values from `{{env.…}}` are masked as `[secret]` in the message.
+
+**A value inside a sentence is captured between fixed words.** A capture reads
+a whole element, and "Order CMD-1042 is confirmed" is one element. `after` and
+`before` keep what stands between two literals:
+
+```json
+{ "from": { "role": "text" }, "extract": "text", "after": "Order ", "before": " is confirmed" }
+```
+
+`before` is searched after `after`, either one can stand alone, and the result
+is trimmed. A bound missing from the text fails the capture rather than
+returning the whole sentence, at resolving (the model is shown the text it read)
+and at replay. Bounds are literals, not a regular expression: they read well in
+a diff, and they do not describe the shape of the data. A bound holding a number
+is reported: it may be the data itself.
+
+A capture that reads a whole text of two words or more, or a number out of a text
+holding several, is asked about once, with its description: measured with a real
+model, it never bounded a value on the prompt alone. "Chaise de bureau" is a whole
+text, and the model says so.
+
+This question cannot make a step worse. It comes on top of the attempts, only when
+an attempt is left, and costs at most two model calls per step, since a bound
+copied wrong gets one correction. Only the bounds of that capture are taken from
+the answer, and they must pass every check again. Anything else in the answer is
+ignored. A failed call, or bounds refused twice, leaves the capture whole, with a
+warning.
+
+**An action target whose name holds a number is reported.** "Panier 1" no longer
+exists when the cart changes, and the prompt alone does not stop the copy. "Étape
+2" is a real label, so it is a warning, not a refusal. A name with no digit
+("Chaise de bureau") is not detected.
+
+A text over 120 characters has no accessible name on the web: observation drops
+it to keep the tree small, so it cannot be captured.
 
 **Every proposal is checked key by key against the shape
 [schema/resolution.schema.json](../schema/resolution.schema.json) allows.** A
@@ -222,14 +267,20 @@ the trust argument.
 Nothing is written if any step fails: a partial resolution would produce greens
 that prove nothing.
 
-The file carries a format `version` (up to 3). It goes up when the observation
-changes (v2) or when the meaning of a stored field changes (v3: relative
+The file carries a format `version` (up to 4). It goes up when the observation
+changes (v2), when a new field appears (v4: `after` and `before` on a capture)
+or when the meaning of a stored field changes (v3: relative
 `urlEquals` values resolved against the base, empty `actions` for
 verification-only steps). A file is written with the lowest version its content
-needs: v3 only when it uses one of those, v2 otherwise, so a heal does not make
-it unreadable for a teammate on an older QAI. A QAI older than the file refuses
-it. `qai check` and `qai run` warn about v1 files only: a v2 file is a valid v3
-file.
+needs, so a heal does not make it unreadable for a teammate on an older QAI. A
+QAI older than the file refuses it. `qai check` and `qai run` warn about v1
+files only: a v2 file is a valid v3 and v4 file.
+
+`qai resolve --strict` writes nothing when a warning remains, and exits 1.
+Without it, warnings are printed and the file is written. It turns every signal
+of this page into a stop, including a label that really holds a number, so it
+suits a pipeline that resolves unattended better than a first draft. It is a flag
+only: `strict` in `qai.config.json` speaks of repairs at replay.
 
 ## The limits, plainly
 

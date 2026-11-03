@@ -17,7 +17,8 @@ import type { Scenario } from '../scenario/types.ts';
 import { appliesTo, authoredTexts, expectationsOf, intentFor } from '../scenario/types.ts';
 import {
   evaluateCheck,
-  extractValue,
+  captureSource,
+  readCapture,
   interpolate,
   isFailed,
   InterpolationError,
@@ -691,9 +692,15 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
             captureErrors.push(`capture "${name}": target not found or ambiguous`);
             continue;
           }
-          const value = extractValue(node, spec.extract);
+          const value = readCapture(node, spec);
           if (value === null) {
-            captureErrors.push(`capture "${name}": unreadable value`);
+            captureErrors.push(
+              secrets.redact(
+                spec.after === undefined && spec.before === undefined
+                  ? `capture "${name}": unreadable value`
+                  : `capture "${name}": nothing readable between "after" and "before" in ${JSON.stringify(captureSource(node, spec))}`,
+              ),
+            );
             continue;
           }
           learnDerived(secrets, node, value);

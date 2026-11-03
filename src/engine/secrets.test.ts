@@ -406,6 +406,31 @@ describe("les formes d'une valeur dans une adresse réelle", () => {
   }
 });
 
+describe('une capture vide dans le nom d\'une cible', () => {
+  it('fait échouer `absent`, qui passerait sans rien prouver', async () => {
+    class EmptyFieldDriver extends ReflectingDriver {
+      override async observe(): ReturnType<ReflectingDriver['observe']> {
+        const snapshot = await super.observe();
+        return { ...snapshot, root: node('group', 'page', [node('textbox', 'Recherche'), node('link', 'un résultat')]) };
+      }
+    }
+    const report = await runScenario({
+      driver: new EmptyFieldDriver(),
+      assertTimeoutMs: 0,
+      scenario: scenario([{ id: 's1', do: 'lire', expect: 'rien ne porte le terme' }]),
+      resolution: resolution({
+        s1: {
+          actions: [{ kind: 'click', target: { primary: { role: 'textbox' } } }],
+          captures: { terme: { from: { role: 'textbox' }, extract: 'value' } },
+          assertions: { 'rien ne porte le terme': { check: 'absent', target: { role: 'link', name: { contains: '{{terme}}' } } } },
+        },
+      }),
+    });
+    assert.equal(report.status, 'failed', JSON.stringify(report.steps));
+    assert.match(JSON.stringify(report.steps), /read nothing/);
+  });
+});
+
 describe('fuite de secret de bout en bout', () => {
   it('ne publie jamais un secret capturé, ni en raison ni en capture', async () => {
     process.env['QAI_LOGIN_PW'] = SECRET;

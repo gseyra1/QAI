@@ -119,6 +119,10 @@ the cost of a change proportional to the change.
 seen on the product page") instead of constants that break on the first
 catalog change.
 
+The description says what to read, even when it is part of a sentence:
+`reference: the order number in the confirmation` on "Order CMD-1042 is
+confirmed" reads `CMD-1042` (see [resolving.md](resolving.md)).
+
 ### `expect` — including on the address
 
 An expectation is phrased in natural language, and the model picks the machine

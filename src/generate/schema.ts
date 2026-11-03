@@ -76,7 +76,12 @@ function captures(): Record<string, unknown> {
     description: 'values to extract from the screen, reusable later via {{name}}',
     additionalProperties: {
       type: 'object',
-      properties: { from: locator(2), extract: { enum: ['text', 'value', 'number'] } },
+      properties: {
+        from: locator(2),
+        extract: { enum: ['text', 'value', 'number'] },
+        after: { type: 'string', description: 'for a value inside a longer text: the fixed words just before it' },
+        before: { type: 'string', description: 'for a value inside a longer text: the fixed words just after it' },
+      },
       required: ['from', 'extract'],
       additionalProperties: false,
     },

@@ -136,7 +136,7 @@ iOS (experimental): --platform ios --app <bundle-id|path.app> instead of --base-
 | `--out <path>` | stdout | Write the report to a file. |
 | `--run-url <url>` | — | Link to the CI run, inserted into the markdown report. |
 | `--json` | — | Alias for `--format json`. |
-| `--strict` | `false` | A repair fails the command instead of passing. |
+| `--strict` | `false` | A repair fails the command instead of passing. On `resolve`, a warning does, and nothing is written. |
 | `--headed` | `false` | Show the browser. Refused on iOS. |
 | `--version` | — | Print the QAI version. |
 | `--help` | — | Print the usage. |

@@ -69,7 +69,8 @@ Options
   --out <path>          write the report to a file
   --run-url <url>       link to the CI run, inserted into the markdown
   --json                alias for --format json
-  --strict              a repair fails the command
+  --strict              a repair fails the command; on resolve, a warning does,
+                        and nothing is written
   --headed              show the browser
   --version             print the QAI version
 
@@ -513,10 +514,23 @@ export async function main(argv: string[]): Promise<number> {
           for (const warning of step.warnings) {
             process.stdout.write(`        warning: ${warning}\n`);
           }
+          for (const note of step.notes ?? []) {
+            process.stdout.write(`        note: ${note}\n`);
+          }
         }
 
         if (result.status !== 'complete') {
           process.stderr.write(`  incomplete resolution: nothing was written\n`);
+          failed = true;
+          continue;
+        }
+
+        // Sous --strict, ce qui serait seulement signalé bloque : une assertion
+        // qui ne prouve peut-être rien n'entre pas dans un fichier versionné.
+        // Le drapeau seul, pas la configuration : `strict` y parle des réparations,
+        // et un fichier écrit pour la CI ne doit pas bloquer une génération à la main.
+        if (values.strict === true && result.steps.some((step) => step.warnings.length > 0)) {
+          process.stderr.write(`  warnings under --strict: nothing was written\n`);
           failed = true;
           continue;
         }

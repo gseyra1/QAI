@@ -6,6 +6,17 @@ export type ExtractKind = 'text' | 'value' | 'number';
 export interface CaptureSpec {
   from: Locator;
   extract: ExtractKind;
+  /**
+   * Bornes littérales d'une valeur noyée dans une phrase, depuis la v4.
+   *
+   * « Commande CMD-1042 confirmée » se lit `after: "Commande "`, `before: "
+   * confirmée"` : les mots fixes autour de la valeur, pas sa forme. Une
+   * expression régulière ferait entrer la forme de la donnée dans le fichier,
+   * et rien ne la borne ; ces deux littéraux se relisent dans un diff et
+   * échouent net quand la phrase change.
+   */
+  after?: string;
+  before?: string;
 }
 
 /**
@@ -98,7 +109,7 @@ export interface StepResolution {
  * valeur relative telle quelle et échouerait sans raison : il doit refuser le
  * fichier, pas le lire.
  */
-export const RESOLUTION_VERSION = 3;
+export const RESOLUTION_VERSION = 4;
 
 /**
  * La dernière version dont le changement portait sur l'observation.
@@ -123,15 +134,17 @@ export const OBSERVATION_VERSION = 2;
  * coéquipier pas encore mis à jour, un fichier dont rien n'a changé de sens.
  */
 export function requiredVersion(resolution: Pick<Resolution, 'steps'>): number {
+  let required = OBSERVATION_VERSION;
   for (const step of Object.values(resolution.steps)) {
-    if (step.actions.length === 0) return RESOLUTION_VERSION;
+    for (const capture of Object.values(step.captures ?? {})) {
+      if (capture.after !== undefined || capture.before !== undefined) return RESOLUTION_VERSION;
+    }
+    if (step.actions.length === 0) required = 3;
     for (const check of Object.values(step.assertions ?? {})) {
-      if (check.check === 'urlEquals' && !hasScheme(check.value)) {
-        return RESOLUTION_VERSION;
-      }
+      if (check.check === 'urlEquals' && !hasScheme(check.value)) required = 3;
     }
   }
-  return OBSERVATION_VERSION;
+  return required;
 }
 
 export interface Resolution {
