@@ -97,33 +97,78 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
 }
 
 /** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
-export function redact(text: string, secrets: readonly string[]): string {
-  let out = text;
-  for (const secret of secrets) {
-    if (secret !== '') out = out.split(secret).join('***');
+export const MASK = '***';
+
+/** Toutes les occurrences, chevauchements compris. */
+function spansOf(text: string, parts: readonly string[]): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const part of parts) {
+    if (part === '') continue;
+    for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
+      spans.push([at, at + part.length]);
+    }
   }
-  return out;
+  return spans;
 }
 
 /**
- * Ce que devient une valeur dans une adresse.
+ * Remplace par positions, pas par substitutions successives : deux secrets qui
+ * se chevauchent ou s'emboîtent laissaient la fin de l'un en clair.
  *
- * L'adresse courante et les URL du réseau la portent encodée : `p@ss` y figure
- * en `p%40ss`, et la sous-chaîne en clair n'y apparaît jamais. Trois formes,
- * selon qui a construit l'adresse : le navigateur (`encodeURI`), le code de
- * l'application (`encodeURIComponent`), un formulaire (`+` pour l'espace).
+ * `keep` protège des passages entiers : une occurrence entièrement à l'intérieur
+ * reste telle quelle.
+ */
+export function redact(text: string, secrets: readonly string[], keep: readonly string[] = []): string {
+  const kept = spansOf(text, keep);
+  const spans = spansOf(text, secrets)
+    .filter(([start, end]) => !kept.some(([from, to]) => from <= start && end <= to))
+    .sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const [start, end] of spans) {
+    const last = merged.at(-1);
+    if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  let out = '';
+  let from = 0;
+  for (const [start, end] of merged) {
+    out += text.slice(from, start) + MASK;
+    from = end;
+  }
+  return out + text.slice(from);
+}
+
+/**
+ * Les formes que prend une valeur sans cesser d'être ce secret.
+ *
+ * Le masquage compare des sous-chaînes : une valeur transformée en chemin lui
+ * échappe. Trois transformations sont connues d'avance, parce que QAI ou le
+ * navigateur les font eux-mêmes :
+ * - l'adresse : `p@ss` y figure en `p%40ss`. Le navigateur n'encode pas comme
+ *   `encodeURI` (`'` et `|` diffèrent) : on demande donc à l'analyseur d'URL, le
+ *   même algorithme, pour le chemin, la requête et le fragment ; le reste vient
+ *   d'une application qui encode elle-même, ou d'un formulaire (`+`) ;
+ * - l'observation, qui réduit les espaces d'un nom et le coupe à ses bords ;
+ * - un JSON : une cible est envoyée sérialisée, guillemets échappés.
  */
 function encodedForms(value: string): string[] {
+  const forms = [value.replace(/\s+/g, ' ').trim(), JSON.stringify(value).slice(1, -1)];
   try {
-    return [
-      encodeURI(value),
+    const url = new URL('http://h/');
+    url.pathname = `/${value}`;
+    url.search = `?${value}`;
+    url.hash = `#${value}`;
+    forms.push(
+      url.pathname.slice(1),
+      url.search.slice(1),
+      url.hash.slice(1),
       encodeURIComponent(value),
       new URLSearchParams({ v: value }).toString().slice('v='.length),
-    ];
+    );
   } catch {
     // Une chaîne mal formée lève ici : elle reste masquée telle quelle.
-    return [];
   }
+  return forms.filter((form) => form.length > 2);
 }
 
 /**
@@ -145,6 +190,17 @@ function encodedForms(value: string): string[] {
  */
 export class SecretRegistry {
   readonly #values = new Set<string>();
+  readonly #authored: readonly string[];
+
+  /**
+   * `authored` : ce que l'auteur a écrit, rendu tel quel. Une attente qui nomme
+   * une valeur doit revenir mot pour mot, c'est sa clé ; et ce texte est déjà
+   * versionné en clair. La valeur reste masquée partout ailleurs, à l'écran
+   * comme dans l'adresse.
+   */
+  constructor(authored: readonly string[] = []) {
+    this.#authored = authored;
+  }
 
   /**
    * Rend `false` quand la valeur est trop courte pour être masquée sans dégât.
@@ -169,10 +225,7 @@ export class SecretRegistry {
   }
 
   redact(text: string): string {
-    if (this.#values.size === 0) return text;
-    // Le plus long d'abord : un secret qui en contient un autre ne doit pas
-    // laisser sa fin en clair.
-    return redact(text, [...this.#values].sort((a, b) => b.length - a.length));
+    return this.#values.size === 0 ? text : redact(text, [...this.#values], this.#authored);
   }
 
   get size(): number {
@@ -300,7 +353,9 @@ export function envSecrets(check: Check, bag: Readonly<Record<string, string>>):
   const template: unknown = (check as { value?: unknown }).value;
   if (typeof template !== 'string' || !usesEnv(template)) return [];
   try {
-    return [interpolate(template, bag)];
+    // La variable seule aussi : « Bearer {{env.X}} » ne s'affiche pas toujours
+    // avec son préfixe.
+    return [interpolate(template, bag), ...envValuesIn(template)];
   } catch {
     // Une variable absente n'a aucune valeur à masquer. L'échec est signalé
     // ailleurs, par le nom de la variable — qui n'est pas le secret.

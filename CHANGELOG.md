@@ -15,19 +15,26 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   through `SecretRegistry` at one single point. If you ran `qai resolve` or
   `qai run --heal` with a third-party provider on such a value, treat that value
   as exposed and rotate it.
-- **Secrets are known earlier.** Generation registers the variables the scenario
-  names in capitals before the first screen; replay registers every
-  `{{env.NAME}}` of the resolution before the first gesture. A value displayed
-  before the step that types it was missed.
+- **Secrets are known earlier.** Generation registers the variables an intent or
+  an expectation names in capitals before the first screen; replay registers
+  every `{{env.NAME}}` of the resolution before the first gesture. A value
+  displayed before the step that types it was missed.
 - **A secret in an address is recognised.** `p@ss` in `?q=p%40ss`, in the current
-  address or a network URL, was not masked, in reports either. The URL-encoded
-  forms of a value are now registered with it.
-- **A secret containing another one is masked whole**, not left with its end in
-  clear.
+  address or a network URL, was not masked, in reports either. The forms the
+  browser really emits are now registered with the value, checked against
+  Chromium. So are the value with its spaces collapsed, as observation does, and
+  escaped in JSON.
+- **A secret is masked whole.** A secret containing or overlapping another left
+  its end in clear. `Bearer {{env.X}}` registered only the whole string: `X` on
+  its own was missed.
 - Generation warns when a value is too short to be masked, as replay already did.
 
 ### Changed
 
+- **A proposal copying `***` is refused.** The model now sees the mask, and could
+  type it or store it in an address. A step that must `navigate` to an address
+  holding a secret can no longer be resolved that way: it used to store the
+  secret itself in the versioned file.
 - `HealRequest` has a required `redact` function. A custom `Healer` must pass what
   it sends to a third party through it: `snapshot` stays unmasked.
 - Playwright 1.64.1, development dependencies and CI actions updated.

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
+import { chromium, type Browser, type Page } from 'playwright';
 import type { Action, Driver, Observations, ResolveOutcome, UINode } from '../driver/types.ts';
 import type { Resolution } from '../resolution/types.ts';
 import type { Scenario } from '../scenario/types.ts';
@@ -52,10 +53,52 @@ describe('SecretRegistry', () => {
     assert.equal(reg.redact('x abcdefgh y'), 'x *** y');
   });
 
+  it('masque en entier deux secrets qui se chevauchent', () => {
+    const reg = new SecretRegistry();
+    reg.add('abcdefgh');
+    reg.add('efghijkl');
+    assert.equal(reg.redact('x abcdefghijkl y'), 'x *** y');
+  });
+
+  it("masque une valeur telle que l'observation la réécrit", () => {
+    const reg = new SecretRegistry();
+    reg.add('  tok   en\n');
+    assert.equal(reg.redact('text "tok en"'), 'text "***"');
+  });
+
+  it('masque une valeur sérialisée en JSON', () => {
+    const reg = new SecretRegistry();
+    reg.add('pa"ss-word');
+    assert.equal(reg.redact(JSON.stringify({ name: 'pa"ss-word' })), '{"name":"***"}');
+  });
+
+  it("rend tel quel ce que l'auteur a écrit, et masque le reste", () => {
+    const reg = new SecretRegistry(['the header shows admin@acme.test']);
+    reg.add('admin@acme.test');
+    assert.equal(
+      reg.redact('- the header shows admin@acme.test\ntext "admin@acme.test"'),
+      '- the header shows admin@acme.test\ntext "***"',
+    );
+  });
+
   it('ne casse pas sur une valeur que les fonctions d\'encodage refusent', () => {
     const reg = new SecretRegistry();
     assert.equal(reg.add('abc\ud800'), true);
     assert.equal(reg.redact('x abc\ud800 y'), 'x *** y');
+  });
+
+  it('enregistre la variable seule, pas seulement la valeur composée', () => {
+    process.env['QAI_TEST_PW'] = SECRET;
+    try {
+      const reg = new SecretRegistry();
+      evaluateCheck(
+        { check: 'textEquals', target: { role: 'text' }, value: 'Bearer {{env.QAI_TEST_PW}}' },
+        { root: node('group', 'page', [node('text', 'autre')]), location: '/', bag: {}, secrets: reg },
+      );
+      assert.equal(reg.redact(`jeton ${SECRET}`), 'jeton ***');
+    } finally {
+      delete process.env['QAI_TEST_PW'];
+    }
   });
 
   it('enregistre le secret qu\'une assertion sur {{env.X}} révèle', () => {
@@ -114,6 +157,40 @@ class ReflectingDriver implements Driver {
     return { network: [], console: [] };
   }
 }
+
+/**
+ * Contre Chromium, pas contre une table : c'est lui qui décide de l'encodage,
+ * et `encodeURI` n'encode ni `'` ni `<`... de la même façon.
+ */
+describe("les formes d'une valeur dans une adresse réelle", () => {
+  const VALUES = ['k9<Tz|Qw', "it's@ok", 'p@ss w/rd', 'a"b>c', 'é€-tok', 'x+y=z&k', 'a`b{c}d', 'tab\\sl'];
+  let browser: Browser;
+  let page: Page;
+
+  before(async () => {
+    browser = await chromium.launch();
+    page = await browser.newPage();
+    await page.route('http://app.test/**', (route) => route.fulfill({ contentType: 'text/html', body: '<title>t</title>' }));
+    await page.goto('http://app.test/');
+  });
+  after(async () => {
+    await browser.close();
+  });
+
+  for (const value of VALUES) {
+    it(`masque ${JSON.stringify(value)} dans le chemin, la requête et le fragment`, async () => {
+      const reg = new SecretRegistry();
+      reg.add(value);
+      for (const write of ['/p/', '/search?q=', '/page#']) {
+        await page.evaluate(([prefix, typed]) => history.pushState({}, '', `${prefix}${typed}`), [write, value]);
+        const url = page.url();
+        assert.ok(reg.redact(url).endsWith('***'), `${url} -> ${reg.redact(url)}`);
+      }
+      await page.evaluate((typed) => history.pushState({}, '', `/search?q=${encodeURIComponent(typed)}`), value);
+      assert.ok(reg.redact(page.url()).endsWith('***'), page.url());
+    });
+  }
+});
 
 describe('fuite de secret de bout en bout', () => {
   it('ne publie jamais un secret capturé, ni en raison ni en capture', async () => {

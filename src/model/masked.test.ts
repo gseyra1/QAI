@@ -171,6 +171,212 @@ describe('ce que la génération envoie au fournisseur', () => {
   });
 });
 
+/** Rend les réponses dans l'ordre ; un appel de trop fait échouer le test. */
+class ScriptedProvider implements ModelProvider {
+  readonly name = 'scripted';
+  readonly requests: ModelRequest[] = [];
+  readonly #outputs: unknown[];
+
+  constructor(outputs: unknown[]) {
+    this.#outputs = outputs;
+  }
+
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    this.requests.push(structuredClone(request));
+    const output = this.#outputs[this.requests.length - 1];
+    assert.ok(output !== undefined, `réponse ${this.requests.length} non scénarisée`);
+    return { output, usage: { inputTokens: 1, outputTokens: 1 } };
+  }
+}
+
+const textbox = { primary: { role: 'textbox' } };
+
+describe('le masque ne remplace pas la valeur', () => {
+  it('refuse un *** recopié dans une saisie', async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'fill', target: textbox, value: '{{env.QAI_MASK_PW}}' }], captures: {}, assertions: {} },
+    ]);
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'se connecter avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(SECRET),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.ok(result.steps[0]?.rejections.some((r) => r.includes('never copy it')));
+    assert.ok(!JSON.stringify(result.resolution).includes('***'));
+  });
+
+  it('refuse un *** recopié dans une adresse, sans rien écrire', async () => {
+    const copied = { actions: [{ kind: 'navigate', to: '/compte?jeton=***' }], captures: {}, assertions: {} };
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'rouvrir le compte avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(SECRET),
+        provider: new ScriptedProvider([copied, copied]),
+        attemptsPerStep: 2,
+      }),
+    );
+    assert.equal(result.status, 'incomplete');
+    assert.deepEqual(result.resolution.steps, {});
+  });
+
+  it('refuse un *** recopié dans une vérification', async () => {
+    const proposal = (value: string): unknown => ({
+      captures: {},
+      assertions: { 'le bandeau est là': { check: 'textContains', target: { role: 'text' }, value } },
+    });
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'click', target: textbox }], ...(proposal('Connecté : ***') as object) },
+      proposal('Connecté'),
+    ]);
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: {
+          id: 'm',
+          title: 't',
+          steps: [{ id: 's1', do: 'continuer avec QAI_MASK_PW', expect: 'le bandeau est là' }],
+        },
+        driver: new ExposingDriver(SECRET),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.ok(result.steps[0]?.rejections.some((r) => r.includes('never copy it')));
+  });
+
+  it('laisse passer un *** que le vrai écran affiche', async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
+    ]);
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'recopier avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver('***'),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+
+  it('ne touche à rien quand aucun secret n\'est connu', async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '***' }], captures: {}, assertions: {} },
+    ]);
+    const result = await generateResolution({
+      scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'recopier' }] },
+      driver: new ExposingDriver(),
+      provider,
+    });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+});
+
+describe("ce que l'auteur a écrit", () => {
+  const value = 'admin@acme.test';
+
+  it('revient mot pour mot quand une attente nomme la valeur', async () => {
+    const key = `le bandeau affiche ${value}`;
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: textbox }],
+        captures: {},
+        assertions: { [key]: { check: 'textContains', target: { role: 'text' }, value } },
+      },
+    ]);
+    const result = await withSecret(
+      () =>
+        generateResolution({
+          scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'continuer avec QAI_MASK_PW', expect: key }] },
+          driver: new ExposingDriver(value),
+          provider,
+        }),
+      value,
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    const sent = JSON.stringify(provider.requests[0]?.messages);
+    assert.ok(sent.includes(key), 'the expectation goes as written');
+    assert.ok(sent.includes('Connecté : ***'), 'the screen stays masked');
+  });
+
+  it("garde dans l'intention la valeur qu'elle donne à saisir", async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '3000' }], captures: {}, assertions: {} },
+    ]);
+    process.env['QAI_PORT'] = '3000';
+    try {
+      const result = await generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'saisir 3000 dans le champ QAI_PORT' }] },
+        driver: new ExposingDriver(),
+        provider,
+      });
+      assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+      assert.ok(JSON.stringify(provider.requests[0]?.messages).includes('saisir 3000'));
+    } finally {
+      delete process.env['QAI_PORT'];
+    }
+  });
+});
+
+describe('les variables connues avant le premier écran', () => {
+  const click = { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} };
+
+  it("n'en déduit rien d'une étiquette ou du titre", async () => {
+    const provider = new ScriptedProvider([click]);
+    await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 'QAI_MASK_PW', tags: ['QAI_MASK_PW'], steps: [{ id: 's1', do: 'continuer' }] },
+        driver: new ExposingDriver('valeur-publique'),
+        provider,
+      }),
+    'valeur-publique');
+    assert.ok(JSON.stringify(provider.requests[0]?.messages).includes('valeur-publique'));
+  });
+
+  it('lit une intention sur plusieurs lignes', async () => {
+    const provider = new ScriptedProvider([click]);
+    await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'se connecter avec\nQAI_MASK_PW' }] },
+        driver: new ExposingDriver(SECRET),
+        provider,
+      }),
+    );
+    assertNothingLeaked(provider.requests);
+  });
+
+  it('masque la variable seule quand la saisie la compose', async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: 'Bearer {{env.qai_tok}}' }], captures: {}, assertions: {} },
+      click,
+    ]);
+    process.env['qai_tok'] = SECRET;
+    try {
+      await generateResolution({
+        scenario: {
+          id: 'm',
+          title: 't',
+          steps: [{ id: 's1', do: 'saisir qai_tok' }, { id: 's2', do: 'continuer' }],
+        },
+        driver: new BareValueDriver(),
+        provider,
+      });
+    } finally {
+      delete process.env['qai_tok'];
+    }
+    assertNothingLeaked(provider.requests);
+  });
+});
+
+/** Réaffiche ce qui suit « Bearer », sans le préfixe. */
+class BareValueDriver extends ExposingDriver {
+  override async act(action: Action): Promise<void> {
+    await super.act(action.kind === 'fill' ? { ...action, value: action.value.replace('Bearer ', '') } : action);
+  }
+}
+
 /** La cible perdue déclenche le réparateur, sur un écran qui expose le secret. */
 class LostTargetDriver extends ExposingDriver {
   override async resolve(target?: ResolvedTarget): Promise<ResolveOutcome> {

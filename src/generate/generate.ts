@@ -5,6 +5,8 @@ import {
   interpolate,
   interpolateLocator,
   SecretRegistry,
+  MASK,
+  envValuesIn,
   usesEnv,
 } from '../engine/assert.ts';
 import { formatIssue, platformIssue } from '../engine/consistency.ts';
@@ -151,12 +153,29 @@ const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
  * Les valeurs d'environnement que le scénario désigne par leur nom.
  *
  * À masquer dès le premier écran : un compte déjà affiché au chargement partait
- * en clair, avant l'étape qui le saisit. Une variable n'est utilisable que si
- * l'intention la nomme, et le nom s'écrit en capitales (voir la consigne).
+ * en clair, avant l'étape qui le saisit. Seul le texte envoyé au modèle compte :
+ * une étiquette `CI` n'est pas une demande de lire `CI`, et masquerait « true »
+ * sur tous les écrans. Le nom s'écrit en capitales (voir la consigne).
  */
-function namedEnvValues(scenario: Scenario): string[] {
-  const names = new Set(JSON.stringify(scenario).match(/\b[A-Z][A-Z0-9_]+\b/g) ?? []);
+function namedEnvValues(authored: readonly string[]): string[] {
+  const names = new Set(authored.flatMap((text) => text.match(/\b[A-Z][A-Z0-9_]+\b/g) ?? []));
   return [...names].flatMap((name) => process.env[name] ?? []);
+}
+
+/**
+ * Le masque recopié dans une proposition.
+ *
+ * Masquer l'écran donne au modèle un `***` qu'il recopie volontiers : saisi dans
+ * un champ, et versionné dans une adresse (`compte?jeton=***`), il ferait passer
+ * la génération sur une valeur qui n'existe pas. Un `***` que l'écran réel
+ * affiche, lui, n'est pas le masque.
+ */
+function copiedMask(proposed: unknown, screen: { root: UINode; location: string }): string[] {
+  if (!JSON.stringify(proposed).includes(MASK)) return [];
+  if (renderTree(screen.root).includes(MASK) || screen.location.includes(MASK)) return [];
+  return [
+    `"${MASK}" stands for a secret you are not shown: never copy it. Write {{env.NAME}} in a typed value if the intent names the variable, or use { "contains": "..." } on what surrounds it`,
+  ];
 }
 
 /**
@@ -698,8 +717,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   // Comme au rejeu : un secret saisi via {{env.X}} ne doit fuir ni dans les
   // rejets rapportés, ni — surtout — dans ce qui part chez le fournisseur de
   // modèle, qui est un tiers : écrans, adresses et captures compris.
-  const secrets = new SecretRegistry();
-  secrets.addAll(namedEnvValues(scenario));
+  const authored = scenario.steps.flatMap((step) => [
+    intentFor(step, platform),
+    ...expectationsOf(step),
+    ...Object.values(step.capture ?? {}),
+  ]);
+  const secrets = new SecretRegistry(authored);
+  secrets.addAll(namedEnvValues(authored));
   const provider = maskedProvider(input.provider, (text) => secrets.redact(text));
   // Même base qu'au rejeu pour les vérifications d'adresse : web seulement.
   const checkBase = checkBaseFor(platform, input.baseUrl);
@@ -830,6 +854,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         Array.isArray(candidate)
           ? candidate
           : [
+              ...(secrets.size > 0 ? copiedMask(candidate.actions, before) : []),
               ...verifyEnvTemplates(candidate.actions, intent),
               ...verifyGestures(driver, candidate.actions),
               ...(await verifyActions(driver, candidate.actions)),
@@ -926,6 +951,8 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
           await driver.act(staged);
         } else {
           const resolved = interpolate(template, bag);
+          // La variable seule aussi : l'écran peut l'afficher sans son préfixe.
+          secrets.addAll(envValuesIn(template));
           if (usesEnv(template) && !secrets.add(resolved)) {
             warn(
               `an environment value used here is too short (${resolved.length} chars) to be redacted safely: it reaches the model provider and appears as-is`,
@@ -984,8 +1011,12 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         verified = verify();
       }
 
+      const copied =
+        secrets.size > 0
+          ? copiedMask([checks.captures, Object.values(checks.assertions)], screen)
+          : [];
       const errors = [
-        ...[...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),
+        ...[...copied, ...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),
         ...verified.errors,
       ];
       const warnings = [
