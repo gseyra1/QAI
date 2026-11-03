@@ -116,17 +116,31 @@ prints it at the end of the command ("model spend: …") whenever a cap is set.
 
 ## What reaches the provider, and what redaction misses
 
-A provider is a third party. Every rejection sent back to it — like every
-rejection written into a report — passes through `SecretRegistry`, which
-replaces known secret values with `***`.
+A provider is a third party. Everything sent to it, on generation and on
+repair, passes through `SecretRegistry` at one single point: the screen tree,
+the current address, capture values, rejections. Known secret values become
+`***`. The model never needs them: it writes `{{env.NAME}}` or `{{capture}}`,
+and QAI substitutes the value locally. Screenshots are never sent.
+
+The same registry masks reports, which end up in CI logs.
 
 "Known" is the whole limit. QAI can only redact what it knows to be a secret,
-and it knows that by origin: the value came from `{{env.NAME}}`. A token the
-application exposes on its own, never routed through the environment, stays out
-of reach.
+and it knows that by origin:
 
-Two symmetric blind spots follow from matching on substrings. Both are real,
-and neither is fixable at this layer:
+- **Generation** learns a value when the scenario names its variable in capitals
+  (`sign in with QAI_PASS`), before the first screen, or when `{{env.NAME}}` is
+  typed or asserted.
+- **Replay and repair** learn every `{{env.NAME}}` of the resolution before the
+  first gesture.
+
+A token the application exposes on its own, never routed through the
+environment, stays out of reach. So does anything the screen shows on its own
+accord, such as a customer's name in test data: use data you can send to your
+provider, or a provider you host.
+
+The registry matches the value itself and the forms an address gives it
+(`p@ss` as `p%40ss`). Two symmetric blind spots follow from matching on
+substrings. Both are real, and neither is fixable at this layer:
 
 - **A value the application reformats is no longer recognised.** `1000` typed
   into a field and redisplayed as `1 000` no longer matches, and appears in

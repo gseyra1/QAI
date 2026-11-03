@@ -24,6 +24,7 @@ import {
   interpolateLocator,
   SecretRegistry,
   usesEnv,
+  envValuesIn,
 } from './assert.ts';
 import { actionsIssue, formatIssue, platformIssue } from './consistency.ts';
 import { resolveUpload } from './files.ts';
@@ -125,6 +126,12 @@ export interface HealRequest {
   target: ResolvedTarget;
   outcome: Extract<ResolveOutcome, { found: false }>;
   snapshot: UISnapshot;
+  /**
+   * Masque les secrets connus de l'exécution. `snapshot` n'est pas masqué : un
+   * réparateur en a besoin tel quel pour agir, mais tout ce qu'il envoie à un
+   * tiers doit passer par ici.
+   */
+  redact: (text: string) => string;
 }
 
 export type HealResult =
@@ -307,6 +314,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
           target,
           outcome,
           snapshot: snapshot ?? (await driver.observe({ screenshot: true })),
+          redact: (text) => secrets.redact(text),
         });
 
         if (!healed.healed) {
@@ -345,6 +353,7 @@ async function performActions(actions: Action[], context: ActionsContext): Promi
                 target,
                 outcome: { found: false, reason: 'no-match', matches: 0 },
                 snapshot: await driver.observe({ screenshot: true }),
+                redact: (text) => secrets.redact(text),
               })
             : { healed: false as const, reason: 'no healer available' };
 
@@ -562,6 +571,9 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   // Un seul registre pour toute l'exécution : un secret saisi tôt reste masqué
   // dans les rapports des étapes suivantes, où il pourrait revenir par capture.
   const secrets = new SecretRegistry();
+  // Avant le premier geste : une réparation à l'étape 2 envoie un écran qui
+  // peut déjà afficher ce que l'étape 5 saisira.
+  secrets.addAll(envValuesIn(JSON.stringify(resolution)));
   const baseUrl = checkBaseFor(platform, input.baseUrl);
   const context: ActionsContext = {
     driver,

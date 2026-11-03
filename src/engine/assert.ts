@@ -47,6 +47,24 @@ export function usesEnv(template: string): boolean {
 }
 
 /**
+ * Les valeurs que les gabarits `{{env.NOM}}` d'un texte désignent.
+ *
+ * Connues avant le premier geste, elles sont masquées même sur un écran qui les
+ * affiche avant l'étape qui les saisit. Une variable absente n'a rien à masquer.
+ */
+export function envValuesIn(text: string): string[] {
+  const values: string[] = [];
+  PLACEHOLDER.lastIndex = 0;
+  for (const match of text.matchAll(PLACEHOLDER)) {
+    const name = match[1] as string;
+    if (!name.startsWith(ENV_PREFIX)) continue;
+    const value = process.env[name.slice(ENV_PREFIX.length)];
+    if (value !== undefined) values.push(value);
+  }
+  return values;
+}
+
+/**
  * Substitue les captures et les variables d'environnement.
  *
  * `{{env.NOM}}` est résolu **à l'exécution**, jamais à l'écriture : le fichier
@@ -88,6 +106,27 @@ export function redact(text: string, secrets: readonly string[]): string {
 }
 
 /**
+ * Ce que devient une valeur dans une adresse.
+ *
+ * L'adresse courante et les URL du réseau la portent encodée : `p@ss` y figure
+ * en `p%40ss`, et la sous-chaîne en clair n'y apparaît jamais. Trois formes,
+ * selon qui a construit l'adresse : le navigateur (`encodeURI`), le code de
+ * l'application (`encodeURIComponent`), un formulaire (`+` pour l'espace).
+ */
+function encodedForms(value: string): string[] {
+  try {
+    return [
+      encodeURI(value),
+      encodeURIComponent(value),
+      new URLSearchParams({ v: value }).toString().slice('v='.length),
+    ];
+  } catch {
+    // Une chaîne mal formée lève ici : elle reste masquée telle quelle.
+    return [];
+  }
+}
+
+/**
  * Le registre des secrets d'une exécution.
  *
  * Le masquage par vérification ne suffit pas, parce qu'un secret est un *flux*,
@@ -121,6 +160,7 @@ export class SecretRegistry {
   add(value: string): boolean {
     if (value.length <= 2) return false;
     this.#values.add(value);
+    for (const form of encodedForms(value)) this.#values.add(form);
     return true;
   }
 
@@ -129,7 +169,10 @@ export class SecretRegistry {
   }
 
   redact(text: string): string {
-    return this.#values.size === 0 ? text : redact(text, [...this.#values]);
+    if (this.#values.size === 0) return text;
+    // Le plus long d'abord : un secret qui en contient un autre ne doit pas
+    // laisser sa fin en clair.
+    return redact(text, [...this.#values].sort((a, b) => b.length - a.length));
   }
 
   get size(): number {

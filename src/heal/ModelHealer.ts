@@ -3,6 +3,7 @@ import type { HealRequest, HealResult, Healer } from '../engine/run.ts';
 import { renderTree } from '../generate/render.ts';
 import { fallbackIssue, targetIssue } from '../generate/proposal.ts';
 import { healProposalSchema } from '../generate/schema.ts';
+import { maskedProvider } from '../model/masked.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 
 export const HEAL_SYSTEM_PROMPT = `An automated test can no longer locate a UI element. You must relocate it.
@@ -89,6 +90,7 @@ export class ModelHealer implements Healer {
   }
 
   async heal(request: HealRequest): Promise<HealResult> {
+    const provider = maskedProvider(this.#provider, request.redact);
     const conversation: ModelMessage[] = [
       {
         role: 'user',
@@ -113,7 +115,7 @@ export class ModelHealer implements Healer {
     const rejections: string[] = [];
 
     for (let attempt = 0; attempt < this.#attempts; attempt += 1) {
-      const response = await this.#provider.complete({
+      const response = await provider.complete({
         system: HEAL_SYSTEM_PROMPT,
         messages: conversation,
         responseSchema: healProposalSchema(),

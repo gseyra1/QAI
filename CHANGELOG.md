@@ -3,6 +3,35 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [0.4.2] - 2026-11-03
+
+### Security
+
+- **A known secret no longer reaches the model provider.** Generation and repair
+  sent the screen tree, the current address and capture values in clear: only
+  rejections were masked. An `{{env.NAME}}` value typed into a non-password
+  field, redisplayed by the application, or carried by the address reached the
+  provider as is, on every later step. Everything sent to a provider now passes
+  through `SecretRegistry` at one single point. If you ran `qai resolve` or
+  `qai run --heal` with a third-party provider on such a value, treat that value
+  as exposed and rotate it.
+- **Secrets are known earlier.** Generation registers the variables the scenario
+  names in capitals before the first screen; replay registers every
+  `{{env.NAME}}` of the resolution before the first gesture. A value displayed
+  before the step that types it was missed.
+- **A secret in an address is recognised.** `p@ss` in `?q=p%40ss`, in the current
+  address or a network URL, was not masked, in reports either. The URL-encoded
+  forms of a value are now registered with it.
+- **A secret containing another one is masked whole**, not left with its end in
+  clear.
+- Generation warns when a value is too short to be masked, as replay already did.
+
+### Changed
+
+- `HealRequest` has a required `redact` function. A custom `Healer` must pass what
+  it sends to a third party through it: `snapshot` stays unmasked.
+- Playwright 1.64.1, development dependencies and CI actions updated.
+
 ## [0.4.1] - 2026-10-17
 
 First npm release since 0.3.0: it ships 0.4.0 and 0.3.1, never published on
@@ -269,6 +298,7 @@ Not published to npm; shipped with 0.4.1.
 - A misspelled or non-object `watchdogs` block stops the command.
 - Runtime messages in English.
 
+[0.4.2]: https://github.com/gseyra1/QAI/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/gseyra1/QAI/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/gseyra1/QAI/compare/v0.3.0...v0.4.0
 [0.3.1]: https://github.com/gseyra1/QAI/compare/d9b5430...43ceebe

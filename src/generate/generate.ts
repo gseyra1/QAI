@@ -12,6 +12,7 @@ import { resolveUpload } from '../engine/files.ts';
 import { matchNodes, matchOne } from '../engine/match.ts';
 import { suggestNearest } from '../engine/nearest.ts';
 import { supports } from '../engine/run.ts';
+import { maskedProvider } from '../model/masked.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withValue } from '../resolution/types.ts';
@@ -145,6 +146,18 @@ function asChecks(output: unknown): Pick<Proposal, 'captures' | 'assertions'> | 
 }
 
 const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+
+/**
+ * Les valeurs d'environnement que le scénario désigne par leur nom.
+ *
+ * À masquer dès le premier écran : un compte déjà affiché au chargement partait
+ * en clair, avant l'étape qui le saisit. Une variable n'est utilisable que si
+ * l'intention la nomme, et le nom s'écrit en capitales (voir la consigne).
+ */
+function namedEnvValues(scenario: Scenario): string[] {
+  const names = new Set(JSON.stringify(scenario).match(/\b[A-Z][A-Z0-9_]+\b/g) ?? []);
+  return [...names].flatMap((name) => process.env[name] ?? []);
+}
 
 /**
  * Une variable d'environnement que l'intention ne nomme pas est refusée.
@@ -669,7 +682,7 @@ function staleWarning(key: string): string {
 }
 
 export async function generateResolution(input: GenerateInput): Promise<GenerateResult> {
-  const { scenario, driver, provider } = input;
+  const { scenario, driver } = input;
   const attempts = input.attemptsPerStep ?? 5;
   const baseDir = input.baseDir ?? process.cwd();
   const platform = driver.platform;
@@ -683,9 +696,11 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   const reports: GenerateStepReport[] = [];
   const bag: Record<string, string> = {};
   // Comme au rejeu : un secret saisi via {{env.X}} ne doit fuir ni dans les
-  // rejets rapportés, ni — surtout — dans les messages renvoyés au fournisseur
-  // de modèle, qui est un tiers.
+  // rejets rapportés, ni — surtout — dans ce qui part chez le fournisseur de
+  // modèle, qui est un tiers : écrans, adresses et captures compris.
   const secrets = new SecretRegistry();
+  secrets.addAll(namedEnvValues(scenario));
+  const provider = maskedProvider(input.provider, (text) => secrets.redact(text));
   // Même base qu'au rejeu pour les vérifications d'adresse : web seulement.
   const checkBase = checkBaseFor(platform, input.baseUrl);
   // Un pilote qui ne rapporte ni réseau ni console ne peut pas prouver leur
@@ -911,7 +926,11 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
           await driver.act(staged);
         } else {
           const resolved = interpolate(template, bag);
-          if (usesEnv(template)) secrets.add(resolved);
+          if (usesEnv(template) && !secrets.add(resolved)) {
+            warn(
+              `an environment value used here is too short (${resolved.length} chars) to be redacted safely: it reaches the model provider and appears as-is`,
+            );
+          }
           await driver.act(withValue(staged, resolved));
         }
       }

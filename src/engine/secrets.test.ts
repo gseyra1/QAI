@@ -35,6 +35,29 @@ describe('SecretRegistry', () => {
     assert.equal(reg.redact('x abc y'), 'x *** y');
   });
 
+  it("masque aussi les formes qu'une adresse donne à la valeur", () => {
+    // L'adresse courante et les URL du réseau portent la valeur encodée : la
+    // sous-chaîne en clair n'y est jamais, et le secret passait.
+    const reg = new SecretRegistry();
+    reg.add('p@ss w/rd');
+    assert.equal(reg.redact(`/q?a=${encodeURIComponent('p@ss w/rd')}&b=1`), '/q?a=***&b=1');
+    assert.equal(reg.redact(`/q?a=${encodeURI('p@ss w/rd')}`), '/q?a=***');
+    assert.equal(reg.redact('/q?a=p%40ss+w%2Frd'), '/q?a=***');
+  });
+
+  it("ne laisse pas la fin d'un secret qui en contient un autre", () => {
+    const reg = new SecretRegistry();
+    reg.add('abc');
+    reg.add('abcdefgh');
+    assert.equal(reg.redact('x abcdefgh y'), 'x *** y');
+  });
+
+  it('ne casse pas sur une valeur que les fonctions d\'encodage refusent', () => {
+    const reg = new SecretRegistry();
+    assert.equal(reg.add('abc\ud800'), true);
+    assert.equal(reg.redact('x abc\ud800 y'), 'x *** y');
+  });
+
   it('enregistre le secret qu\'une assertion sur {{env.X}} révèle', () => {
     process.env['QAI_TEST_PW'] = SECRET;
     try {
