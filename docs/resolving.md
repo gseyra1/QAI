@@ -250,6 +250,19 @@ not found`. Two shapes the schema allows are refused because they prove
 nothing: a `value` on `visible`/`absent` (never compared — the reviewer would
 believe it was) and `countAtLeast 0` (true on any screen).
 
+**A capture located by position alone is read back.** `{ "role": "text", "nth": 0 }`
+counts from the top of the page. An element is there, so it passes, and on a page
+with no named container it read the cart counter instead of the price. When a
+capture has an `nth` and no name, neither its own nor a container's, the model is
+shown what it read, where, and the screen, and either points `from` elsewhere or
+resends it. Same terms as the question above: at most two model calls, and a new
+capture must pass every check again. It is asked even on the last attempt, since
+that is when these captures arrive. Without a usable answer the capture is kept,
+with a warning.
+
+A capture whose target is missing says why: several elements match, its `within`
+designates nothing, or no element matches.
+
 **A verification-only step gets no actions; a step with an intent gets at least
 one.** For a step with no intent on the platform being resolved, phase A is
 skipped: the model is only asked for captures and assertions on the current

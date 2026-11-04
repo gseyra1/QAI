@@ -48,6 +48,7 @@ import {
   frozenCapture,
   frozenFrom,
   holdsNumber,
+  locatedByPosition,
   locatorNames,
   nameLiteral,
   namedCaptures,
@@ -55,7 +56,7 @@ import {
   tautologicalCapture,
   tautologicalCheck,
 } from './proposal.ts';
-import { renderTree } from './render.ts';
+import { renderAt, renderTree } from './render.ts';
 import { checksProposalSchema, stepProposalSchema } from './schema.ts';
 
 export interface GenerateInput {
@@ -219,6 +220,26 @@ function boundedCaptures(
   return { captures: out, answered };
 }
 
+/**
+ * Ne retient de la réponse que les captures interrogées, entières : la question
+ * porte sur l'élément lu, et une réponse mal formée compte pour une absence.
+ */
+function correctedCaptures(
+  captures: Record<string, CaptureSpec>,
+  names: readonly string[],
+  output: unknown,
+): { captures: Record<string, CaptureSpec>; answered: boolean } {
+  const root = isRecord(output) ? output : {};
+  const answer = isRecord(root['captures']) ? root['captures'] : root;
+  const out = { ...captures };
+  let answered = true;
+  for (const name of names) {
+    if (captureIssue(answer[name], `capture "${name}"`) === null) out[name] = answer[name] as CaptureSpec;
+    else answered = false;
+  }
+  return { captures: out, answered };
+}
+
 const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
 
 /**
@@ -235,6 +256,21 @@ function designated(root: UINode, locator: Locator, known: Readonly<Record<strin
   } catch {
     return null;
   }
+}
+
+/**
+ * Pourquoi une capture n'a pas de cible.
+ *
+ * « introuvable ou ambiguë » ne disait pas laquelle des deux. Mesuré : le modèle
+ * usait ses cinq tours sur un conteneur qui n'existe pas.
+ */
+function missedTarget(root: UINode, from: Locator): string {
+  const matched = matchNodes(root, from).length;
+  if (matched > 1) return `${matched} elements match its target: disambiguate with "within" or "nth"`;
+  if (from.within !== undefined && matchNodes(root, from.within).length === 0) {
+    return `its "within" designates no element: use a container named in the tree, or { "contains": "..." } on the stable part of the element's own text`;
+  }
+  return `no element matches its target${suggestNearest(root, from)}`;
 }
 
 /**
@@ -476,7 +512,7 @@ function verifyChecks(
       const from = interpolateLocator(spec.from, merged);
       const node = matchOne(root, from);
       if (node === null) {
-        errors.push(`capture "${name}": target not found or ambiguous on this screen`);
+        errors.push(`capture "${name}": ${missedTarget(root, from)}`);
         continue;
       }
       const value = readCapture(node, spec);
@@ -1376,11 +1412,80 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     /**
-     * Une capture qui rapporte un texte entier : une question hors du compte des
-     * tours, jamais sans un tour restant. Seules ses bornes sont retenues, et la
-     * forme bornée repasse par toutes les vérifications ; si l'une tombe, rien ne
-     * change. Seul un modèle qui a répondu efface le doute : une panne ou des
-     * bornes refusées le laissent signalé.
+     * Une question sur des captures, hors du compte des tours. Seul ce que
+     * `retained` garde de la réponse est repris, et repasse par toutes les
+     * vérifications ; si l'une tombe, rien ne change. Deux essais : une erreur se
+     * corrige dès qu'on montre le refus. Seul un modèle qui a répondu efface le
+     * doute : une panne ou une réponse refusée le laissent signalé.
+     */
+    const settle = async (
+      question: string,
+      retained: (output: unknown) => { captures: Record<string, CaptureSpec>; answered: boolean },
+    ): Promise<boolean> => {
+      const asking: ModelMessage[] = [{ role: 'user', content: [{ type: 'text', text: question }] }];
+      for (let tries = 0; tries < 2; tries += 1) {
+        const output = await refine(asking, checksProposalSchema(platform));
+        if (output === null) return false;
+        const answer = retained(output);
+        if (JSON.stringify(answer.captures) === JSON.stringify(checks.captures)) return answer.answered;
+        const retried = assess(after, { captures: answer.captures, assertions: checks.assertions });
+        const accepted = retried.outcome.errors.length === 0 ? retried : retried.kept;
+        if (accepted !== undefined) {
+          const notes = [...(outcome.notes ?? []), ...(accepted.outcome.notes ?? [])];
+          ({ checks, outcome } = accepted);
+          outcome = { ...outcome, notes };
+          return true;
+        }
+        asking.push(
+          { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(output) }] },
+          { role: 'user', content: [{ type: 'text', text: retryMessage(retried.outcome.errors) }] },
+        );
+      }
+      return false;
+    };
+
+    /**
+     * Une capture située par sa seule position : le modèle voit ce qu'elle a lu,
+     * et l'écran. Sans cette relecture, l'erreur ne se voit qu'à l'étape qui
+     * compare, où plus rien ne la corrige. Posée même au dernier tour : c'est là
+     * que ces captures arrivent, une fois les autres formes refusées.
+     */
+    const placed = after;
+    const positioned = Object.keys(checks.captures).flatMap((name) => {
+      const spec = checks.captures[name] as CaptureSpec;
+      const value = outcome.produced[name];
+      if (value === undefined || !locatedByPosition(spec)) return [];
+      const node = designated(placed.root, spec.from, { ...bag, ...outcome.produced });
+      return [{ name, read: `"${value}"${node === null ? '' : ` from ${renderAt(placed.root, node)}`}` }];
+    });
+    if (positioned.length > 0) {
+      const wanted = (name: string): string => JSON.stringify(step.capture?.[name]);
+      const answered = await settle(
+        [
+          'Before these captures are accepted:',
+          ...positioned.map(
+            ({ name, read }) =>
+              `- capture "${name}" is located by its position alone, and read ${read}; it is meant to hold ${wanted(name)}: if that is not this value, point "from" at the element that shows it; if it is, resend it unchanged`,
+          ),
+          '',
+          `Current screen (${placed.location}):`,
+          '',
+          renderTree(placed.root),
+          '',
+          `What you proposed: ${JSON.stringify({ captures: checks.captures })}`,
+        ].join('\n'),
+        (output) => correctedCaptures(checks.captures, positioned.map(({ name }) => name), output),
+      );
+      if (!answered) {
+        for (const { name, read } of positioned) {
+          warn(`capture "${name}" is located by its position alone and reads ${read}: nothing confirmed it is ${wanted(name)}`);
+        }
+      }
+    }
+
+    /**
+     * Une capture qui rapporte un texte entier : une question, jamais sans un tour
+     * restant, dont seules les bornes sont retenues.
      */
     const screen = after;
     const produced = outcome.produced;
@@ -1397,41 +1502,10 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         (name) =>
           `- capture "${name}" read the whole text "${produced[name]}", and it is meant to hold ${JSON.stringify(step.capture?.[name])}: if that is only part of this text, add "after" and/or "before", the fixed words around the value; if it is the whole text, resend it unchanged`,
       );
-      const asking: ModelMessage[] = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: ['Before these captures are accepted:', ...asked, '', `What you proposed: ${JSON.stringify({ captures: checks.captures })}`].join('\n'),
-            },
-          ],
-        },
-      ];
-      // Deux essais : une borne mal recopiée se corrige dès qu'on montre le refus,
-      // et sans elle la capture reste entière et la suite compare une phrase.
-      for (let tries = 0; tries < 2; tries += 1) {
-        const output = await refine(asking, checksProposalSchema(platform));
-        if (output === null) break;
-        const bounded = boundedCaptures(checks.captures, loose, output);
-        if (JSON.stringify(bounded.captures) === JSON.stringify(checks.captures)) {
-          settled = bounded.answered;
-          break;
-        }
-        const retried = assess(after, { captures: bounded.captures, assertions: checks.assertions });
-        const retained = retried.outcome.errors.length === 0 ? retried : retried.kept;
-        if (retained !== undefined) {
-          const notes = [...(outcome.notes ?? []), ...(retained.outcome.notes ?? [])];
-          ({ checks, outcome } = retained);
-          outcome = { ...outcome, notes };
-          settled = true;
-          break;
-        }
-        asking.push(
-          { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(output) }] },
-          { role: 'user', content: [{ type: 'text', text: retryMessage(retried.outcome.errors) }] },
-        );
-      }
+      settled = await settle(
+        ['Before these captures are accepted:', ...asked, '', `What you proposed: ${JSON.stringify({ captures: checks.captures })}`].join('\n'),
+        (output) => boundedCaptures(checks.captures, loose, output),
+      );
     }
     if (!settled) {
       for (const name of loose) {

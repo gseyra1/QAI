@@ -875,21 +875,26 @@ steps:
   const wrongPrice = { from: { role: 'text', nth: 0 }, extract: 'number' };
   const rightPrice = { from: { role: 'text', name: { contains: '€' } }, extract: 'number' };
 
-  async function generate(price: unknown, outputs: unknown[]) {
+  /** `read` : les réponses à la relecture de la capture, quand elle est posée. */
+  async function generate(price: unknown, outputs: unknown[], read: unknown[] = [], attemptsPerStep = 5) {
     const driver = new PlaywrightWebDriver(() => chromium.launch());
     const provider = new ScriptedProvider([
       search,
       { actions: [open], captures: { prix: price } },
+      ...read,
       add,
       ...outputs,
     ]);
     try {
       await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
-      return { result: await generateResolution({ scenario, driver, provider, baseUrl }), provider };
+      return { result: await generateResolution({ scenario, driver, provider, baseUrl, attemptsPerStep }), provider };
     } finally {
       await driver.dispose();
     }
   }
+
+  /** Le modèle maintient sa capture : la relecture n'y a rien changé. */
+  const maintained = [{ captures: { prix: wrongPrice } }];
 
   it('refuse le littéral recopié après `expected X, observed Y`, et l\'étape échoue', async () => {
     const { result, provider } = await generate(wrongPrice, [
@@ -898,7 +903,7 @@ steps:
       { assertions: { [KEY]: { check: 'textEquals', target: total, value: '129,00 €' } } },
       { assertions: { [KEY]: compared } },
       { assertions: { [KEY]: { check: 'numberEquals', target: total, value: '129' } } },
-    ]);
+    ], maintained);
 
     assert.equal(result.status, 'incomplete', JSON.stringify(result.steps));
     const report = result.steps[3];
@@ -907,7 +912,7 @@ steps:
     assert.equal(result.resolution.steps['s4'], undefined, 'rien de versionné');
     assert.match(report?.rejections[0] ?? '', /expected 0, observed 129/);
     assert.match(report?.rejections[1] ?? '', /the scenario compares against \{\{prix\}\}, which holds "0", but this check does not use it/);
-    assert.match(lastText(provider.requests[6]), /a literal copied from the screen is not the fix/);
+    assert.match(lastText(provider.requests[7]), /a literal copied from the screen is not the fix/);
   });
 
   it('refuse aussi de lâcher la comparaison pour un `visible`', async () => {
@@ -918,10 +923,69 @@ steps:
       { assertions: shown },
       { assertions: shown },
       { assertions: shown },
-    ]);
+    ], maintained);
 
     assert.equal(result.status, 'incomplete', JSON.stringify(result.steps));
     assert.equal(result.resolution.steps['s4'], undefined);
+  });
+
+  it('montre au modèle ce qu\'une capture située par sa position a lu, et retient sa correction', async () => {
+    const { result, provider } = await generate(
+      wrongPrice,
+      [{ actions: [cart], assertions: { [KEY]: compared } }],
+      [{ captures: { prix: rightPrice } }],
+    );
+
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    const asked = firstText(provider.requests[2]);
+    assert.match(asked, /capture "prix" is located by its position alone, and read "0" from text "0" #cart-count, inside link "Panier 0"/);
+    assert.match(asked, /it is meant to hold "le prix affiché"/);
+    assert.match(asked, /text "129,00 €" #product-price/, 'avec l\'écran sous les yeux');
+    assert.deepEqual(result.resolution.steps['s2']?.captures?.['prix'], rightPrice);
+    assert.deepEqual(result.steps[1]?.warnings, []);
+    assert.deepEqual(result.resolution.steps['s4']?.assertions?.[KEY], compared);
+  });
+
+  it('pose la question même au dernier tour : elle est hors du compte', async () => {
+    const { result, provider } = await generate(
+      wrongPrice,
+      [{ actions: [cart], assertions: { [KEY]: compared } }],
+      [{ captures: { prix: rightPrice } }],
+      1,
+    );
+
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.equal(result.steps[1]?.attempts, 1);
+    assert.equal(provider.requests.length, 5);
+  });
+
+  it('garde la capture et le signale quand aucune réponse ne tranche', async () => {
+    const lost = { from: { role: 'text', within: { role: 'group', name: 'Fiche' } }, extract: 'number' };
+    const { result } = await generate(
+      wrongPrice,
+      [{ actions: [cart], assertions: { [KEY]: compared } }, ...Array.from({ length: 4 }, () => ({ assertions: { [KEY]: compared } }))],
+      [{ captures: { prix: lost } }, { captures: { prix: lost } }],
+    );
+
+    assert.deepEqual(result.steps[1]?.warnings, [
+      `capture "prix" is located by its position alone and reads "0" from text "0" #cart-count, inside link "Panier 0": nothing confirmed it is "le prix affiché"`,
+    ]);
+    assert.deepEqual(result.resolution.steps['s2']?.captures?.['prix'], wrongPrice);
+  });
+
+  it('dit pourquoi la cible d\'une capture manque', async () => {
+    const stuck = async (from: unknown): Promise<string> => {
+      const price = { from, extract: 'number' };
+      const { result } = await generate(price, [], Array.from({ length: 4 }, () => ({ captures: { prix: price } })));
+      return result.steps[1]?.rejections[0] ?? '';
+    };
+
+    assert.match(await stuck({ role: 'text' }), /capture "prix": 3 elements match its target: disambiguate/);
+    assert.match(
+      await stuck({ role: 'text', nth: 0, within: { role: 'group', name: 'Chaise de bureau' } }),
+      /capture "prix": its "within" designates no element: use a container named in the tree, or \{ "contains": "..." \} on the stable part of the element's own text/,
+    );
+    assert.match(await stuck({ role: 'text', name: 'Prix' }), /capture "prix": no element matches its target/);
   });
 
   it('résout la même étape quand la capture a lu le prix', async () => {

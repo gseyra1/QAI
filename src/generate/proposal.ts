@@ -736,6 +736,20 @@ export function frozenFrom(
 }
 
 /**
+ * Une capture située par sa seule position : un `nth`, et aucun nom, ni le sien
+ * ni celui d'un conteneur.
+ *
+ * Mesuré avec DeepSeek : sur une fiche sans conteneur nommé, et avec la consigne
+ * de ne pas nommer une donnée, le prix finit en `{ role: text, nth: 0 }`. Accepté,
+ * puisqu'un élément existe, et ce `nth` compte depuis le haut de la page : il lit
+ * le compteur du panier. Rien ne relie ce locator à ce que la capture doit lire,
+ * et le modèle ne voit jamais la valeur obtenue.
+ */
+export function locatedByPosition(spec: CaptureSpec): boolean {
+  return spec.from.nth !== undefined && locatorNames(spec.from as Record<string, unknown>).length === 0;
+}
+
+/**
  * Une capture qui rapporte tout un texte de plusieurs mots.
  *
  * Mesuré : avec la consigne seule, le modèle n'a jamais borné « le numéro de

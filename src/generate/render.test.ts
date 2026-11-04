@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { UINode } from '../driver/types.ts';
-import { renderTree } from './render.ts';
+import { renderAt, renderTree } from './render.ts';
 import { checksMessage, stepMessage } from './prompt.ts';
 
 function node(partial: Partial<UINode> & Pick<UINode, 'role'>): UINode {
@@ -54,5 +54,16 @@ describe('messages de génération', () => {
       availableCaptures: {},
     });
     assert.match(checks, /- commande: le numéro de commande/);
+  });
+});
+
+describe('renderAt', () => {
+  it('rend l\'élément et ses conteneurs nommés, du plus proche au plus lointain', () => {
+    const counter = node({ role: 'text', name: '0', testId: 'cart-count' });
+    const link = node({ role: 'link', name: 'Panier 0', children: [counter] });
+    const root = node({ role: 'group', children: [node({ role: 'group', name: 'En-tête', children: [link] })] });
+
+    assert.equal(renderAt(root, counter), 'text "0" #cart-count, inside link "Panier 0", inside group "En-tête"');
+    assert.equal(renderAt(root, root), 'group');
   });
 });

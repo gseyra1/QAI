@@ -15,6 +15,18 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   step that gives the capture's value). A `visible`, or any check without
   `{{name}}` in its value or target, is refused the same way, so an expectation
   that cannot be written with its capture now fails at that step.
+- **A capture located by position alone is read back to the model.** `{ "role":
+  "text", "nth": 0 }` counts from the top of the page: on a page with no named
+  container, the price read the cart counter and nothing said so. A capture with an
+  `nth` and no name is shown to the model with what it read, where, and the screen.
+  At most two extra model calls per step, on top of the attempts; a new capture must
+  pass every check again. It corrected the capture in 6 of 6 runs.
+- **A capture whose target is missing says why**: several matches, a `within` that
+  designates nothing, or no match, instead of "target not found or ambiguous", which
+  used up the attempts. With the read-back, the checkout journey resolves 20 times
+  out of 20, up from 11 of 20 and 4 of 20 on the same two ports, with no literal left
+  in place of the capture. Replay on another price is green in 10 of 20: the other
+  runs locate the capture by its value, which is reported as a warning.
 
 ## [0.5.0] - 2026-11-04
 
