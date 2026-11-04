@@ -736,6 +736,19 @@ export function frozenFrom(
 }
 
 /**
+ * La partie fixe d'un texte dont on lit un nombre : « € » dans « 129,00 € ».
+ *
+ * Sert à situer une capture autrement que par sa valeur. Le plus long des morceaux
+ * qui restent une fois les nombres retirés, sans chiffre, ou `null` s'il n'en reste
+ * aucun : « 129 » n'a pas de partie fixe.
+ */
+export function stableFragment(text: string): string | null {
+  const parts = numberTokens(text).reduce((rest, token) => rest.replace(token, '\0'), text).split('\0');
+  const kept = parts.map((part) => part.trim()).filter((part) => part !== '' && !holdsNumber(part));
+  return kept.reduce<string | null>((best, part) => (best === null || part.length > best.length ? part : best), null);
+}
+
+/**
  * Une capture située par sa seule position : un `nth`, et aucun nom, ni le sien
  * ni celui d'un conteneur.
  *

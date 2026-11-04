@@ -23,10 +23,16 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   pass every check again. It corrected the capture in 6 of 6 runs.
 - **A capture whose target is missing says why**: several matches, a `within` that
   designates nothing, or no match, instead of "target not found or ambiguous", which
-  used up the attempts. With the read-back, the checkout journey resolves 20 times
-  out of 20, up from 11 of 20 and 4 of 20 on the same two ports, with no literal left
-  in place of the capture. Replay on another price is green in 10 of 20: the other
-  runs locate the capture by its value, which is reported as a warning.
+  used up the attempts.
+- **A number captured by the text that holds it is rewritten to the fixed part of
+  that text.** `{ "name": "129,00 €" }` reads the right price today and nothing once
+  it changes; `{ "contains": "€" }` is kept only if it designates the same element
+  and reads the same number on that screen, and it is a `note`. Asking the model did
+  not fix this one (13 of 20 runs kept the value). A capture with no fixed part, such
+  as a product name, is asked about once instead, and a warning remains if the model
+  keeps it. On the checkout journey, all of this together: resolved 20 of 20, up from
+  11 and 4 of 20 on the same two ports, and green on replay at another price 20 of
+  20, up from 4 and 0 of 20, for about 19 model calls per resolved run, up from 18.
 
 ## [0.5.0] - 2026-11-04
 

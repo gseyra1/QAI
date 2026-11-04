@@ -661,18 +661,39 @@ steps:
     return { result, rejections: result.steps[0]?.rejections ?? [], warnings: result.steps[0]?.warnings ?? [] };
   }
 
-  for (const [label, spec] of [
-    ['texte, nom exact', { from: { role: 'text', name: '39,00 €' }, extract: 'text' }],
-    ['nombre, nom exact', { from: { role: 'text', name: '39,00 €' }, extract: 'number' }],
-    ['nombre, fragment qui porte le nombre', { from: { role: 'text', name: { contains: '39,00' } }, extract: 'number' }],
+  it('signale une capture trouvée par la valeur qu\'elle lit, sans la refuser', async () => {
+    const { result, rejections, warnings } = await capture({ from: { role: 'text', name: '39,00 €' }, extract: 'text' });
+    assert.equal(result.status, 'complete', rejections.join(' | '));
+    assert.doesNotMatch(rejections.join(' | '), /very value/);
+    assert.match(warnings.join(' | '), /capture "prix" is located by the very value it reads .*: when that value changes, replay reports "target not found"/);
+  });
+
+  for (const [label, name] of [
+    ['nom exact', '39,00 €'],
+    ['fragment qui porte le nombre', { contains: '39,00' }],
   ] as const) {
-    it(`signale une capture trouvée par la valeur qu'elle lit, sans la refuser (${label})`, async () => {
-      const { result, rejections, warnings } = await capture(spec);
-      assert.equal(result.status, 'complete', rejections.join(' | '));
-      assert.doesNotMatch(rejections.join(' | '), /very value/);
-      assert.match(warnings.join(' | '), /capture "prix" is located by the very value it reads .*: when that value changes, replay reports "target not found"/);
+    it(`ramène un nombre trouvé par sa valeur à la partie fixe de son texte (${label})`, async () => {
+      const { result, warnings } = await capture({ from: { role: 'text', name }, extract: 'number' });
+      assert.equal(result.status, 'complete');
+      assert.deepEqual(result.resolution.steps['s1']?.captures?.['prix']?.from, { role: 'text', name: { contains: '€' } });
+      assert.deepEqual(warnings, []);
+      assert.match(result.steps[0]?.notes?.[0] ?? '', /rewritten to \{ "contains": "€" \}/);
     });
   }
+
+  it('ne réécrit pas un nombre quand la partie fixe de son texte est ambiguë', async () => {
+    const shelf = node('group', 'page', [node('text', '39,00 €'), node('text', '12,00 €'), BUTTON]);
+    const spec = { from: { role: 'text', name: '39,00 €' }, extract: 'number' };
+    const result = await generateResolution({
+      scenario: CAPTURED,
+      driver: new FakeDriver('http://app.test/', shelf).startsBlank(),
+      provider: new ScriptedProvider([{ actions: [CLICK], captures: { prix: spec } }, { captures: { prix: spec } }]),
+    });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.resolution.steps['s1']?.captures?.['prix'], spec);
+    assert.match(result.steps[0]?.warnings.join(' | ') ?? '', /is located by the very value it reads/);
+  });
 
   it('ne signale ni une capture située par sa structure, ni par un libellé partiel', async () => {
     const structural = { from: { role: 'text', within: { role: 'group', name: 'Total' } }, extract: 'number' };

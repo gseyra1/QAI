@@ -144,6 +144,14 @@ first price change breaks it. Applies when the locator's name fully determines
 the value read; a partial label (`contains: "Référence"`) reads something and
 is not reported.
 
+A number gets a rewrite when it can: `{ "name": "129,00 €" }` becomes
+`{ "contains": "€" }`, the longest part of the text without a digit, provided that
+fragment designates the same element and reads the same number on this screen. It
+is a `note`. Anything else, a capture with no fixed part such as a product name, or
+a fragment that is ambiguous, is asked about once: the model shows what stays, or
+resends it, and the warning remains if it does. The question comes with the screen,
+on the same terms as the read-back below.
+
 Why not refuse: measured with a real model, refusing made things worse. It
 dropped the value for a `visible` on a structural target — green when the
 displayed status was wrong — captured the wrong element, or stopped converging
