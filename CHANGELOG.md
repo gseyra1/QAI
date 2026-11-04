@@ -3,6 +3,45 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [0.5.0] - 2026-11-04
+
+### Added
+
+- **A capture can read a value inside a sentence.** `after` and `before` keep
+  what stands between two literals: "Order CMD-1042 is confirmed" reads
+  `CMD-1042`. A missing bound fails the capture rather than returning the whole
+  sentence. Resolution format v4, stamped only on files that use them; 0.4.x
+  refuses those files, everything else stays readable.
+- **`qai resolve --strict`.** A warning writes nothing and exits 1. What QAI
+  rewrote and checked again is now a `note`, not a warning, and does not stop it.
+  A flag only: `strict` in `qai.config.json` speaks of repairs at replay.
+
+### Changed
+
+- **An action target whose name holds a number is reported** ("Panier 1" is gone
+  when the cart changes).
+- **A capture reading a whole text of two words or more is asked about once**, with
+  its description: the prompt alone never produced a bound (0 of 3 runs). At most
+  two extra model calls per step, and it cannot make a step worse: only the bounds
+  are taken from the answer, and they must pass every check again.
+- **A capture frozen in a target name, or in a `from`, is rewritten to `{{name}}`**,
+  as it already was in a value. It was green at resolving and red on replay (3 of
+  3 runs).
+- A literal value is now rewritten even when the target already uses the capture.
+- Two captures of equal value are asked about instead of being picked by phrase
+  order. A number's length is measured on the number, not on the captured text.
+- When a question asked before acting gets a refused answer, the questioned
+  proposal is kept at once: the turns left go to repairing the checks.
+
+### Fixed
+
+- **A target name emptied by an empty capture fails the check**, instead of
+  matching every node. A red journey turned into an unconditional green.
+- An assertion or a capture whose target is named by the capture it uses is no
+  longer reported as "located by the very value": the name follows the value.
+- A check comparing a capture with the element it was just read from is reported:
+  it cannot fail.
+
 ## [0.4.2] - 2026-11-04
 
 ### Security
@@ -313,6 +352,7 @@ Not published to npm; shipped with 0.4.1.
 - A misspelled or non-object `watchdogs` block stops the command.
 - Runtime messages in English.
 
+[0.5.0]: https://github.com/gseyra1/QAI/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/gseyra1/QAI/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/gseyra1/QAI/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/gseyra1/QAI/compare/v0.3.0...v0.4.0

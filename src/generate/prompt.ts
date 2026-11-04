@@ -46,6 +46,10 @@ Rules for captures:
   its label or container.
 - An amount, a total, a quantity are captured with "extract": "number",
   not "text": that is what makes them comparable.
+- A capture reads a whole element. When the value sits inside a longer text,
+  add "after" and/or "before": the fixed words around it, copied exactly, never
+  the value. On "Order CMD-1042 is confirmed", to read the reference:
+  { "from": ..., "extract": "text", "after": "Order ", "before": " is confirmed" }.
 
 Rules for assertions:
 - The key is the exact text of the assertion, copied from the scenario.
@@ -204,6 +208,8 @@ export function checksMessage(input: {
   rejected?: string[];
   /** Les questions sur ces vérifications, quand rien n'y a été refusé. */
   questioned?: string[];
+  /** Ce qu'il faudrait renvoyer tel quel : ce tour-ci ne l'a pas sous les yeux. */
+  proposal?: string;
 }): string {
   const parts = [
     input.verificationOnly === true
@@ -234,6 +240,7 @@ export function checksMessage(input: {
   if (input.questioned !== undefined && input.questioned.length > 0) {
     parts.push('', 'The captures and assertions proposed with the actions hold, but before they are accepted:');
     for (const question of input.questioned) parts.push(`- ${question}`);
+    if (input.proposal !== undefined) parts.push('', `What you proposed: ${input.proposal}`);
     parts.push('', 'Propose them again, all of them: change what needs changing, resend the rest unchanged.');
   }
   return parts.join('\n');

@@ -1,7 +1,8 @@
 import type { Action, Driver, Locator, UINode } from '../driver/types.ts';
 import {
   evaluateCheck,
-  extractValue,
+  captureSource,
+  readCapture,
   interpolate,
   interpolateLocator,
   SecretRegistry,
@@ -20,7 +21,7 @@ import { supports } from '../engine/run.ts';
 import { maskedProvider } from '../model/masked.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 import type { Check, CaptureSpec, Resolution, StepResolution } from '../resolution/types.ts';
-import { isObservationCheck, targetOf, valueOf, withValue } from '../resolution/types.ts';
+import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import {
   checkBaseFor,
   isAbsoluteUrl,
@@ -44,6 +45,12 @@ import {
   checkIssue,
   fallbackIssue,
   frozenCapture,
+  frozenFrom,
+  holdsNumber,
+  locatorNames,
+  nameLiteral,
+  namedCaptures,
+  readsWholeText,
   tautologicalCapture,
   tautologicalCheck,
 } from './proposal.ts';
@@ -88,6 +95,12 @@ export interface GenerateStepReport {
    * « attempt rejected » ne décrive jamais une proposition retenue.
    */
   warnings: string[];
+  /**
+   * Ce que QAI a réécrit puis revérifié (`{{reference}}` à la place de la valeur
+   * du jour). Dit à la relecture, mais ce n'est pas un doute : `--strict` ne
+   * s'y arrête pas.
+   */
+  notes?: string[];
 }
 
 export interface GenerateResult {
@@ -153,7 +166,137 @@ function asChecks(output: unknown): Pick<Proposal, 'captures' | 'assertions'> | 
   };
 }
 
+/**
+ * Les noms de cible qui portent un nombre : « Panier 1 » cesse d'exister dès que
+ * le panier change.
+ *
+ * Signalés, pas renvoyés au modèle : « Étape 2 » ou « Top 10 » sont des libellés,
+ * et adopter une cible réécrite n'est pas sûr. Le même élément à l'écran ne garantit
+ * pas le même geste (`nth` ne compte pas comme le pilote, un fragment devient
+ * ambigu après un geste antérieur). Une donnée sans chiffre (« Chaise de bureau »)
+ * ne se détecte pas ici.
+ */
+function numberedTargets(actions: Action[]): string[] {
+  const names = actions.flatMap((action) => {
+    const target = targetOf(action);
+    return target === null ? [] : locatorNames(target.primary as Record<string, unknown>);
+  });
+  return [...new Set(names.filter(holdsNumber))];
+}
+
+/**
+ * Ne retient de la réponse que les bornes des captures interrogées.
+ *
+ * La question porte sur une capture : elle ne rouvre pas les vérifications déjà
+ * prouvées de l'étape, et aucune réponse ne peut la faire échouer.
+ */
+function boundedCaptures(
+  captures: Record<string, CaptureSpec>,
+  names: readonly string[],
+  output: unknown,
+): { captures: Record<string, CaptureSpec>; answered: boolean } {
+  // Sans décodage contraint, un modèle répond parfois par les captures seules.
+  const root = isRecord(output) ? output : {};
+  const answer = isRecord(root['captures']) ? root['captures'] : root;
+  const out = { ...captures };
+  let answered = true;
+  for (const name of names) {
+    const spec = answer[name];
+    if (!isRecord(spec)) {
+      answered = false;
+      continue;
+    }
+    const usable = (bound: unknown): bound is string => typeof bound === 'string' && bound.trim() !== '';
+    const { after, before } = spec;
+    if (!usable(after) && !usable(before)) continue;
+    out[name] = {
+      ...(captures[name] as CaptureSpec),
+      ...(usable(after) ? { after } : {}),
+      ...(usable(before) ? { before } : {}),
+    };
+  }
+  return { captures: out, answered };
+}
+
 const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+
+/**
+ * Le masque recopié dans une proposition, encodé compris.
+ *
+ * Masquer l'écran donne au modèle un `[secret]` qu'il recopie volontiers : saisi
+ * dans un champ, et versionné dans une adresse (`compte?jeton=[secret]`), il
+ * ferait passer la génération sur une valeur qui n'existe pas.
+ */
+/** L'élément qu'un locator désigne, ou `null` : une capture vide le rend indéfini. */
+function designated(root: UINode, locator: Locator, known: Readonly<Record<string, string>>): UINode | null {
+  try {
+    return matchOne(root, interpolateLocator(locator, known));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Une vérification qui compare une capture au nœud qu'elle vient de lire.
+ *
+ * Elle ne peut pas échouer : le nœud est comparé à lui-même, ou retrouvé par sa
+ * propre valeur. Corriger le littéral n'en fait pas une preuve, donc elle reste un
+ * doute, réécrite ou non.
+ */
+function selfComparisons(
+  checks: Pick<Proposal, 'captures' | 'assertions'>,
+  expectations: readonly string[],
+  root: UINode,
+  known: Readonly<Record<string, string>>,
+): string[] {
+  return expectations.flatMap((key) => {
+    const check: unknown = checks.assertions[key];
+    if (!isRecord(check) || !isRecord(check['target'])) return [];
+    const written = JSON.stringify(check);
+    const target = designated(root, check['target'] as Locator, known);
+    const used = Object.entries(checks.captures).find(
+      ([name, spec]) =>
+        written.includes(`{{${name}}}`) &&
+        isRecord(spec) &&
+        isRecord(spec['from']) &&
+        target !== null &&
+        target === designated(root, spec.from, known),
+    );
+    return used === undefined
+      ? []
+      : [`assertion "${key}" compares {{${used[0]}}} with the element it was just read from: it cannot fail`];
+  });
+}
+
+/** Les captures figées dans le `from` d'une capture dont la description les nomme. */
+function frozenSources(
+  captures: Record<string, CaptureSpec>,
+  step: Step,
+  bag: Readonly<Record<string, string>>,
+  produced: Readonly<Record<string, string>>,
+): { captures: Record<string, CaptureSpec>; rewritten: boolean; notes: string[]; warnings: string[] } {
+  const out = { ...captures };
+  // Les captures se lisent dans l'ordre : seules les précédentes existent au rejeu.
+  const known: Record<string, string> = { ...bag };
+  const notes: string[] = [];
+  const warnings: string[] = [];
+  let rewritten = false;
+  for (const [name, spec] of Object.entries(captures)) {
+    const description = step.capture?.[name];
+    if (typeof description === 'string' && isRecord(spec) && isRecord(spec['from'])) {
+      const frozen = frozenFrom(description, spec.from, known);
+      if (frozen.note !== undefined) {
+        out[name] = { ...spec, from: frozen.from };
+        notes.push(frozen.note);
+        rewritten = true;
+      }
+      if (frozen.warning !== undefined) warnings.push(frozen.warning);
+    }
+    const read = produced[name];
+    if (read !== undefined) known[name] = read;
+  }
+  return { captures: out, rewritten, notes, warnings };
+}
 
 /**
  * Le masque recopié dans une proposition, encodé compris.
@@ -288,6 +431,7 @@ interface CheckOutcome {
   produced: Record<string, string>;
   /** Rapportés à l'utilisateur si la proposition est retenue, jamais rendus au modèle. */
   warnings?: string[];
+  notes?: string[];
   /**
    * `errors` ne sont que des questions : la proposition tient, et `kept` est
    * ce qui sera retenu si la réponse fait pire.
@@ -334,13 +478,29 @@ function verifyChecks(
         errors.push(`capture "${name}": target not found or ambiguous on this screen`);
         continue;
       }
-      const value = extractValue(node, spec.extract);
+      const value = readCapture(node, spec);
       if (value === null) {
-        errors.push(`capture "${name}": unreadable value with extract="${spec.extract}"`);
+        errors.push(
+          spec.after === undefined && spec.before === undefined
+            ? `capture "${name}": unreadable value with extract="${spec.extract}"`
+            : `capture "${name}": nothing readable between "after" and "before" in ${JSON.stringify(captureSource(node, spec))}: copy the fixed words around the value exactly`,
+        );
         continue;
       }
       learnDerived(secrets, node, value);
-      if (tautologicalCapture(from, spec.extract, node, value)) {
+      for (const anchor of [spec.after, spec.before]) {
+        if (anchor !== undefined && holdsNumber(anchor)) {
+          warnings.push(
+            `capture "${name}" is bounded by "${anchor}", which holds a number: if it is data, the bound is gone on replay`,
+          );
+        } else if (anchor !== undefined && Object.values(bag).some((known) => known.trim().length >= 3 && anchor.includes(known))) {
+          warnings.push(
+            `capture "${name}" is bounded by "${anchor}", which holds the value of an earlier capture: the bound is gone on replay`,
+          );
+        }
+      }
+      // Un `from` nommé par une capture suit la valeur au rejeu.
+      if (namedCaptures(nameLiteral(spec.from) ?? '').length === 0 && tautologicalCapture(from, spec.extract, node, value)) {
         warnings.push(
           `capture "${name}" is located by the very value it reads ("${value}"): when that value changes, replay reports "target not found" instead of reading the new one`,
         );
@@ -430,6 +590,10 @@ function tautological(
   root: UINode,
   bag: Readonly<Record<string, string>>,
 ): boolean {
+  // Une cible nommée par la capture même qu'on compare suit la valeur au rejeu :
+  // ce que le signalement redoute, un nom figé, n'existe pas ici.
+  const value = String(check.value);
+  if (namedCaptures(value).length > 0 && nameLiteral(check.target)?.includes(value) === true) return false;
   const target = interpolateLocator(check.target, bag);
   const expected = interpolate(String(check.value), bag);
   return tautologicalCheck(check.check, target, expected, matchNodes(root, target));
@@ -627,11 +791,13 @@ function frozenLiterals(
   rewritten: boolean;
   errors: string[];
   warnings: string[];
+  notes: string[];
   questions: { key: string; question: string; warning: string }[];
 } {
   const out: Record<string, Check> = { ...assertions };
   const errors: string[] = [];
   const warnings: string[] = [];
+  const notes: string[] = [];
   const questions: { key: string; question: string; warning: string }[] = [];
   let rewritten = false;
   for (const key of expectations) {
@@ -641,6 +807,7 @@ function frozenLiterals(
       out[key] = outcome.check as unknown as Check;
       rewritten = true;
     }
+    if (outcome.note !== undefined) notes.push(outcome.note);
     if (outcome.error !== undefined) errors.push(outcome.error);
     if (outcome.question !== undefined) {
       questions.push({ key, question: outcome.question, warning: outcome.warning ?? '' });
@@ -648,7 +815,7 @@ function frozenLiterals(
       warnings.push(outcome.warning);
     }
   }
-  return { assertions: out, rewritten, errors, warnings, questions };
+  return { assertions: out, rewritten, errors, warnings, notes, questions };
 }
 
 /**
@@ -793,6 +960,15 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     const challenged = new Set<string>();
     const expectations = expectationsOf(step);
 
+    /** Un tour de précision : une panne n'y coûte rien, la proposition tient déjà. */
+    const refine = async (messages: ModelMessage[], responseSchema: Record<string, unknown>): Promise<unknown> => {
+      try {
+        return (await provider.complete({ system: systemPrompt(platform), messages, responseSchema })).output;
+      } catch {
+        return null;
+      }
+    };
+
     const conversation: ModelMessage[] = [
       {
         role: 'user',
@@ -894,6 +1070,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
 
       rejections.push(...errors);
+      // Une réponse refusée rend la main : les tours restants servent à réparer
+      // les vérifications, pas à insister sur une question.
+      if (questioned !== null) break;
       conversation.push(
         { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(response.output) }] },
         { role: 'user', content: [{ type: 'text', text: retryMessage(errors) }] },
@@ -909,6 +1088,10 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       reports.push({ stepId: step.id, intent, status: 'failed', attempts: used, rejections, warnings });
       aborted = true;
       continue;
+    }
+
+    for (const name of numberedTargets(proposal.actions)) {
+      warn(`target "${name}" holds a number: if it is data, replay will not find it; if so, use { "contains": "..." } on its stable part`);
     }
 
     /**
@@ -981,11 +1164,10 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     } => {
       // La base des vérifications, pas celle des navigations : réécrire une
       // adresse que le rejeu ne résoudra pas la rendrait fausse partout.
-      const portable = portableChecks(
-        candidate.assertions,
-        checkBase,
-        platform === 'web' ? warn : () => {},
-      );
+      const portableWarnings: string[] = [];
+      const portable = portableChecks(candidate.assertions, checkBase, (warning) => {
+        if (platform === 'web') portableWarnings.push(warning);
+      });
       let checks = { captures: candidate.captures, assertions: portable.assertions };
       const agnostic = [
         ...screenAgnosticChecks(
@@ -1002,11 +1184,14 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       // le reste — c'est la forme versionnée qui doit passer ici.
       const known = { ...bag, ...verified.produced };
       const frozen = frozenLiterals(checks.assertions, expectations, known);
-      if (frozen.rewritten) {
-        checks = { captures: checks.captures, assertions: frozen.assertions };
+      const sources = frozenSources(checks.captures, step, bag, verified.produced);
+      if (frozen.rewritten || sources.rewritten) {
+        checks = { captures: sources.captures, assertions: frozen.assertions };
         verified = verify();
       }
+      if (verified.errors.length === 0) secrets.addAll(envValuesIn(JSON.stringify(checks)));
 
+      const notes = [...sources.notes, ...frozen.notes].map((note) => secrets.redact(note));
       const copied = guardsMask() ? copiedMask([checks.captures, Object.values(checks.assertions)]) : [];
       const errors = [
         ...[...copied, ...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),
@@ -1014,11 +1199,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       ];
       const warnings = [
         ...(verified.warnings ?? []),
-        ...frozen.warnings.map((warning) => secrets.redact(warning)),
+        ...[...portableWarnings, ...sources.warnings, ...frozen.warnings, ...selfComparisons(checks, expectations, screen.root, { ...bag, ...verified.produced })].map(
+          (warning) => secrets.redact(warning),
+        ),
       ];
 
       if (errors.length > 0) {
-        return { checks, outcome: { errors, produced: verified.produced, warnings } };
+        return { checks, outcome: { errors, produced: verified.produced, warnings, notes } };
       }
 
       // Seulement sur une proposition par ailleurs acceptable : le renvoi est
@@ -1053,7 +1240,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
       for (const key of asking) challenged.add(key);
 
-      const outcome = { errors: [], produced: verified.produced, warnings };
+      const outcome = { errors: [], produced: verified.produced, warnings, notes };
       if (questions.length === 0) return { checks, outcome };
       return {
         checks,
@@ -1094,7 +1281,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
                 // rien proposé, ses manques sont la question elle-même.
                 ...(hadProposal
                   ? outcome.questions === true
-                    ? { questioned: outcome.errors }
+                    ? { questioned: outcome.errors, proposal: JSON.stringify(checks) }
                     : { rejected: outcome.errors }
                   : {}),
               }),
@@ -1182,6 +1369,70 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       continue;
     }
 
+    /**
+     * Une capture qui rapporte un texte entier : une question hors du compte des
+     * tours, jamais sans un tour restant. Seules ses bornes sont retenues, et la
+     * forme bornée repasse par toutes les vérifications ; si l'une tombe, rien ne
+     * change. Seul un modèle qui a répondu efface le doute : une panne ou des
+     * bornes refusées le laissent signalé.
+     */
+    const screen = after;
+    const produced = outcome.produced;
+    const loose = Object.keys(checks.captures).filter((name) => {
+      const spec = checks.captures[name] as CaptureSpec;
+      const read = produced[name];
+      if (read === undefined) return false;
+      const node = designated(screen.root, spec.from, { ...bag, ...produced });
+      return node !== null && readsWholeText(spec, read, captureSource(node, spec));
+    });
+    let settled = loose.length === 0;
+    if (loose.length > 0 && used < attempts) {
+      const asked = loose.map(
+        (name) =>
+          `- capture "${name}" read the whole text "${produced[name]}", and it is meant to hold ${JSON.stringify(step.capture?.[name])}: if that is only part of this text, add "after" and/or "before", the fixed words around the value; if it is the whole text, resend it unchanged`,
+      );
+      const asking: ModelMessage[] = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: ['Before these captures are accepted:', ...asked, '', `What you proposed: ${JSON.stringify({ captures: checks.captures })}`].join('\n'),
+            },
+          ],
+        },
+      ];
+      // Deux essais : une borne mal recopiée se corrige dès qu'on montre le refus,
+      // et sans elle la capture reste entière et la suite compare une phrase.
+      for (let tries = 0; tries < 2; tries += 1) {
+        const output = await refine(asking, checksProposalSchema(platform));
+        if (output === null) break;
+        const bounded = boundedCaptures(checks.captures, loose, output);
+        if (JSON.stringify(bounded.captures) === JSON.stringify(checks.captures)) {
+          settled = bounded.answered;
+          break;
+        }
+        const retried = assess(after, { captures: bounded.captures, assertions: checks.assertions });
+        const retained = retried.outcome.errors.length === 0 ? retried : retried.kept;
+        if (retained !== undefined) {
+          const notes = [...(outcome.notes ?? []), ...(retained.outcome.notes ?? [])];
+          ({ checks, outcome } = retained);
+          outcome = { ...outcome, notes };
+          settled = true;
+          break;
+        }
+        asking.push(
+          { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(output) }] },
+          { role: 'user', content: [{ type: 'text', text: retryMessage(retried.outcome.errors) }] },
+        );
+      }
+    }
+    if (!settled) {
+      for (const name of loose) {
+        warn(`capture "${name}" reads the whole text "${produced[name]}": if the value is only part of it, bound it with "after" and "before"`);
+      }
+    }
+
     for (const warning of outcome.warnings ?? []) warn(warning);
     Object.assign(bag, outcome.produced);
 
@@ -1192,7 +1443,16 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     if (Object.keys(checks.assertions).length > 0) resolved.assertions = checks.assertions;
     steps[step.id] = resolved;
 
-    reports.push({ stepId: step.id, intent, status: 'resolved', attempts: used, rejections, warnings });
+    const notes = [...new Set(outcome.notes ?? [])];
+    reports.push({
+      stepId: step.id,
+      intent,
+      status: 'resolved',
+      attempts: used,
+      rejections,
+      warnings,
+      ...(notes.length > 0 ? { notes } : {}),
+    });
   }
 
   const resolution: Resolution = {

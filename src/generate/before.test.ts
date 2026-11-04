@@ -18,11 +18,12 @@ import { evaluateCheck } from '../engine/assert.ts';
 import { node } from '../engine/fixtures.ts';
 import { matchNodes } from '../engine/match.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
-import type { Check } from '../resolution/types.ts';
+import type { Check, Resolution } from '../resolution/types.ts';
+import { requiredVersion } from '../resolution/types.ts';
 import { parseScenario } from '../scenario/load.ts';
 // Confronté au schéma publié à chaque appel : voir conformance.ts.
 import { generateResolution } from './conformance.ts';
-import { frozenCapture } from './proposal.ts';
+import { frozenCapture, holdsNumber, readsWholeText, tautologicalCapture } from './proposal.ts';
 
 type Screen = { location: string; root: UINode };
 
@@ -58,6 +59,9 @@ class StagedDriver implements Driver {
     this.acted.push(action);
   }
 }
+
+const selfCompared = (template: string, key: string): string =>
+  `assertion "${key}" compares ${template} with the element it was just read from: it cannot fail`;
 
 /** Rend les réponses dans l'ordre ; un appel de trop fait échouer le test. */
 class ScriptedProvider implements ModelProvider {
@@ -309,9 +313,9 @@ steps:
       });
 
       assert.equal(result.status, 'complete', JSON.stringify(result.steps));
-      assert.equal(provider.requests.length, 3);
+      assert.equal(provider.requests.length, 2, 'une réponse refusée rend la main');
       assert.match(result.steps[0]?.rejections[0] ?? '', ALREADY_BEFORE);
-      assert.equal(result.steps[0]?.rejections.length, 3, 'les refus de la réponse restent au rapport');
+      assert.equal(result.steps[0]?.rejections.length, 2, 'le refus de la réponse reste au rapport');
       assert.deepEqual(result.steps[0]?.warnings, [stale(H)]);
       assert.deepEqual(result.resolution.steps['s1']?.actions, [ADD]);
       assert.deepEqual(result.resolution.steps['s1']?.assertions, first.assertions);
@@ -444,7 +448,7 @@ steps:
       assert.equal(result.status, 'complete');
       assert.equal(provider.requests.length, 1);
       assert.deepEqual(result.steps[0]?.rejections, []);
-      assert.deepEqual(result.steps[0]?.warnings, []);
+      assert.deepEqual(result.steps[0]?.warnings, [selfCompared('{{nombre}}', key)]);
     });
 
     /**
@@ -458,7 +462,7 @@ steps:
       assert.equal(result.status, 'complete');
       assert.equal(provider.requests.length, 2);
       assert.match(result.steps[0]?.rejections[0] ?? '', ALREADY_AFTER);
-      assert.deepEqual(result.steps[0]?.warnings, [stale(key)]);
+      assert.deepEqual(result.steps[0]?.warnings, [selfCompared('{{nombre}}', key), stale(key)]);
     });
   });
 });
@@ -517,7 +521,7 @@ describe('capture nommée par l\'attente, figée en littéral', () => {
     assert.equal(provider.requests.length, 2, 'réécrit sans tour de plus');
     const stored = result.resolution.steps['s2']?.assertions?.[LOAN_KEY];
     assert.deepEqual(stored, { check: 'textContains', target: LOAN_ITEM, value: '{{reference}}' });
-    assert.deepEqual(result.steps[1]?.warnings, [
+    assert.deepEqual(result.steps[1]?.notes, [
       `assertion "${LOAN_KEY}" compared the literal "EMP-4418", today's value of {{reference}}: rewritten to {{reference}}, so replay compares against the value captured then`,
     ]);
 
@@ -564,6 +568,8 @@ describe('capture nommée par l\'attente, figée en littéral', () => {
   it('signale, sans refuser, un littéral qui n\'est qu\'une partie de la valeur capturée', async () => {
     const provider = new ScriptedProvider([
       BORROW,
+      // « Référence EMP-4418 » : renvoyée une fois, et maintenue ici.
+      { captures: BORROW.captures },
       { actions: [OPEN], assertions: { [LOAN_KEY]: { check: 'textContains', target: LOAN_ITEM, value: 'EMP-4418' } } },
     ]);
     const result = await generateResolution({
@@ -573,7 +579,7 @@ describe('capture nommée par l\'attente, figée en littéral', () => {
     });
 
     assert.equal(result.status, 'complete', JSON.stringify(result.steps));
-    assert.equal(provider.requests.length, 2);
+    assert.equal(provider.requests.length, 3);
     assert.deepEqual(result.steps[1]?.rejections, []);
     assert.deepEqual(result.steps[1]?.warnings, [
       `assertion "${LOAN_KEY}" compares the literal "EMP-4418", only part of today's value of {{reference}} ("Référence EMP-4418"): replay keeps comparing against today's value — capture exactly that part at the step that reads it, then use {{reference}}`,
@@ -695,7 +701,7 @@ steps:
 
     assert.equal(result.status, 'complete', JSON.stringify(result.steps));
     assert.deepEqual(result.resolution.steps['s1']?.assertions, { [KEY]: answered });
-    assert.deepEqual(result.steps[0]?.warnings, []);
+    assert.deepEqual(result.steps[0]?.warnings, [selfCompared('{{quantite}}', KEY)]);
   });
 
   it('avertit sans réécrire quand aucun tour ne reste pour la question', async () => {
@@ -722,9 +728,14 @@ describe('frozenCapture', () => {
   });
 
   it('ignore une vérification qui référence déjà la capture, ou qui porte un autre gabarit', () => {
-    const named = { role: 'listitem', name: { contains: '{{prix}}' } };
-    assert.equal(frozenCapture(key, { check: 'textContains', target: named, value: '39' }, { prix: '39' }), null);
+    assert.equal(frozenCapture(key, { check: 'textContains', target: total, value: '{{prix}}' }, { prix: '39' }), null);
     assert.equal(frozenCapture(key, { check: 'textEquals', target: total, value: '{{autre}} 39' }, { prix: '39' }), null);
+  });
+
+  it('voit un littéral figé même quand la cible emploie la capture', () => {
+    const named = { role: 'listitem', name: { contains: '{{prix}}' } };
+    const outcome = frozenCapture(key, { check: 'textEquals', target: named, value: '39,00' }, { prix: '39,00' });
+    assert.deepEqual(outcome?.check, { check: 'textEquals', target: named, value: '{{prix}}' });
   });
 
   it('ignore une capture inconnue, une variable d\'environnement, une vérification sans littéral', () => {
@@ -878,5 +889,827 @@ steps:
     assert.equal(provider.requests.length, 2);
     assert.deepEqual(result.steps[0]?.warnings, [stale(KEY)]);
     assert.deepEqual(result.resolution.steps['s1']?.actions, [RELOAD]);
+  });
+});
+
+describe('une cible qui porte un nombre', () => {
+  const button = (name: string): UINode => node('button', name);
+  const screen = (): Screen => ({ location: 'http://app.test/', root: node('group', 'page', [button('Panier 1')]) });
+  const click = (name: string | { contains: string }): unknown => ({
+    actions: [{ kind: 'click', target: { primary: { role: 'button', name } } }],
+    captures: {},
+    assertions: {},
+  });
+  const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: ouvrir le panier
+`);
+
+  it('est signalée, sans appel de plus au modèle', async () => {
+    const provider = new ScriptedProvider([click('Panier 1')]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.equal(result.status, 'complete');
+    assert.equal(provider.requests.length, 1);
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('"Panier 1" holds a number')));
+  });
+
+  it("n'est pas signalée sous sa forme stable", async () => {
+    const provider = new ScriptedProvider([click({ contains: 'Panier' })]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.deepEqual(result.steps[0]?.warnings, []);
+  });
+
+  it('regarde aussi le conteneur', async () => {
+    const nested = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [node('group', 'Commande 42', [button('Ouvrir')])]),
+    });
+    const within = {
+      actions: [
+        { kind: 'click', target: { primary: { role: 'button', within: { role: 'group', name: 'Commande 42' } } } },
+      ],
+      captures: {},
+      assertions: {},
+    };
+    const provider = new ScriptedProvider([within]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(nested), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('"Commande 42" holds a number')), JSON.stringify(result.steps));
+  });
+
+  it('reconnaît les chiffres de toutes les écritures', () => {
+    assert.equal(holdsNumber('カート３'), true);
+    assert.equal(holdsNumber('سلة ٣'), true);
+    assert.equal(holdsNumber('Panier'), false);
+  });
+
+  it('ignore un gabarit, qui ne porte aucun chiffre affiché', async () => {
+    const captured = (): Screen => ({ location: 'http://app.test/', root: node('group', 'page', [button('{{env.TOKEN1}}')]) });
+    const provider = new ScriptedProvider([click('{{env.TOKEN1}}')]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(captured), provider });
+    assert.equal(provider.requests.length, 1);
+    assert.deepEqual(result.steps[0]?.warnings, []);
+  });
+});
+
+describe('une capture bornée, à la génération', () => {
+  const sentence = (): Screen => ({
+    location: 'http://app.test/',
+    root: node('group', 'page', [
+      node('button', 'Valider'),
+      node('text', 'Commande CMD-1042 confirmée'),
+    ]),
+  });
+  const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    capture:
+      reference: la référence
+`);
+  const proposal = (bounds: Record<string, unknown>): unknown => ({
+    actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+    captures: { reference: { from: { role: 'text' }, extract: 'text', ...bounds } },
+    assertions: {},
+  });
+
+  it('versionne les bornes, en v4', async () => {
+    const provider = new ScriptedProvider([proposal({ after: 'Commande ', before: ' confirmée' })]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.equal(requiredVersion(result.resolution as Resolution), 4);
+    assert.deepEqual(result.resolution?.steps['s1']?.captures?.['reference'], {
+      from: { role: 'text' },
+      extract: 'text',
+      after: 'Commande ',
+      before: ' confirmée',
+    });
+  });
+
+  it('refuse une borne absente, en montrant le texte lu', async () => {
+    const provider = new ScriptedProvider([
+      proposal({ after: 'Order ' }),
+      { captures: { reference: { from: { role: 'text' }, extract: 'text', after: 'Commande ' } }, assertions: {} },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.match(lastText(provider.requests[1]), /nothing readable between.*Commande CMD-1042 confirmée/);
+  });
+
+  it('refuse une borne vide', async () => {
+    const provider = new ScriptedProvider([
+      proposal({ after: ' ' }),
+      { captures: { reference: { from: { role: 'text' }, extract: 'text', after: 'Commande ' } }, assertions: {} },
+    ]);
+    await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.match(lastText(provider.requests[1]), /"after" must be a non-empty text/);
+  });
+
+  it('signale une borne qui porte un nombre', async () => {
+    const provider = new ScriptedProvider([proposal({ after: 'CMD-1042 ' })]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('bounded by "CMD-1042 "')), JSON.stringify(result.steps));
+  });
+
+  it('signale une borne qui porte une capture antérieure', async () => {
+    const twoSteps = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: lire
+    capture:
+      code: le code
+  - id: s2
+    do: valider
+    capture:
+      suite: la suite
+`);
+    const screen = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [node('button', 'Valider'), node('heading', 'ABCD'), node('text', 'Code ABCD puis EFGH')]),
+    });
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: { code: { from: { role: 'heading' }, extract: 'text' } },
+      },
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: { suite: { from: { role: 'text' }, extract: 'text', after: 'ABCD puis ' } },
+      },
+    ]);
+    const result = await generateResolution({ scenario: twoSteps, driver: new StagedDriver(screen), provider });
+    assert.ok(result.steps[1]?.warnings.some((w) => w.includes('value of an earlier capture')), JSON.stringify(result.steps));
+  });
+
+  it('signale une capture bornée dont le nom porte la valeur lue', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: {
+          reference: {
+            from: { role: 'text', name: { contains: 'Commande CMD-1042' } },
+            extract: 'text',
+            after: 'Commande ',
+            before: ' confirmée',
+          },
+        },
+        assertions: {},
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('located by the very value')), JSON.stringify(result.steps));
+  });
+
+  it('signale une capture dont le locator porte la valeur lue', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: {
+          reference: {
+            from: { role: 'text', name: { contains: 'CMD-1042' } },
+            extract: 'text',
+            after: 'Commande ',
+            before: ' confirmée',
+          },
+        },
+        assertions: {},
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('located by the very value')), JSON.stringify(result.steps));
+  });
+});
+
+describe("une capture qui lit tout un texte", () => {
+  const sentence = (): Screen => ({
+    location: 'http://app.test/',
+    root: node('group', 'page', [node('button', 'Valider'), node('text', 'Commande CMD-1042 confirmée')]),
+  });
+  const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    capture:
+      reference: le numéro de commande
+`);
+  const gesture = [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }];
+  const whole = { from: { role: 'text' }, extract: 'text' };
+
+  it('est renvoyée une fois, et la borne du modèle est retenue', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { captures: { reference: { ...whole, after: 'Commande ', before: ' confirmée' } }, assertions: {} },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.match(lastText(provider.requests[1]), /read the whole text "Commande CMD-1042 confirmée"/);
+    assert.match(lastText(provider.requests[1]), /le numéro de commande/);
+    assert.deepEqual(result.steps[0]?.warnings, []);
+    assert.equal(result.resolution?.steps['s1']?.captures?.['reference']?.after, 'Commande ');
+  });
+
+  it('maintenue, elle passe sans bruit : le modèle a tranché', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { captures: { reference: whole }, assertions: {} },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete');
+    assert.equal(provider.requests.length, 2);
+    assert.deepEqual(result.steps[0]?.warnings, []);
+  });
+
+  it('sans tour pour répondre, elle reste signalée', async () => {
+    const provider = new ScriptedProvider([{ actions: gesture, captures: { reference: whole }, assertions: {} }]);
+    const result = await generateResolution({
+      scenario,
+      driver: new StagedDriver(sentence),
+      provider,
+      attemptsPerStep: 1,
+    });
+    assert.equal(result.status, 'complete');
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('reads the whole text')));
+  });
+
+  it('corrige une borne mal recopiée, une fois', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { captures: { reference: { ...whole, after: 'Order ' } } },
+      { captures: { reference: { ...whole, after: 'Commande ', before: ' confirmée' } } },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.equal(result.resolution.steps['s1']?.captures?.['reference']?.after, 'Commande ');
+    assert.match(lastText(provider.requests[2]), /nothing readable between/);
+  });
+
+  it('reste signalée quand le modèle ne tranche pas', async () => {
+    let turn = 0;
+    const provider: ModelProvider = {
+      name: 'panne',
+      async complete(): Promise<ModelResponse> {
+        turn += 1;
+        if (turn === 2) throw new Error('indisponible');
+        return {
+          output: { actions: gesture, captures: { reference: whole }, assertions: {} },
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    };
+    const failed = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(failed.status, 'complete');
+    assert.ok(failed.steps[0]?.warnings.some((w) => w.includes('reads the whole text')));
+
+    const refused = await generateResolution({
+      scenario,
+      driver: new StagedDriver(sentence),
+      provider: new ScriptedProvider([
+        { actions: gesture, captures: { reference: whole }, assertions: {} },
+        { captures: { reference: { ...whole, after: 'Order ' } } },
+        { captures: { reference: { ...whole, after: 'Ordre ' } } },
+      ]),
+    });
+    assert.ok(refused.steps[0]?.warnings.some((w) => w.includes('reads the whole text')));
+  });
+
+  it('retient des bornes renvoyées sans le reste de la capture', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { captures: { reference: { after: 'Commande ', before: ' confirmée' } } },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.resolution.steps['s1']?.captures?.['reference']?.after, 'Commande ');
+  });
+
+  it('accepte les captures renvoyées sans leur enveloppe', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { reference: { ...whole, after: 'Commande ', before: ' confirmée' } },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.resolution.steps['s1']?.captures?.['reference']?.after, 'Commande ');
+  });
+
+  it('reste signalée quand la réponse ne parle pas de la capture', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: {} },
+      { captures: {} },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('reads the whole text')));
+  });
+
+  it('survit à une capture de la question dont la cible se vide', async () => {
+    const twoReads = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: lire
+    capture:
+      filtre: le filtre
+  - id: s2
+    do: valider
+    capture:
+      ligne: la ligne du filtre
+      filtre: le filtre
+`);
+    let cleared = false;
+    const screen = (acted: readonly Action[]): Screen => {
+      cleared = acted.length >= 2;
+      return {
+        location: 'http://app.test/',
+        root: node('group', 'page', [
+          node('button', 'Valider'),
+          { ...node('textbox', 'Filtre'), value: cleared ? '' : 'CMD-1042' },
+          node('text', 'CMD-1042 livrée'),
+        ]),
+      };
+    };
+    const click = { kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } };
+    const provider = new ScriptedProvider([
+      { actions: [click], captures: { filtre: { from: { role: 'textbox' }, extract: 'value' } } },
+      {
+        actions: [click],
+        captures: {
+          ligne: { from: { role: 'text', name: { contains: '{{filtre}}' } }, extract: 'text' },
+          filtre: { from: { role: 'textbox' }, extract: 'value' },
+        },
+      },
+      { captures: {} },
+    ]);
+    const result = await generateResolution({ scenario: twoReads, driver: new StagedDriver(screen), provider, attemptsPerStep: 2 });
+    assert.ok(result.steps.length === 2, JSON.stringify(result.steps));
+  });
+
+  it('ne traite pas comme entière une capture déjà bornée', async () => {
+    const client = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [node('button', 'Valider'), node('text', 'Client : Jean Dupont')]),
+    });
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: { ...whole, after: 'Client : ' } }, assertions: {} },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(client), provider, attemptsPerStep: 1 });
+    assert.deepEqual(result.steps[0]?.warnings, []);
+  });
+
+  it('survit à une capture nulle dans la réponse', async () => {
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: null }, assertions: {} },
+      { captures: { reference: { from: { role: 'button' }, extract: 'text' } } },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(sentence), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+
+  it('ne rouvre pas les vérifications déjà prouvées', async () => {
+    const withCheck = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    expect: le bouton reste là
+    capture:
+      reference: le numéro de commande
+`);
+    const kept = { check: 'visible', target: { role: 'text', name: { contains: 'confirmée' } } };
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: { 'le bouton reste là': kept } },
+      {
+        captures: { reference: { ...whole, after: 'Commande ', before: ' confirmée' } },
+        assertions: { 'le bouton reste là': { check: 'visible', target: { role: 'group' } } },
+      },
+    ]);
+    const staged = (acted: readonly Action[]): Screen => {
+      const shown = acted.length > 0 ? [node('text', 'Commande CMD-1042 confirmée')] : [];
+      return { location: 'http://app.test/', root: node('group', 'page', [node('button', 'Valider'), ...shown]) };
+    };
+    const result = await generateResolution({
+      scenario: withCheck,
+      driver: new StagedDriver(staged),
+      provider,
+      attemptsPerStep: 2,
+    });
+    const stored = result.resolution.steps['s1'];
+    assert.equal(stored?.captures?.['reference']?.after, 'Commande ');
+    assert.deepEqual(stored?.assertions?.['le bouton reste là'], kept);
+  });
+
+  it('garde la capture entière si sa forme bornée casse une vérification', async () => {
+    const scenarioWithValue = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    expect: la confirmation affiche {{reference}}
+    capture:
+      reference: le numéro de commande
+`);
+    const key = 'la confirmation affiche {{reference}}';
+    const check = { check: 'textEquals', target: { role: 'text' }, value: 'Commande CMD-1042 confirmée' };
+    const provider = new ScriptedProvider([
+      { actions: gesture, captures: { reference: whole }, assertions: { [key]: { ...check, value: '{{reference}}' } } },
+      { captures: { reference: { ...whole, after: 'Commande ', before: ' confirmée' } } },
+    ]);
+    const result = await generateResolution({
+      scenario: scenarioWithValue,
+      driver: new StagedDriver(sentence),
+      provider,
+      attemptsPerStep: 2,
+    });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.equal(result.resolution.steps['s1']?.captures?.['reference']?.after, undefined);
+  });
+
+  it('interroge aussi une écriture sans espaces', () => {
+    const spec = { from: { role: 'text' as const }, extract: 'text' as const };
+    assert.equal(readsWholeText(spec, 'ご注文CMD-1042は確定しました', ''), true);
+    assert.equal(readsWholeText(spec, 'CMD-1042-ABC', ''), false);
+  });
+
+  it('interroge un nombre lu dans un texte qui en porte plusieurs', () => {
+    const spec = { from: { role: 'text' as const }, extract: 'number' as const };
+    assert.equal(readsWholeText(spec, '129003', 'Montant 129,00 € pour 3 articles'), true);
+    assert.equal(readsWholeText(spec, '129', 'Montant 129,00 €'), false);
+  });
+
+  it("n'interroge ni un mot isolé, ni un nombre, ni une capture bornée", async () => {
+    const short = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [node('button', 'Valider'), node('text', 'CMD-1042')]),
+    });
+    const provider = new ScriptedProvider([{ actions: gesture, captures: { reference: whole }, assertions: {} }]);
+    await generateResolution({ scenario, driver: new StagedDriver(short), provider });
+    assert.equal(provider.requests.length, 1);
+    assert.equal(readsWholeText({ from: { role: 'text' }, extract: 'number' }, '129', '129,00 €'), false);
+    assert.equal(readsWholeText({ from: { role: 'text' }, extract: 'text', after: 'a' }, 'CMD-1042', 'a CMD-1042'), false);
+  });
+});
+
+describe('la capture figée dans le from d\'une capture', () => {
+  it('est réécrite, et la capture suit la commande du jour', async () => {
+    const rows = (reference: string): UINode =>
+      node('list', 'Commandes', [node('listitem', reference, [node('text', '129')])]);
+    const screen = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [node('button', 'Valider'), node('heading', 'CMD-1042'), rows('CMD-1042')]),
+    });
+    const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    capture:
+      reference: le numéro
+  - id: s2
+    capture:
+      montant: le montant de la commande {{reference}}
+`);
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: { reference: { from: { role: 'heading' }, extract: 'text' } },
+      },
+      {
+        captures: {
+          montant: {
+            from: { role: 'text', within: { role: 'listitem', name: { contains: 'CMD-1042' } } },
+            extract: 'number',
+          },
+        },
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.deepEqual(result.resolution.steps['s2']?.captures?.['montant']?.from, {
+      role: 'text',
+      within: { role: 'listitem', name: { contains: '{{reference}}' } },
+    });
+  });
+});
+
+describe('une capture figée dans le nom de la cible', () => {
+  const known = { reference: 'CMD-1042' };
+  const key = 'la liste contient {{reference}}';
+  const within = { role: 'list', name: 'Mes commandes' };
+
+  it('est réécrite, dans un nom exact comme dans un fragment', () => {
+    const partial = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'listitem', name: { contains: 'CMD-1042' }, within } },
+      known,
+    );
+    assert.deepEqual(partial?.check, {
+      check: 'visible',
+      target: { role: 'listitem', name: { contains: '{{reference}}' }, within },
+    });
+    const exact = frozenCapture(key, { check: 'visible', target: { role: 'listitem', name: 'CMD-1042 — en cours' } }, known);
+    assert.deepEqual(exact?.check, { check: 'visible', target: { role: 'listitem', name: '{{reference}} — en cours' } });
+    assert.match(exact?.note ?? '', /rewritten to \{\{reference\}\}/);
+  });
+
+  it('est réécrite dans le conteneur aussi', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'text', within: { role: 'group', name: 'Commande CMD-1042' } } },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'visible',
+      target: { role: 'text', within: { role: 'group', name: 'Commande {{reference}}' } },
+    });
+  });
+
+  it('ne touche pas une cible qui emploie déjà la capture, ni une valeur trop courte', () => {
+    assert.equal(
+      frozenCapture(key, { check: 'visible', target: { role: 'listitem', name: { contains: '{{reference}}' } } }, known),
+      null,
+    );
+  });
+
+  it('signale sans réécrire une valeur trop courte ou numérique', () => {
+    const short = frozenCapture(key, { check: 'visible', target: { role: 'text', name: 'Lot 12' } }, { reference: '12' });
+    assert.equal(short?.check, undefined);
+    assert.match(short?.warning ?? '', /kept as is/);
+    const amount = frozenCapture(key, { check: 'visible', target: { role: 'text', name: '129,00 €' } }, { reference: '129' });
+    assert.equal(amount?.check, undefined);
+    assert.match(amount?.warning ?? '', /kept as is/);
+  });
+
+  it('réécrit toutes les captures nommées, pas seulement la première', () => {
+    const outcome = frozenCapture(
+      '{{a}} et {{b}}',
+      { check: 'visible', target: { role: 'listitem', name: 'REF-1 et LOT-2' } },
+      { a: 'REF-1', b: 'LOT-2' },
+    );
+    assert.deepEqual(outcome?.check, { check: 'visible', target: { role: 'listitem', name: '{{a}} et {{b}}' } });
+  });
+
+  it('ne réécrit pas à l\'intérieur d\'un gabarit', () => {
+    const outcome = frozenCapture(
+      '{{ref}} {{commande}}',
+      { check: 'visible', target: { role: 'listitem', name: '{{commande}} ABC-1' } },
+      { ref: 'commande', commande: 'ABC-1' },
+    );
+    assert.equal(JSON.stringify(outcome?.check ?? {}).includes('{{{{'), false);
+  });
+
+  it('ne rattache pas une capture à un groupe de chiffres', () => {
+    assert.equal(
+      frozenCapture('{{lot}}', { check: 'visible', target: { role: 'text', name: 'Total 1 234,50' } }, { lot: '234' }),
+      null,
+    );
+  });
+
+  it('demande quand deux captures ont la même valeur', () => {
+    const outcome = frozenCapture(
+      'total {{total}} et prix {{prix}}',
+      { check: 'textEquals', target: { role: 'text' }, value: 'EUR-129' },
+      { total: 'EUR-129', prix: 'EUR-129' },
+    );
+    assert.equal(outcome?.check, undefined);
+    assert.match(outcome?.question ?? '', /another capture holds the same value/);
+  });
+
+  it("mesure la valeur comparée d'un numberEquals, pas le texte capturé", () => {
+    const outcome = frozenCapture(
+      'le panier affiche {{quantite}}',
+      { check: 'numberEquals', target: { role: 'text' }, value: '1' },
+      { quantite: '1 article' },
+    );
+    assert.equal(outcome?.check, undefined);
+    assert.match(outcome?.question ?? '', /can match by chance/);
+  });
+
+  it('voit la cible même quand la valeur appelle une question ou un refus', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'textContains', target: { role: 'text', name: { contains: 'ABC-99' } }, value: 'Total ABC-99' },
+      { reference: 'ABC-99' },
+    );
+    assert.ok(outcome?.error !== undefined);
+    assert.ok(outcome?.note !== undefined);
+  });
+
+  it('signale un nom qui n\'est qu\'une partie de la capture', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'listitem', name: { contains: 'CMD-1042' } } },
+      { reference: 'Votre commande CMD-1042 est confirmée' },
+    );
+    assert.equal(outcome?.check, undefined);
+    assert.match(outcome?.warning ?? '', /only part of today's value/);
+  });
+
+  it('est réécrite même quand la valeur emploie déjà la capture', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'textContains', target: { role: 'listitem', name: { contains: 'CMD-1042' } }, value: '{{reference}}' },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'textContains',
+      target: { role: 'listitem', name: { contains: '{{reference}}' } },
+      value: '{{reference}}',
+    });
+  });
+
+  it('réécrit la valeur et la cible dans la même passe', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'textContains', target: { role: 'listitem', name: { contains: 'CMD-1042' } }, value: 'CMD-1042' },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'textContains',
+      target: { role: 'listitem', name: { contains: '{{reference}}' } },
+      value: '{{reference}}',
+    });
+  });
+
+  it('sépare les mots dans une écriture sans espaces', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'listitem', name: { contains: 'ご注文CMD-1042は確定' } } },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'visible',
+      target: { role: 'listitem', name: { contains: 'ご注文{{reference}}は確定' } },
+    });
+  });
+
+  it('ne prend pas une référence suivie d\'un nombre pour un groupe de chiffres', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'listitem', name: { contains: 'CMD-1042 1 exemplaire' } } },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'visible',
+      target: { role: 'listitem', name: { contains: '{{reference}} 1 exemplaire' } },
+    });
+  });
+
+  it('accepte un libellé stable tiré de la capture', () => {
+    assert.equal(
+      frozenCapture(
+        '{{echeance}}',
+        { check: 'textEquals', target: { role: 'text', name: { contains: 'À rendre' } }, value: '{{echeance}}' },
+        { echeance: 'À rendre avant le 12/11/2026' },
+      ),
+      null,
+    );
+  });
+
+  it('ne compare pas un libellé au nombre logé dans une phrase capturée', () => {
+    assert.equal(
+      frozenCapture(
+        '{{livraison}}',
+        { check: 'visible', target: { role: 'heading', name: 'Étape 3' } },
+        { livraison: 'Livraison en 3 jours' },
+      ),
+      null,
+    );
+  });
+
+  it('demande plutôt que de choisir entre deux captures égales', () => {
+    const outcome = frozenCapture(
+      '{{nouvelle}} remplace {{ancienne}}',
+      { check: 'visible', target: { role: 'text', name: 'Ancienne CMD-1042' } },
+      { nouvelle: 'CMD-1042', ancienne: 'CMD-1042' },
+    );
+    assert.equal(outcome?.check, undefined);
+    assert.ok(outcome?.warning !== undefined);
+  });
+
+  it("voit un littéral malgré un gabarit dans le conteneur", () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'text', name: { contains: 'CMD-1042' }, within: { role: 'group', name: { contains: '{{reference}}' } } } },
+      known,
+    );
+    assert.deepEqual(outcome?.check, {
+      check: 'visible',
+      target: { role: 'text', name: { contains: '{{reference}}' }, within: { role: 'group', name: { contains: '{{reference}}' } } },
+    });
+  });
+
+  it('ne coupe pas un mot dans une écriture sans espaces', () => {
+    assert.equal(
+      frozenCapture(
+        key,
+        { check: 'visible', target: { role: 'heading', name: 'チェアマンの挨拶' } },
+        { reference: 'チェア' },
+      ),
+      null,
+    );
+  });
+
+  it('sépare une valeur de sa particule coréenne', () => {
+    const outcome = frozenCapture(
+      key,
+      { check: 'visible', target: { role: 'text', name: { contains: '주문 ABC-XY가 확인' } } },
+      { reference: 'ABC-XY' },
+    );
+    assert.ok(outcome?.check !== undefined);
+  });
+
+  it('reste une réécriture vérifiée au rejeu sur une autre valeur', async () => {
+    const list = (reference: string): UINode =>
+      node('list', 'Mes commandes', [node('listitem', 'CMD-1000 — livrée'), node('listitem', `${reference} — en cours`)]);
+    const outcome = frozenCapture(key, { check: 'visible', target: { role: 'listitem', name: { contains: 'CMD-1042' } } }, known);
+    const check = outcome?.check as unknown as Check;
+    const verdict = evaluateCheck(check, { root: list('CMD-7') , location: '/', bag: { reference: 'CMD-7' } });
+    assert.equal(verdict.ok, true);
+  });
+});
+
+describe('une capture lue dans un nom qui la porte', () => {
+  it('voit un nombre à côté d\'un autre, et un tiret de référence', () => {
+    const name = 'Montant 129,00 € pour 3 articles';
+    const text = node('text', name);
+    assert.equal(tautologicalCapture({ role: 'text', name }, 'number', text, '129'), true);
+    const reference = node('text', 'CMD-1042');
+    assert.equal(tautologicalCapture({ role: 'text', name: { contains: 'CMD-1042' } }, 'number', reference, '1042'), true);
+  });
+});
+
+describe('une capture lue plus tard dans la même étape', () => {
+  it("n'est pas réécrite dans le from d'une capture qui la précède", async () => {
+    const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    capture:
+      montant: le montant de la commande {{reference}}
+      reference: le numero
+`);
+    const screen = (): Screen => ({
+      location: 'http://app.test/',
+      root: node('group', 'page', [
+        node('button', 'Valider'),
+        node('heading', 'CMD-1042'),
+        node('list', 'Commandes', [node('listitem', 'CMD-1042', [node('text', '129')])]),
+      ]),
+    });
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }],
+        captures: {
+          montant: { from: { role: 'text', within: { role: 'listitem', name: { contains: 'CMD-1042' } } }, extract: 'number' },
+          reference: { from: { role: 'heading' }, extract: 'text' },
+        },
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+});
+
+describe('une vérification sur le nœud de la capture', () => {
+  const key = 'la confirmation affiche {{reference}}';
+  const scenario = parseScenario(`id: c
+title: t
+steps:
+  - id: s1
+    do: valider
+    expect: ${key}
+    capture:
+      reference: le numéro
+`);
+  const screen = (acted: readonly Action[]): Screen => ({
+    location: 'http://app.test/',
+    root: node('group', 'page', [node('button', 'Valider'), ...(acted.length > 0 ? [node('text', 'CMD-1042')] : [])]),
+  });
+  const gesture = [{ kind: 'click', target: { primary: { role: 'button', name: 'Valider' } } }];
+
+  it('est signalée quand la réécriture retrouve le nœud par sa propre valeur', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: gesture,
+        captures: { reference: { from: { role: 'text', nth: 0 }, extract: 'text' } },
+        assertions: { [key]: { check: 'visible', target: { role: 'text', name: { contains: 'CMD-1042' } } } },
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('cannot fail')), JSON.stringify(result.steps));
+  });
+
+  it('est signalée, quel que soit l\'ordre des clés', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: gesture,
+        captures: { reference: { from: { role: 'text', nth: 0 }, extract: 'text' } },
+        assertions: { [key]: { check: 'textEquals', target: { nth: 0, role: 'text' }, value: 'CMD-1042' } },
+      },
+    ]);
+    const result = await generateResolution({ scenario, driver: new StagedDriver(screen), provider });
+    assert.ok(result.steps[0]?.warnings.some((w) => w.includes('cannot fail')), JSON.stringify(result.steps));
   });
 });

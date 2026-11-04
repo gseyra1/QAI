@@ -75,15 +75,15 @@ describe('version de format d\'une résolution', () => {
     );
   });
 
+  const stamp = (steps: unknown) =>
+    parseResolution(serializeResolution(parseResolution(document({ version: 2, steps })))).version;
+  const click = { kind: 'navigate', to: '/' };
+
   /**
    * La v3 n'est estampillée que là où le sens l'exige : une réparation en CI
    * d'un fichier v2 ne doit pas le rendre illisible pour un QAI qui lit la v2.
    */
   it('n\'estampille la v3 que pour un contenu qui en use', () => {
-    const stamp = (steps: unknown) =>
-      parseResolution(serializeResolution(parseResolution(document({ version: 2, steps })))).version;
-    const click = { kind: 'navigate', to: '/' };
-
     assert.equal(stamp({ s1: { actions: [click] } }), OBSERVATION_VERSION);
     assert.equal(
       stamp({ s1: { actions: [click], assertions: { a: { check: 'urlEquals', value: 'http://h/x' } } } }),
@@ -95,15 +95,32 @@ describe('version de format d\'une résolution', () => {
       OBSERVATION_VERSION,
       'urlContains n\'a pas changé de sens',
     );
-    assert.equal(stamp({ s1: { actions: [] } }), RESOLUTION_VERSION);
+    assert.equal(stamp({ s1: { actions: [] } }), 3);
     assert.equal(
       stamp({ s1: { actions: [click], assertions: { a: { check: 'urlEquals', value: 'orders' } } } }),
-      RESOLUTION_VERSION,
+      3,
     );
     assert.equal(
       stamp({ s1: { actions: [click], assertions: { a: { check: 'urlEquals', value: '{{adresse}}' } } } }),
-      RESOLUTION_VERSION,
+      3,
       'un gabarit sans schéma peut se résoudre en valeur relative',
+    );
+  });
+
+  it("n'estampille la v4 que pour une capture bornée", () => {
+    const from = { role: 'text' as const };
+    assert.equal(
+      stamp({ s1: { actions: [click], captures: { c: { from, extract: 'text' } } } }),
+      OBSERVATION_VERSION,
+    );
+    assert.equal(
+      stamp({ s1: { actions: [click], captures: { c: { from, extract: 'text', after: 'Réf ' } } } }),
+      RESOLUTION_VERSION,
+    );
+    assert.equal(
+      stamp({ s1: { actions: [] }, s2: { actions: [click], captures: { c: { from, extract: 'text', before: ' €' } } } }),
+      RESOLUTION_VERSION,
+      "une étape v3 plus tôt ne cache pas l'exigence de la suivante",
     );
   });
 });

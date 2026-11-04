@@ -11,7 +11,7 @@
     "version": {
       "type": "integer",
       "minimum": 1,
-      "description": "Version of the resolution format, not of the application. Absent means 1. It goes up when the observation changes (v2) or when the meaning of a stored field changes (v3: a relative urlEquals value is resolved against the base URL; actions may be empty for a verification-only step). A file is written with the lowest version its content needs. A QAI refuses a file newer than the version it reads."
+      "description": "Version of the resolution format, not of the application. Absent means 1. It goes up when the observation changes (v2), when the meaning of a stored field changes (v3: a relative urlEquals value is resolved against the base URL; actions may be empty for a verification-only step), or when a new field appears (v4: after and before on a capture). A file is written with the lowest version its content needs. A QAI refuses a file newer than the version it reads."
     },
     "scenario": {
       "type": "string",
@@ -245,7 +245,17 @@
             "additionalProperties": false,
             "properties": {
               "from": { "$ref": "#/$defs/locator" },
-              "extract": { "enum": ["text", "value", "number"] }
+              "extract": { "enum": ["text", "value", "number"] },
+              "after": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Reads what follows this literal, in a value inside a longer text. Absent from the text, the capture fails."
+              },
+              "before": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Reads what precedes this literal, once after has applied. Absent from the text, the capture fails."
+              }
             }
           }
         },

@@ -10,7 +10,6 @@ import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.
 import { loadResolution, parseResolution } from '../resolution/load.ts';
 import { serializeResolution } from '../resolution/save.ts';
 import type { Resolution } from '../resolution/types.ts';
-import { RESOLUTION_VERSION } from '../resolution/types.ts';
 import { loadScenario, parseScenario } from '../scenario/load.ts';
 import type { Scenario } from '../scenario/types.ts';
 // Confronté au schéma publié à chaque appel : voir conformance.ts.
@@ -357,6 +356,15 @@ steps:
           },
         },
       },
+      // Un titre de plusieurs mots : renvoyé une fois, confirmé tel quel.
+      {
+        captures: {
+          ouvrage: {
+            from: { role: 'heading', within: { role: 'group', name: 'Notice détaillée' } },
+            extract: 'text',
+          },
+        },
+      },
       {
         actions: [{ kind: 'click', target: { primary: { role: 'button', name: 'Emprunter' } } }],
         assertions: {
@@ -395,7 +403,7 @@ steps:
     // action ne leur a été demandée.
     assert.deepEqual(steps['s2']?.actions, []);
     assert.deepEqual(steps['s6']?.actions, []);
-    for (const index of [1, 5]) {
+    for (const index of [1, 6]) {
       const schema = provider.requests[index]?.responseSchema['properties'] as object;
       assert.equal('actions' in schema, false);
     }
@@ -408,7 +416,7 @@ steps:
 
     // Le fichier tel qu'il serait versionné, relu par le chargeur.
     const resolution = parseResolution(serializeResolution(generated.resolution));
-    assert.equal(resolution.version, RESOLUTION_VERSION);
+    assert.equal(resolution.version, 3);
 
     const replayBase = `http://127.0.0.1:${replay.port}/mediatheque`;
     const driver = new PlaywrightWebDriver(() => chromium.launch());

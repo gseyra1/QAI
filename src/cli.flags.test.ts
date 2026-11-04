@@ -552,4 +552,25 @@ describe('iOS command line', () => {
     };
     assert.equal(written.platform, 'ios');
   });
+
+  it('writes nothing under --strict when a warning remains', async () => {
+    const provider = join(dir, 'provider.mjs');
+    const scenario = join(dir, 'strict', 'login.qai.yaml');
+    await mkdir(dirname(scenario), { recursive: true });
+    await writeFile(scenario, LOGIN_SCENARIO);
+    const flags = ['resolve', scenario, '--platform', 'ios', '--app', 'com.example.acme', '--appium-url', fake.url, '--provider', provider];
+    const written = join(dir, 'strict', '.qai', 'resolutions', 'login.ios.json');
+
+    const strict = await cli([...flags, '--strict']);
+    assert.equal(strict.code, 1, `${strict.out}\n${strict.err}`);
+    assert.match(strict.out, /warning: /);
+    assert.match(strict.err, /warnings under --strict: nothing was written/);
+    await assert.rejects(readFile(written, 'utf8'), { code: 'ENOENT' });
+
+    const config = join(dir, 'strict', 'qai.config.json');
+    await writeFile(config, JSON.stringify({ strict: true }));
+    const lenient = await cli([...flags, '--config', config]);
+    assert.equal(lenient.code, 0, `the config speaks of repairs: ${lenient.out}\n${lenient.err}`);
+    await readFile(written, 'utf8');
+  });
 });

@@ -1,13 +1,95 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { UINode } from '../driver/types.ts';
-import { evaluateCheck, InterpolationError, interpolate, redact, toNumber, usesEnv } from './assert.ts';
+import {
+  evaluateCheck,
+  InterpolationError,
+  interpolate,
+  interpolateLocator,
+  readCapture,
+  redact,
+  toNumber,
+  usesEnv,
+} from './assert.ts';
+import { matchNodes } from './match.ts';
 import { node } from './fixtures.ts';
 
 /** Contexte d'évaluation minimal : la plupart des vérifications ignorent l'URL. */
 function on(root: UINode, bag: Record<string, string> = {}, location = 'http://app.test/') {
   return { root, location, bag };
 }
+
+describe('readCapture', () => {
+  const sentence = node('text', 'Votre commande CMD-1042 est confirmée');
+  const from = { role: 'text' as const };
+
+  it('lit tout le nœud sans borne', () => {
+    assert.equal(readCapture(sentence, { from, extract: 'text' }), 'Votre commande CMD-1042 est confirmée');
+  });
+
+  it('lit entre deux bornes, ou depuis une seule', () => {
+    assert.equal(
+      readCapture(sentence, { from, extract: 'text', after: 'commande ', before: ' est' }),
+      'CMD-1042',
+    );
+    assert.equal(readCapture(sentence, { from, extract: 'text', after: 'est ' }), 'confirmée');
+    assert.equal(readCapture(sentence, { from, extract: 'text', before: ' commande' }), 'Votre');
+  });
+
+  it('cherche "before" après "after", pas avant', () => {
+    const repeated = node('text', 'Total : 12 € dont TVA : 2 €');
+    assert.equal(
+      readCapture(repeated, { from, extract: 'text', after: 'TVA : ', before: ' €' }),
+      '2',
+    );
+  });
+
+  it('rend null quand une borne manque, plutôt que la phrase entière', () => {
+    assert.equal(readCapture(sentence, { from, extract: 'text', after: 'absent' }), null);
+    assert.equal(readCapture(sentence, { from, extract: 'text', before: 'absent' }), null);
+  });
+
+  it('rend null quand rien ne reste entre les bornes', () => {
+    assert.equal(readCapture(node('text', 'Réf :   .'), { from, extract: 'text', after: ':', before: '.' }), null);
+  });
+
+  it('lit un nombre dans une phrase, dans le format affiché', () => {
+    const paid = node('text', 'Vous avez payé 1 234,56 € le 3 mars');
+    assert.equal(
+      readCapture(paid, { from, extract: 'number', after: 'payé ', before: ' le' }),
+      '1234.56',
+    );
+    assert.equal(readCapture(paid, { from, extract: 'number', after: 'Vous ', before: ' avez' }), null);
+  });
+
+  it("ne soude pas le nombre lu à ceux qui le suivent", () => {
+    const paid = node('text', 'Montant payé : 129,00 € pour 3 articles');
+    assert.equal(readCapture(paid, { from, extract: 'number', after: 'payé : ' }), '129');
+  });
+
+  it('ne lit pas le tiret d\'une référence comme un signe', () => {
+    const file = node('text', 'Dossier CMD-1042 ouvert');
+    assert.equal(readCapture(file, { from, extract: 'number', after: 'Dossier ' }), '1042');
+  });
+
+  it('borne aussi la valeur d\'un champ', () => {
+    const field = { ...node('textbox', 'Lien'), value: 'https://app.test/r/ABC?x=1' };
+    assert.equal(readCapture(field, { from, extract: 'value', after: '/r/', before: '?' }), 'ABC');
+  });
+});
+
+describe('une capture vide dans une cible', () => {
+  const root = node('group', 'page', [node('listitem', 'autre chose'), node('text', '')]);
+
+  it('lève plutôt que de tout désigner', () => {
+    assert.throws(() => interpolateLocator({ role: 'listitem', name: { contains: '{{r}}' } }, { r: '' }), /is empty/);
+    assert.throws(() => interpolateLocator({ role: 'text', name: '{{r}}' }, { r: ' ' }), /is empty/);
+  });
+
+  it('laisse un nom écrit vide, qui a son sens dans une résolution existante', () => {
+    assert.deepEqual(matchNodes(root, interpolateLocator({ role: 'text', name: '' }, {})), [root.children[1]]);
+  });
+});
 
 describe('toNumber', () => {
   it('lit les formats français et anglais', () => {
