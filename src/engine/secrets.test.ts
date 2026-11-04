@@ -101,6 +101,16 @@ describe('SecretRegistry', () => {
     }
   });
 
+  it('ne recopie pas un nombre lu sur un secret dans le message de numberEquals', () => {
+    const reg = new SecretRegistry();
+    reg.add('00738291');
+    const result = evaluateCheck(
+      { check: 'numberEquals', target: { role: 'text' }, value: '1' },
+      { root: node('group', 'page', [node('text', '00738291')]), location: '/', bag: {}, secrets: reg },
+    );
+    assert.ok(!result.ok && result.reason.includes('observed [secret]'), JSON.stringify(result));
+  });
+
   it('enregistre le secret qu\'une assertion sur {{env.X}} révèle', () => {
     process.env['QAI_TEST_PW'] = SECRET;
     try {

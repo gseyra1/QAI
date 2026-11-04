@@ -452,7 +452,7 @@ describe('IosDriver', () => {
       await assert.rejects(
         () => driver.act({ kind: 'fill', target: { primary: { role: 'textbox', name: 'Password' } }, value: 'hunter2-secret' }),
         (error: Error) =>
-          error.message === 'element send keys failed: invalid element state — Cannot type *** into the field',
+          error.message === 'element send keys failed: invalid element state — Cannot type [secret] into the field',
       );
     });
 

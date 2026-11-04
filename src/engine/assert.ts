@@ -65,6 +65,25 @@ export function envValuesIn(text: string): string[] {
 }
 
 /**
+ * Les valeurs d'environnement que des textes désignent par leur nom.
+ *
+ * À masquer dès le premier écran : un compte déjà affiché au chargement partait
+ * en clair, avant l'étape qui le saisit. Le nom s'écrit en capitales (voir la
+ * consigne), quatre caractères au moins : `CI`, `API` ou `URL` dans une intention
+ * sont des sigles, et `CI=true` masquerait « true » sur tous les écrans. Saisie,
+ * une telle variable reste enregistrée, et `{{env.CI}}` la désigne sans doute.
+ */
+export function namedEnvValues(texts: readonly string[]): string[] {
+  const names = new Set(
+    texts.flatMap((text) => text.match(/[A-Za-z0-9_]+/g) ?? []).filter((word) => /^_*[A-Z][A-Z0-9_]{3,}$/.test(word)),
+  );
+  return [
+    ...[...names].flatMap((name) => process.env[name] ?? []),
+    ...texts.flatMap((text) => envValuesIn(text)),
+  ];
+}
+
+/**
  * Substitue les captures et les variables d'environnement.
  *
  * `{{env.NOM}}` est résolu **à l'exécution**, jamais à l'écriture : le fichier
@@ -105,49 +124,119 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
  */
 export const MASK = '[secret]';
 
-/** Un octet en `%xx`, dans les deux casses que produit un encodeur. */
-function percent(byte: number): string {
-  const digits = byte.toString(16).padStart(2, '0');
-  return `%${digits.replace(/[a-f]/g, (digit) => `[${digit}${digit.toUpperCase()}]`)}`;
+/** Un texte réécrit, et d'où vient chaque unité dans le texte d'origine. */
+interface Folded {
+  text: string;
+  starts: number[];
+  ends: number[];
 }
 
-function charPattern(char: string): string {
-  const forms = [
-    char.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&'),
-    [...new TextEncoder().encode(char)].map(percent).join(''),
-  ];
-  // Échappés dans le JSON d'une cible ; `\\` devient `/` dans une adresse.
-  if (char === '"') forms.push('\\\\"');
-  if (char === '\\') forms.push('\\\\\\\\', '/');
-  return `(?:${forms.join('|')})`;
+const JSON_ESCAPES: Readonly<Record<string, string>> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+};
+
+function percentDecoded(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    // Une page qui n'est pas en UTF-8 encode son adresse dans son propre jeu.
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
 }
 
-/** Rien (l'analyseur d'URL retire tabulations et retours), ou un espace sous toutes ses formes. */
-const SPACE = String.raw`(?:\s|%20|%0[9aAdD]|\+|\\[nrt])*`;
+/** Un tour : décode, déséchappe, retire les espaces. Le texte ne peut que raccourcir. */
+function foldOnce({ text, starts, ends }: Folded): Folded {
+  const out: Folded = { text: '', starts: [], ends: [] };
+  const emit = (chars: string, first: number, last: number): void => {
+    for (let unit = 0; unit < chars.length; unit += 1) {
+      out.starts.push(starts[first] as number);
+      out.ends.push(ends[last] as number);
+    }
+    out.text += chars;
+  };
+
+  for (let at = 0; at < text.length; ) {
+    const char = text[at] as string;
+    if (char === '%') {
+      const bytes: number[] = [];
+      let next = at;
+      while (/^%[0-9a-fA-F]{2}/.test(text.slice(next, next + 3))) {
+        bytes.push(Number.parseInt(text.slice(next + 1, next + 3), 16));
+        next += 3;
+      }
+      if (bytes.length > 0) {
+        emit(percentDecoded(Uint8Array.from(bytes)), at, next - 1);
+        at = next;
+        continue;
+      }
+    }
+    if (char === '\\') {
+      const escaped = text[at + 1];
+      const unicode = /^u[0-9a-fA-F]{4}/.test(text.slice(at + 1, at + 6));
+      if (unicode) {
+        emit(String.fromCharCode(Number.parseInt(text.slice(at + 2, at + 6), 16)), at, at + 5);
+        at += 6;
+        continue;
+      }
+      const known = escaped === undefined ? undefined : JSON_ESCAPES[escaped];
+      if (known !== undefined) {
+        emit(known, at, at + 1);
+        at += 2;
+        continue;
+      }
+      // Une adresse transforme `\\` en `/`.
+      emit('/', at, at);
+      at += 1;
+      continue;
+    }
+    if (char !== '+' && !/\s/.test(char)) emit(char, at, at);
+    at += 1;
+  }
+  return out;
+}
 
 /**
- * Une valeur, sous toutes les formes qu'elle prend sans cesser d'être ce secret.
+ * Une valeur débarrassée de ce qui change son écriture sans la changer.
  *
  * Comparer des sous-chaînes laissait passer toute valeur transformée, et aucune
- * liste de formes ne suffit : le navigateur n'encode pas comme `encodeURI`, et
- * une application encode ce qu'elle veut (`a%5Bb@c`). On compare donc caractère
- * par caractère, chacun pouvant être en clair ou encodé, et les espaces réduits
- * comme l'observation les réduit. Reste hors de portée ce que l'application
- * reformate (« 1000 » réaffiché « 1 000 »).
+ * liste de formes ne suffit : le navigateur n'encode pas comme `encodeURI`, une
+ * application encode ce qu'elle veut, une redirection `next=` encode deux fois.
+ * On ramène donc le texte et le secret à une même forme : encodage d'URL et
+ * échappements JSON retirés jusqu'à stabilité, espaces et `+` supprimés. Les
+ * positions d'origine sont conservées pour masquer le passage exact.
+ *
+ * Linéaire et sans expression régulière construite : un secret de plusieurs
+ * kilo-octets, une clé PEM, faisait déborder la pile du moteur, et l'erreur
+ * recopiait le secret. Reste hors de portée ce que l'application reformate
+ * (« 1000 » réaffiché « 1 000 » passe, « 1000 » réaffiché « 1,000 » non).
  */
-function secretPattern(value: string): RegExp {
-  const words = value.trim().split(/\s+/);
-  return new RegExp(words.map((word) => [...word].map(charPattern).join('')).join(SPACE), 'g');
+function fold(text: string): Folded {
+  let folded: Folded = {
+    text,
+    starts: Array.from({ length: text.length }, (_, index) => index),
+    ends: Array.from({ length: text.length }, (_, index) => index + 1),
+  };
+  for (;;) {
+    const next = foldOnce(folded);
+    if (next.text === folded.text) return next;
+    folded = next;
+  }
 }
 
-function occurrences(text: string, pattern: RegExp): [number, number][] {
-  const spans: [number, number][] = [];
-  pattern.lastIndex = 0;
-  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
-    spans.push([match.index, match.index + match[0].length]);
-    pattern.lastIndex = match.index + 1;
-  }
-  return spans;
+function foldedValue(value: string): string {
+  return fold(value).text;
+}
+
+/** Vrai quand `value`, encodée ou non, porte le masque. */
+export function holdsMask(value: unknown): boolean {
+  return foldedValue(JSON.stringify(value) ?? '').includes(MASK);
 }
 
 /**
@@ -155,22 +244,29 @@ function occurrences(text: string, pattern: RegExp): [number, number][] {
  * se chevauchent ou s'emboîtent laissaient la fin de l'un en clair.
  *
  * `keep` protège des passages entiers : une occurrence entièrement à l'intérieur
- * reste telle quelle.
+ * reste telle quelle. Le masque en fait toujours partie : `secret` comme mot de
+ * passe de test le remasquait à chaque passage.
  */
-function maskSpans(text: string, patterns: readonly RegExp[], keep: readonly string[]): string {
+function maskSpans(text: string, secrets: Iterable<string>, keep: readonly string[]): string {
+  const folded = fold(text);
   const kept: [number, number][] = [];
-  for (const passage of keep) {
+  for (const passage of [...keep, MASK]) {
     if (passage === '') continue;
     for (let at = text.indexOf(passage); at >= 0; at = text.indexOf(passage, at + 1)) {
       kept.push([at, at + passage.length]);
     }
   }
-  const spans = patterns
-    .flatMap((pattern) => occurrences(text, pattern))
+  const spans: [number, number][] = [];
+  for (const secret of secrets) {
+    for (let at = folded.text.indexOf(secret); at >= 0; at = folded.text.indexOf(secret, at + 1)) {
+      spans.push([folded.starts[at] as number, folded.ends[at + secret.length - 1] as number]);
+    }
+  }
+  const visible = spans
     .filter(([start, end]) => !kept.some(([from, to]) => from <= start && end <= to))
     .sort((a, b) => a[0] - b[0]);
   const merged: [number, number][] = [];
-  for (const [start, end] of spans) {
+  for (const [start, end] of visible) {
     const last = merged.at(-1);
     if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], end);
     else merged.push([start, end]);
@@ -186,7 +282,7 @@ function maskSpans(text: string, patterns: readonly RegExp[], keep: readonly str
 
 /** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
 export function redact(text: string, secrets: readonly string[]): string {
-  return maskSpans(text, secrets.filter((secret) => secret.trim() !== '').map(secretPattern), []);
+  return maskSpans(text, secrets.map(foldedValue).filter((secret) => secret !== ''), []);
 }
 
 /**
@@ -207,7 +303,7 @@ export function redact(text: string, secrets: readonly string[]): string {
  * expose de son propre chef, sans passer par `{{env.X}}`, reste hors de portée.
  */
 export class SecretRegistry {
-  readonly #patterns = new Map<string, RegExp>();
+  readonly #values: Set<string>;
   readonly #authored: readonly string[];
 
   /**
@@ -215,9 +311,14 @@ export class SecretRegistry {
    * une valeur doit revenir mot pour mot, c'est sa clé ; et ce texte est déjà
    * versionné en clair. La valeur reste masquée partout ailleurs, à l'écran
    * comme dans l'adresse.
+   *
+   * `known` : les valeurs déjà apprises par les parcours précédents de la même
+   * commande. Un compte saisi par le parcours de connexion s'affiche dans le
+   * suivant, qui ne nomme aucune variable.
    */
-  constructor(authored: readonly string[] = []) {
+  constructor(authored: readonly string[] = [], known: Set<string> = new Set()) {
     this.#authored = authored;
+    this.#values = known;
   }
 
   /**
@@ -232,8 +333,10 @@ export class SecretRegistry {
    * à une protection qui n'existe pas.
    */
   add(value: string): boolean {
-    if (value.trim().length <= 2) return false;
-    if (!this.#patterns.has(value)) this.#patterns.set(value, secretPattern(value));
+    // Mesuré sur la forme comparée : « a b » se compare comme « ab ».
+    const folded = foldedValue(value);
+    if (folded.length <= 2) return false;
+    this.#values.add(folded);
     return true;
   }
 
@@ -242,11 +345,11 @@ export class SecretRegistry {
   }
 
   redact(text: string): string {
-    return this.#patterns.size === 0 ? text : maskSpans(text, [...this.#patterns.values()], this.#authored);
+    return this.#values.size === 0 ? text : maskSpans(text, this.#values, this.#authored);
   }
 
   get size(): number {
-    return this.#patterns.size;
+    return this.#values.size;
   }
 }
 
@@ -314,6 +417,17 @@ export function extractValue(node: UINode, kind: ExtractKind): string | null {
   if (kind === 'value') return node.value ?? '';
   const parsed = toNumber(textOf(node));
   return parsed === null ? null : String(parsed);
+}
+
+/**
+ * Une valeur lue sur un nœud qui porte un secret en dérive.
+ *
+ * `extract: number` retire zéros et séparateurs : le masque ne reconnaît plus le
+ * résultat, et la capture partait en clair.
+ */
+export function learnDerived(secrets: SecretRegistry, node: UINode, read: string): void {
+  const sources = [node.name, node.value ?? ''];
+  if (sources.some((source) => secrets.redact(source) !== source)) secrets.add(read);
 }
 
 export type CheckResult = { ok: true } | { ok: false; reason: string };
@@ -537,6 +651,9 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
 
   const left = toNumber(observed);
   const right = toNumber(expected);
+  // La conversion réécrit le texte : « 00738291 » devient 738291, que le masque
+  // ne reconnaît plus. Le masque se décide donc sur le texte lu.
+  const read = context.secrets !== undefined && context.secrets.redact(observed) !== observed ? MASK : left;
   if (left === null || right === null) {
     return { ok: false, reason: `non-numeric value: "${observed}" vs "${shown}"` };
   }
@@ -545,5 +662,5 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${secret ? MASK : right}, observed ${left}` };
+    : { ok: false, reason: `expected ${secret ? MASK : right}, observed ${read}` };
 }

@@ -7,6 +7,9 @@ import {
   SecretRegistry,
   MASK,
   envValuesIn,
+  holdsMask,
+  learnDerived,
+  namedEnvValues,
   usesEnv,
 } from '../engine/assert.ts';
 import { formatIssue, platformIssue } from '../engine/consistency.ts';
@@ -28,6 +31,7 @@ import {
 import type { Scenario, Step } from '../scenario/types.ts';
 import {
   appliesTo,
+  authoredTexts,
   expectationsOf,
   intentFor,
   isEmptyOn,
@@ -50,6 +54,8 @@ export interface GenerateInput {
   scenario: Scenario;
   driver: Driver;
   provider: ModelProvider;
+  /** Les secrets déjà appris par les parcours précédents de la commande. */
+  knownSecrets?: Set<string>;
   /** Tentatives par phase avant d'abandonner l'étape. */
   attemptsPerStep?: number;
   /**
@@ -150,31 +156,18 @@ function asChecks(output: unknown): Pick<Proposal, 'captures' | 'assertions'> | 
 const ENV_TEMPLATE = /\{\{env\.([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
 
 /**
- * Les valeurs d'environnement que le scénario désigne par leur nom.
- *
- * À masquer dès le premier écran : un compte déjà affiché au chargement partait
- * en clair, avant l'étape qui le saisit. Seul le texte envoyé au modèle compte,
- * et le nom s'écrit en capitales (voir la consigne). Pas moins de quatre : `CI`,
- * `API` ou `URL` dans une intention sont des sigles, et `CI=true` masquerait
- * « true » sur tous les écrans. Saisie, une telle variable reste enregistrée.
- */
-function namedEnvValues(authored: readonly string[]): string[] {
-  const names = new Set(authored.flatMap((text) => text.match(/\b[A-Z][A-Z0-9_]{3,}\b/g) ?? []));
-  return [...names].flatMap((name) => process.env[name] ?? []);
-}
-
-/**
- * Le masque recopié dans une proposition.
+ * Le masque recopié dans une proposition, encodé compris.
  *
  * Masquer l'écran donne au modèle un `[secret]` qu'il recopie volontiers : saisi
  * dans un champ, et versionné dans une adresse (`compte?jeton=[secret]`), il
  * ferait passer la génération sur une valeur qui n'existe pas.
  */
 function copiedMask(proposed: unknown): string[] {
-  if (!JSON.stringify(proposed).includes(MASK)) return [];
-  return [
-    `"${MASK}" stands for a secret you are not shown: never copy it. Write {{env.NAME}} in a typed value if the intent names the variable, or use { "contains": "..." } on what surrounds it`,
-  ];
+  return holdsMask(proposed)
+    ? [
+        `"${MASK}" stands for a secret you are not shown: never copy it. Write {{env.NAME}} in a typed value if the intent names the variable, or use { "contains": "..." } on what surrounds it`,
+      ]
+    : [];
 }
 
 /**
@@ -346,6 +339,7 @@ function verifyChecks(
         errors.push(`capture "${name}": unreadable value with extract="${spec.extract}"`);
         continue;
       }
+      learnDerived(secrets, node, value);
       if (tautologicalCapture(from, spec.extract, node, value)) {
         warnings.push(
           `capture "${name}" is located by the very value it reads ("${value}"): when that value changes, replay reports "target not found" instead of reading the new one`,
@@ -716,13 +710,11 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
   // Comme au rejeu : un secret saisi via {{env.X}} ne doit fuir ni dans les
   // rejets rapportés, ni — surtout — dans ce qui part chez le fournisseur de
   // modèle, qui est un tiers : écrans, adresses et captures compris.
-  const authored = scenario.steps.flatMap((step) => [
-    intentFor(step, platform),
-    ...expectationsOf(step),
-    ...Object.entries(step.capture ?? {}).flat(),
-  ]);
-  const secrets = new SecretRegistry(authored);
+  const authored = authoredTexts(scenario, platform);
+  const secrets = new SecretRegistry(authored, input.knownSecrets);
   secrets.addAll(namedEnvValues(authored));
+  // Un `[secret]` que l'auteur écrit lui-même n'est pas le masque recopié.
+  const guardsMask = (): boolean => secrets.size > 0 && !authored.some((text) => text.includes(MASK));
   const provider = maskedProvider(input.provider, (text) => secrets.redact(text));
   // Même base qu'au rejeu pour les vérifications d'adresse : web seulement.
   const checkBase = checkBaseFor(platform, input.baseUrl);
@@ -848,12 +840,15 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         continue;
       }
 
+      // Toute variable que le modèle emploie, cible et capture comprises : seule
+      // la saisie les enregistrait, et la suivante partait en clair.
+      secrets.addAll(envValuesIn(JSON.stringify(response.output) ?? ''));
       const candidate = asProposal(response.output);
       const raw =
         Array.isArray(candidate)
           ? candidate
           : [
-              ...(secrets.size > 0 ? copiedMask(candidate.actions) : []),
+              ...(guardsMask() ? copiedMask(candidate.actions) : []),
               ...verifyEnvTemplates(candidate.actions, intent),
               ...verifyGestures(driver, candidate.actions),
               ...(await verifyActions(driver, candidate.actions)),
@@ -1010,10 +1005,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         verified = verify();
       }
 
-      const copied =
-        secrets.size > 0
-          ? copiedMask([checks.captures, Object.values(checks.assertions)])
-          : [];
+      const copied = guardsMask() ? copiedMask([checks.captures, Object.values(checks.assertions)]) : [];
       const errors = [
         ...[...copied, ...portable.errors, ...agnostic, ...frozen.errors].map((error) => secrets.redact(error)),
         ...verified.errors,

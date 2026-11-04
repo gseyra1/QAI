@@ -33,5 +33,8 @@ own dependency chain is part of your attack surface. What we do about it:
 ## What QAI does with your data
 
 QAI drives a browser against a URL you supply and, when you enable tiers 2 or
-3, sends the resulting accessibility tree to the model **you** configured.
-It has no telemetry, no network calls of its own, and no credentials of its own.
+3, sends the accessibility tree, the current address and the values it captured
+to the model **you** configured. Known `{{env.NAME}}` values are masked first;
+[docs/model.md](docs/model.md#what-reaches-the-provider-and-what-redaction-misses)
+says what that covers and what it does not. It has no telemetry, no network calls
+of its own, and no credentials of its own.

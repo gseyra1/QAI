@@ -1,5 +1,6 @@
 import type { Driver, ResolvedTarget, UINode } from '../driver/types.ts';
 import type { HealRequest, HealResult, Healer } from '../engine/run.ts';
+import { holdsMask, MASK } from '../engine/assert.ts';
 import { renderTree } from '../generate/render.ts';
 import { fallbackIssue, targetIssue } from '../generate/proposal.ts';
 import { healProposalSchema } from '../generate/schema.ts';
@@ -62,6 +63,10 @@ function asProposal(output: unknown): Proposal | string {
   return { target: target as ResolvedTarget, note };
 }
 
+function targetIn(output: unknown): unknown {
+  return typeof output === 'object' && output !== null ? (output as Record<string, unknown>)['target'] : undefined;
+}
+
 function describeFailure(request: HealRequest): string {
   if (request.outcome.reason === 'ambiguous') {
     return `${request.outcome.matches} elements matched: the target is ambiguous`;
@@ -122,7 +127,11 @@ export class ModelHealer implements Healer {
         responseSchema: healProposalSchema(),
       });
 
-      const proposal = asProposal(response.output);
+      // Un repli peut sauver une cible dont le nom porte le masque : `resolve` ne
+      // verrait rien, et `[secret]` entrerait dans le fichier versionné.
+      const proposal = holdsMask(targetIn(response.output))
+        ? `"${MASK}" stands for a secret you are not shown: never copy it into a name`
+        : asProposal(response.output);
       if (typeof proposal === 'string') {
         rejections.push(proposal);
         conversation.push(

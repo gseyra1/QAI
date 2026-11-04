@@ -4,7 +4,9 @@ function masked(message: ModelMessage, redact: (text: string) => string): ModelM
   return {
     role: message.role,
     content: message.content.map((part) =>
-      part.type === 'text' ? { type: 'text', text: redact(part.text) } : part,
+      // Un écho de `JSON.stringify(undefined)` : une réponse vide ne doit pas
+      // transformer un rejet ordinaire en panne de chaque tour suivant.
+      part.type === 'text' && typeof part.text === 'string' ? { type: 'text', text: redact(part.text) } : part,
     ),
   };
 }

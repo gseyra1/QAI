@@ -290,6 +290,156 @@ describe('le masque ne remplace pas la valeur', () => {
   });
 });
 
+describe('un masque déguisé', () => {
+  it('refuse un masque encodé dans une adresse', async () => {
+    const copied = { actions: [{ kind: 'navigate', to: '/compte?jeton=%5Bsecret%5D' }], captures: {}, assertions: {} };
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'rouvrir le compte avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(SECRET),
+        provider: new ScriptedProvider([copied]),
+        attemptsPerStep: 1,
+      }),
+    );
+    assert.equal(result.status, 'incomplete');
+  });
+
+  it("laisse passer un [secret] que l'auteur écrit lui-même", async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '[secret]' }], captures: {}, assertions: {} },
+    ]);
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'saisir [secret] avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+});
+
+describe('une valeur dérivée du secret', () => {
+  it('ne part pas chez le fournisseur sous forme de nombre', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'fill', target: textbox, value: '{{env.QAI_MASK_PW}}' }],
+        captures: { lu: { from: { role: 'text' }, extract: 'number' } },
+        assertions: {},
+      },
+      { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} },
+    ]);
+    const result = await withSecret(
+      () =>
+        generateResolution({
+          scenario: {
+            id: 'm',
+            title: 't',
+            steps: [
+              { id: 's1', do: 'se connecter avec QAI_MASK_PW', capture: { lu: 'le code' } },
+              { id: 's2', do: 'continuer' },
+            ],
+          },
+          driver: new ExposingDriver(),
+          provider,
+        }),
+      '00738291',
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+    assert.ok(!JSON.stringify(provider.requests).includes('738291'));
+  });
+});
+
+describe('ce que le modèle emploie sans que le scénario le nomme', () => {
+  it('apprend une variable citée dans une cible', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: textbox }],
+        captures: {},
+        assertions: { K: { check: 'visible', target: { role: 'text', name: { contains: '{{env.QAI_MASK_PW}}' } } } },
+      },
+      { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} },
+    ]);
+    await withSecret(() =>
+      generateResolution({
+        scenario: {
+          id: 'm',
+          title: 't',
+          steps: [{ id: 's1', do: 'continuer', expect: 'K' }, { id: 's2', do: 'poursuivre' }],
+        },
+        driver: new ExposingDriver(SECRET),
+        provider,
+        attemptsPerStep: 1,
+      }),
+    );
+    assertNothingLeaked(provider.requests.slice(1));
+  });
+});
+
+describe('les noms de variables reconnus', () => {
+  const click = { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} };
+
+  for (const [written, name] of [
+    ['se connecter avec _QAI_TOKEN', '_QAI_TOKEN'],
+    ['saisir {{env.PIN}}', 'PIN'],
+  ] as const) {
+    it(`connaît ${name} dès le premier écran`, async () => {
+      const provider = new ScriptedProvider([click]);
+      process.env[name] = SECRET;
+      try {
+        await generateResolution({
+          scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: written }] },
+          driver: new ExposingDriver(SECRET),
+          provider,
+        });
+      } finally {
+        delete process.env[name];
+      }
+      assertNothingLeaked(provider.requests);
+    });
+  }
+});
+
+describe('ce qui ne doit pas casser', () => {
+  it('survit à une description de capture vide', async () => {
+    const provider = new ScriptedProvider([
+      {
+        actions: [{ kind: 'click', target: textbox }],
+        captures: { lu: { from: { role: 'text' }, extract: 'text' } },
+        assertions: {},
+      },
+    ]);
+    const capture = { lu: null } as unknown as Record<string, string>;
+    const result = await generateResolution({
+      scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'continuer', capture }] },
+      driver: new ExposingDriver(),
+      provider,
+    });
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+
+  it('reprend après une réponse vide du fournisseur', async () => {
+    const outputs = [undefined, { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} }];
+    let turn = 0;
+    const provider: ModelProvider = {
+      name: 'vide',
+      async complete(): Promise<ModelResponse> {
+        const output = outputs[turn];
+        turn += 1;
+        return { output, usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const result = await withSecret(() =>
+      generateResolution({
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'continuer avec QAI_MASK_PW' }] },
+        driver: new ExposingDriver(),
+        provider,
+      }),
+    );
+    assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+  });
+});
+
 describe("ce que l'auteur a écrit", () => {
   const value = 'admin@acme.test';
 
@@ -462,6 +612,71 @@ function resolution(steps: Resolution['steps']): Resolution {
 }
 
 describe('ce que la réparation envoie au fournisseur', () => {
+  it('connaît aussi les variables que le scénario nomme', async () => {
+    const provider = new HealProvider();
+    await withSecret(() => {
+      const driver = new LostTargetDriver(SECRET);
+      return runScenario({
+        scenario: { ...scenario, steps: [{ id: 's1', do: 'continuer avec QAI_MASK_PW' }] },
+        resolution: resolution({ s1: { actions: [{ kind: 'click', target: lost }] } }),
+        driver,
+        healer: new ModelHealer({ driver, provider }),
+      });
+    });
+    assertNothingLeaked(provider.requests);
+  });
+
+  it("garde l'intention telle qu'écrite", async () => {
+    const provider = new HealProvider();
+    const value = 'alice@acme.test';
+    await withSecret(() => {
+      const driver = new LostTargetDriver(value);
+      return runScenario({
+        scenario: { ...scenario, steps: [{ id: 's1', do: `choisir ${value} avec QAI_MASK_PW` }] },
+        resolution: resolution({ s1: { actions: [{ kind: 'click', target: lost }] } }),
+        driver,
+        healer: new ModelHealer({ driver, provider }),
+      });
+    }, value);
+    const sent = JSON.stringify(provider.requests[0]?.messages);
+    assert.ok(sent.includes(`Step intent: choisir ${value}`), sent);
+    assert.ok(sent.includes('Connecté : [secret]'), sent);
+  });
+
+  it("refuse un masque qu'un repli aurait fait passer", async () => {
+    class FallbackDriver extends LostTargetDriver {
+      override async resolve(target?: ResolvedTarget): Promise<ResolveOutcome> {
+        if (target?.fallback !== undefined) return { found: true, node: node('textbox', 'Jeton'), usedFallback: true };
+        return super.resolve(target);
+      }
+    }
+    const outputs = [
+      { target: { primary: { role: 'link', name: 'Profil [secret]' }, fallback: { testId: 'profil' } }, note: 'n' },
+      { target: { primary: { role: 'textbox' } }, note: 'n' },
+    ];
+    let turn = 0;
+    const provider: ModelProvider = {
+      name: 'repli',
+      async complete(): Promise<ModelResponse> {
+        const output = outputs[turn];
+        turn += 1;
+        return { output, usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    const report = await withSecret(() => {
+      const driver = new FallbackDriver(SECRET);
+      return runScenario({
+        scenario: { ...scenario, steps: [{ id: 's1', do: 'continuer' }] },
+        resolution: resolution({
+          s1: { actions: [{ kind: 'click', target: lost }, { kind: 'fill', target: { primary: { role: 'textbox' } }, value: '{{env.QAI_MASK_PW}}' }] },
+        }),
+        driver,
+        healer: new ModelHealer({ driver, provider }),
+      });
+    });
+    assert.deepEqual(report.heals[0]?.target, { primary: { role: 'textbox' } });
+  });
+
   it("ne porte pas un secret saisi plus tôt, ni sur l'écran ni dans l'adresse", async () => {
     const provider = new HealProvider();
     const report = await withSecret(() => {

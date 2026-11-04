@@ -7,27 +7,31 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
 
 ### Security
 
-- **A known secret no longer reaches the model provider.** Generation and repair
-  sent the screen tree, the current address and capture values in clear: only
-  rejections were masked. An `{{env.NAME}}` value typed into a non-password
+- **Known secrets are masked before reaching the model provider.** Generation and
+  repair sent the screen tree, the current address and capture values in clear:
+  only rejections were masked. An `{{env.NAME}}` value typed into a non-password
   field, redisplayed by the application, or carried by the address reached the
   provider as is, on every later step. Everything sent to a provider now passes
   through `SecretRegistry` at one single point. If you ran `qai resolve` or
   `qai run --heal` with a third-party provider on such a value, treat that value
-  as exposed and rotate it.
-- **Secrets are known earlier.** Generation registers the variables an intent or
-  an expectation names in capitals before the first screen; replay registers
-  every `{{env.NAME}}` of the resolution before the first gesture. A value
-  displayed before the step that types it was missed.
+  as exposed and rotate it. What masking still misses is listed in
+  [docs/model.md](docs/model.md#what-reaches-the-provider-and-what-redaction-misses):
+  a value the application reformats, or splits across several elements.
+- **Secrets are known earlier and for longer.** Generation and replay register
+  the variables an intent or an expectation names before the first screen; replay
+  also registers every `{{env.NAME}}` of the resolution. Within one command, what
+  a journey learned stays masked in the next ones.
 - **A secret is recognised however it is encoded.** `p@ss` in `?q=p%40ss`, in the
-  current address or a network URL, was not masked, in reports either. The
-  comparison now runs character by character, each one in clear or
-  percent-encoded, escaped in JSON, with spaces reduced as observation reduces
-  them.
+  current address or a network URL, was not masked, in reports either. Text and
+  secret are now compared in a folded form: URL encoding and JSON escapes removed
+  until stable, spaces dropped.
+- **A value read from a secret is masked.** `extract: number` turned `00738291`
+  into `738291`, which no longer matched.
 - **A secret is masked whole.** A secret containing or overlapping another left
   its end in clear. `Bearer {{env.X}}` registered only the whole string: `X` on
   its own was missed.
 - Generation warns when a value is too short to be masked, as replay already did.
+  `a b` counts as two characters: it is compared as `ab`.
 
 ### Changed
 
@@ -38,6 +42,8 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   could type it or store it in an address. A step that must `navigate` to an
   address holding a secret can no longer be resolved that way: it used to store
   the secret itself in the versioned file.
+- `generateResolution` and `runScenario` take an optional `knownSecrets`, to share
+  what was learned across journeys.
 - `HealRequest` has a required `redact` function. A custom `Healer` must pass what
   it sends to a third party through it: `snapshot` stays unmasked.
 - Playwright 1.64.1, development dependencies and CI actions updated.

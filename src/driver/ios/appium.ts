@@ -7,6 +7,8 @@
  * de transport — et le paquet n'en accepte que deux.
  */
 
+import { MASK } from '../../engine/assert.ts';
+
 /** Clé W3C d'une référence d'élément (WebDriver, « web element identifier »). */
 export const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
 
@@ -50,7 +52,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function summarize(message: string, redact: string[]): string {
   let out = message.split('\n')[0] ?? '';
   for (const secret of redact) {
-    if (secret !== '') out = out.split(secret).join('***');
+    if (secret !== '') out = out.split(secret).join(MASK);
   }
   return out.length > 300 ? `${out.slice(0, 300)}…` : out;
 }

@@ -74,7 +74,7 @@ export function watchdogsApply(report: SuiteReport): boolean {
   return report.entries.some((entry) => entry.report?.platform === 'web');
 }
 
-async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
+async function runOne(item: SuiteItem, input: SuiteInput, knownSecrets: Set<string>): Promise<SuiteEntry> {
   // Rejouer sans l'état déclaré ferait démarrer le parcours anonyme et le
   // verdict ne prouverait rien — vert compris. Le refus doit être explicite,
   // comme il l'est déjà à la génération.
@@ -111,6 +111,7 @@ async function runOne(item: SuiteItem, input: SuiteInput): Promise<SuiteEntry> {
 
     const healer = input.createHealer?.(driver);
     entry.report = await runScenario({
+      knownSecrets,
       scenario: item.scenario,
       resolution: item.resolution,
       driver,
@@ -143,6 +144,8 @@ export async function runSuite(input: SuiteInput): Promise<SuiteReport> {
   const started = Date.now();
   const workers = Math.max(1, input.workers ?? Math.min(4, availableParallelism()));
   const entries: SuiteEntry[] = new Array<SuiteEntry>(input.items.length);
+  // Un seul pour toute la suite : voir `SecretRegistry`.
+  const knownSecrets = new Set<string>();
 
   let next = 0;
   const pull = async (): Promise<void> => {
@@ -151,7 +154,7 @@ export async function runSuite(input: SuiteInput): Promise<SuiteReport> {
       next += 1;
       const item = input.items[index];
       if (item === undefined) return;
-      entries[index] = await runOne(item, input);
+      entries[index] = await runOne(item, input, knownSecrets);
     }
   };
 

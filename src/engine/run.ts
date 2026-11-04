@@ -14,7 +14,7 @@ import type { Resolution } from '../resolution/types.ts';
 import { isObservationCheck, targetOf, valueOf, withTarget, withValue } from '../resolution/types.ts';
 import { checkBaseFor } from '../resolution/url.ts';
 import type { Scenario } from '../scenario/types.ts';
-import { appliesTo, expectationsOf, intentFor } from '../scenario/types.ts';
+import { appliesTo, authoredTexts, expectationsOf, intentFor } from '../scenario/types.ts';
 import {
   evaluateCheck,
   extractValue,
@@ -25,6 +25,8 @@ import {
   SecretRegistry,
   usesEnv,
   envValuesIn,
+  learnDerived,
+  namedEnvValues,
 } from './assert.ts';
 import { actionsIssue, formatIssue, platformIssue } from './consistency.ts';
 import { resolveUpload } from './files.ts';
@@ -152,6 +154,8 @@ export interface RunInput {
   scenario: Scenario;
   resolution: Resolution;
   driver: Driver;
+  /** Les secrets déjà appris par les parcours précédents de la commande. */
+  knownSecrets?: Set<string>;
   healer?: Healer;
   /** Au-delà, on s'arrête : une dérive massive n'est pas un test périmé. */
   healBudget?: number;
@@ -570,9 +574,11 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
   const applied: AppliedHeal[] = [];
   // Un seul registre pour toute l'exécution : un secret saisi tôt reste masqué
   // dans les rapports des étapes suivantes, où il pourrait revenir par capture.
-  const secrets = new SecretRegistry();
+  const authored = authoredTexts(scenario, platform);
+  const secrets = new SecretRegistry(authored, input.knownSecrets);
   // Avant le premier geste : une réparation à l'étape 2 envoie un écran qui
   // peut déjà afficher ce que l'étape 5 saisira.
+  secrets.addAll(namedEnvValues(authored));
   secrets.addAll(envValuesIn(JSON.stringify(resolution)));
   const baseUrl = checkBaseFor(platform, input.baseUrl);
   const context: ActionsContext = {
@@ -690,6 +696,7 @@ export async function runScenario(input: RunInput): Promise<ScenarioReport> {
             captureErrors.push(`capture "${name}": unreadable value`);
             continue;
           }
+          learnDerived(secrets, node, value);
           bag[name] = value;
         } catch (error) {
           captureErrors.push(
