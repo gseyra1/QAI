@@ -73,6 +73,15 @@ describe('SecretRegistry', () => {
     assert.equal(reg.redact('banane'), 'banane');
   });
 
+  it('reconnaît une valeur à plusieurs lignes dans un formulaire encodé', () => {
+    for (const value of ['ligne un\nligne deux', 'a b\tc d', '-----BEGIN KEY-----\nMIIabc\n-----END KEY-----']) {
+      const reg = new SecretRegistry();
+      reg.add(value);
+      const form = new URLSearchParams({ t: value }).toString().slice(2);
+      assert.equal(reg.redact(`/compte?t=${form}`), '/compte?t=[secret]', JSON.stringify(value));
+    }
+  });
+
   it('tient un secret de plusieurs kilo-octets, sans le recopier dans une erreur', () => {
     const pem = 'abcdefghij'.repeat(2_000);
     const reg = new SecretRegistry();
@@ -280,6 +289,16 @@ describe('SecretRegistry', () => {
       { root: node('group', 'page', [node('text', '00738291')]), location: '/', bag: {}, secrets: reg },
     );
     assert.ok(!result.ok && result.reason.includes('observed [secret]'), JSON.stringify(result));
+  });
+
+  it('ne recopie pas la valeur attendue quand la capture comparée vient du secret', () => {
+    const reg = new SecretRegistry();
+    reg.add('00738291');
+    const result = evaluateCheck(
+      { check: 'numberEquals', target: { role: 'text', name: '5' }, value: '{{code}}' },
+      { root: node('group', 'page', [node('text', '5')]), location: '/', bag: { code: '00738291' }, secrets: reg },
+    );
+    assert.ok(!result.ok && result.reason === 'expected [secret], observed 5', JSON.stringify(result));
   });
 
   it('enregistre le secret qu\'une assertion sur {{env.X}} révèle', () => {

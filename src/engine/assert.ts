@@ -273,6 +273,7 @@ function writings(value: string): string[] {
     written.replaceAll('\\', '/'),
     written.replaceAll(/\s/g, ''),
     value.trim().replaceAll(/\s/g, '+'),
+    written.length === 0 ? '' : collapsed(rawView(value.trim().replaceAll(' ', '+'))).text,
     percentDecoded(rawView(written)).text,
   ];
   return [...new Set(forms)].filter((form) => form !== '');
@@ -698,7 +699,8 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   const right = toNumber(expected);
   // La conversion réécrit le texte : « 00738291 » devient 738291, que le masque
   // ne reconnaît plus. Le masque se décide donc sur le texte lu.
-  const read = context.secrets !== undefined && context.secrets.redact(observed) !== observed ? MASK : left;
+  const masked = (text: string): boolean => context.secrets !== undefined && context.secrets.redact(text) !== text;
+  const read = masked(observed) ? MASK : left;
   if (left === null || right === null) {
     return { ok: false, reason: `non-numeric value: "${observed}" vs "${shown}"` };
   }
@@ -707,5 +709,5 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${secret ? MASK : right}, observed ${read}` };
+    : { ok: false, reason: `expected ${secret || masked(expected) ? MASK : right}, observed ${read}` };
 }

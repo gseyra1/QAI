@@ -160,7 +160,7 @@ address. Three blind spots remain, and none is fixable at this layer:
 - **A value the application reformats is no longer recognised.** `1000` typed
   into a field and redisplayed as `1,000` no longer matches, and appears in
   clear. The same goes for a value the browser rewrites, such as `a/../b` in a
-  path.
+  path, or a long one Chromium shortens in a console preview.
 - **A value split across several elements is not recognised**, because the tree
   separates them: a key shown one line per `<div>`, a phrase one word per `<li>`,
   a token in two `<span>`. Each element goes in clear. Do not display such a value
