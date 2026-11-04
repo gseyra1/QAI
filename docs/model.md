@@ -139,11 +139,11 @@ a secret cannot be resolved that way: go through the form that builds it.
 and it knows that by origin:
 
 - **Before the first screen**, on generation and on replay: a variable an intent
-  or an expectation names in capitals, four characters or more (`sign in with
-  QAI_PASS`; `CI` or `API` read as acronyms), and any `{{env.NAME}}` they write.
-  Replay also learns every `{{env.NAME}}` of the resolution.
-- **On the way**: any `{{env.NAME}}` a proposal uses, and what is read from a node
-  showing a secret (`extract: number` drops the zeros of `00738291`).
+  or an expectation names in capitals with an underscore (`sign in with QAI_PASS`;
+  `CI` or `DEBUG` read as words), and any `{{env.NAME}}` they write. Replay also
+  learns every `{{env.NAME}}` of the resolution.
+- **On the way**: any `{{env.NAME}}` an accepted proposal uses, and what is read
+  from a node showing a secret (`extract: number` drops the zeros of `00738291`).
 - **Across journeys**: within one command, a value learned by a journey stays
   masked in the next ones, in the order they ran.
 
@@ -152,10 +152,10 @@ environment, stays out of reach. So does anything the screen shows of its own
 accord, such as a customer's name in test data: use data you can send to your
 provider, or a provider you host.
 
-The registry compares a folded form of the value and of the text: URL encoding
-and JSON escapes removed until stable, however many times they were applied,
-spaces and `+` dropped. `p@ss` is found in `p%40ss`, in `p%2540ss` and in a JSON
-inside an address. Three blind spots remain, and none is fixable at this layer:
+The registry searches the text as it stands and as it reads once decoded, up to
+three URL encodings and JSON escapes, with spaces reduced the way observation
+reduces them. `p@ss` is found in `p%40ss`, in `p%2540ss` and in a JSON inside an
+address. Three blind spots remain, and none is fixable at this layer:
 
 - **A value the application reformats is no longer recognised.** `1000` typed
   into a field and redisplayed as `1,000` no longer matches, and appears in

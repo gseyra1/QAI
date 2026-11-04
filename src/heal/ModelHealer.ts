@@ -129,7 +129,7 @@ export class ModelHealer implements Healer {
 
       // Un repli peut sauver une cible dont le nom porte le masque : `resolve` ne
       // verrait rien, et `[secret]` entrerait dans le fichier versionné.
-      const proposal = holdsMask(targetIn(response.output))
+      const proposal = holdsMask(targetIn(response.output)) && !renderTree(request.snapshot.root).includes(MASK)
         ? `"${MASK}" stands for a secret you are not shown: never copy it into a name`
         : asProposal(response.output);
       if (typeof proposal === 'string') {

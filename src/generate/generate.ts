@@ -833,6 +833,8 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         // NORMAL, pas un cas théorique. Laisser filer l'exception abandonnait
         // tous les scénarios restants sur une seule réponse tronquée.
         rejections.push(secrets.redact(error instanceof Error ? error.message : String(error)));
+        // La réponse à une question rend la main, lisible ou non.
+        if (questioned !== null) break;
         conversation.push({
           role: 'user',
           content: [{ type: 'text', text: retryMessage([modelFailure(error)]) }],
@@ -840,9 +842,6 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         continue;
       }
 
-      // Toute variable que le modèle emploie, cible et capture comprises : seule
-      // la saisie les enregistrait, et la suivante partait en clair.
-      secrets.addAll(envValuesIn(JSON.stringify(response.output) ?? ''));
       const candidate = asProposal(response.output);
       const raw =
         Array.isArray(candidate)
@@ -858,6 +857,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       const errors = raw.map((error) => secrets.redact(error));
 
       if (errors.length === 0 && !Array.isArray(candidate)) {
+        // Toute variable employée, cible et capture comprises : seule la saisie
+        // les enregistrait. Pas celles d'une proposition refusée, qui n'a rien lu.
+        secrets.addAll(envValuesIn(JSON.stringify(candidate)));
         /**
          * Le renvoi part ICI, avant d'agir, quand il le peut : c'est le seul
          * moment où le modèle peut encore corriger ses gestes. Une recharge

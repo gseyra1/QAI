@@ -21,17 +21,16 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   the variables an intent or an expectation names before the first screen; replay
   also registers every `{{env.NAME}}` of the resolution. Within one command, what
   a journey learned stays masked in the next ones.
-- **A secret is recognised however it is encoded.** `p@ss` in `?q=p%40ss`, in the
-  current address or a network URL, was not masked, in reports either. Text and
-  secret are now compared in a folded form: URL encoding and JSON escapes removed
-  until stable, spaces dropped.
+- **A secret is recognised once encoded.** `p@ss` in `?q=p%40ss`, in the current
+  address or a network URL, was not masked, in reports either. The text is now
+  also searched as it reads decoded: up to three URL encodings, and JSON escapes.
 - **A value read from a secret is masked.** `extract: number` turned `00738291`
   into `738291`, which no longer matched.
 - **A secret is masked whole.** A secret containing or overlapping another left
   its end in clear. `Bearer {{env.X}}` registered only the whole string: `X` on
   its own was missed.
 - Generation warns when a value is too short to be masked, as replay already did.
-  `a b` counts as two characters: it is compared as `ab`.
+  `a b` counts as two characters: an address can show it as `ab`.
 
 ### Changed
 

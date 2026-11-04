@@ -69,13 +69,13 @@ export function envValuesIn(text: string): string[] {
  *
  * À masquer dès le premier écran : un compte déjà affiché au chargement partait
  * en clair, avant l'étape qui le saisit. Le nom s'écrit en capitales (voir la
- * consigne), quatre caractères au moins : `CI`, `API` ou `URL` dans une intention
- * sont des sigles, et `CI=true` masquerait « true » sur tous les écrans. Saisie,
- * une telle variable reste enregistrée, et `{{env.CI}}` la désigne sans doute.
+ * consigne) avec un soulignement : `CI`, `API` ou `DEBUG` dans une intention sont
+ * des mots, et `DEBUG=true` masquerait « true » sur tous les écrans. Saisie, une
+ * telle variable reste enregistrée, et `{{env.CI}}` la désigne sans doute.
  */
 export function namedEnvValues(texts: readonly string[]): string[] {
   const names = new Set(
-    texts.flatMap((text) => text.match(/[A-Za-z0-9_]+/g) ?? []).filter((word) => /^_*[A-Z][A-Z0-9_]{3,}$/.test(word)),
+    texts.flatMap((text) => text.match(/[A-Za-z0-9_]+/g) ?? []).filter((word) => /^_*[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(word)),
   );
   return [
     ...[...names].flatMap((name) => process.env[name] ?? []),
@@ -125,10 +125,76 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
 export const MASK = '[secret]';
 
 /** Un texte réécrit, et d'où vient chaque unité dans le texte d'origine. */
-interface Folded {
+interface View {
   text: string;
   starts: number[];
   ends: number[];
+}
+
+/** Une séquence UTF-8 complète à partir de `at`, ou un octet seul dans le jeu d'une ancienne page. */
+function decodeSequence(bytes: readonly number[], at: number): { chars: string; length: number } {
+  const lead = bytes[at] as number;
+  const length = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc2 ? 2 : 0;
+  if (length > 0 && at + length <= bytes.length) {
+    try {
+      const sequence = Uint8Array.from(bytes.slice(at, at + length));
+      return { chars: new TextDecoder('utf-8', { fatal: true }).decode(sequence), length };
+    } catch {
+      // Séquence invalide : l'octet seul, ci-dessous.
+    }
+  }
+  return { chars: new TextDecoder('windows-1252').decode(Uint8Array.of(lead)), length: 1 };
+}
+
+function emptyView(): View {
+  return { text: '', starts: [], ends: [] };
+}
+
+function rawView(text: string): View {
+  return {
+    text,
+    starts: Array.from({ length: text.length }, (_, index) => index),
+    ends: Array.from({ length: text.length }, (_, index) => index + 1),
+  };
+}
+
+function emit(out: View, chars: string, start: number, end: number): void {
+  for (let unit = 0; unit < chars.length; unit += 1) {
+    out.starts.push(start);
+    out.ends.push(end);
+  }
+  out.text += chars;
+}
+
+/** Un tour de décodage d'URL ; `+` y vaut une espace, comme dans un formulaire. */
+function percentDecoded(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
+  for (let at = 0; at < text.length; ) {
+    if (text[at] === '+') {
+      emit(out, ' ', starts[at] as number, ends[at] as number);
+      at += 1;
+      continue;
+    }
+    const bytes: number[] = [];
+    let next = at;
+    while (text[next] === '%' && /^[0-9a-fA-F]{2}$/.test(text.slice(next + 1, next + 3))) {
+      bytes.push(Number.parseInt(text.slice(next + 1, next + 3), 16));
+      next += 3;
+    }
+    if (bytes.length === 0) {
+      emit(out, text[at] as string, starts[at] as number, ends[at] as number);
+      at += 1;
+      continue;
+    }
+    for (let index = 0; index < bytes.length; ) {
+      const { chars, length } = decodeSequence(bytes, index);
+      emit(out, chars, starts[at + index * 3] as number, ends[at + (index + length) * 3 - 1] as number);
+      index += length;
+    }
+    at = next;
+  }
+  return out;
 }
 
 const JSON_ESCAPES: Readonly<Record<string, string>> = {
@@ -142,101 +208,82 @@ const JSON_ESCAPES: Readonly<Record<string, string>> = {
   t: '\t',
 };
 
-function percentDecoded(bytes: Uint8Array): string {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    // Une page qui n'est pas en UTF-8 encode son adresse dans son propre jeu.
-    return new TextDecoder('windows-1252').decode(bytes);
-  }
-}
-
-/** Un tour : décode, déséchappe, retire les espaces. Le texte ne peut que raccourcir. */
-function foldOnce({ text, starts, ends }: Folded): Folded {
-  const out: Folded = { text: '', starts: [], ends: [] };
-  const emit = (chars: string, first: number, last: number): void => {
-    for (let unit = 0; unit < chars.length; unit += 1) {
-      out.starts.push(starts[first] as number);
-      out.ends.push(ends[last] as number);
-    }
-    out.text += chars;
-  };
-
+/** Les échappements d'une chaîne JSON : une cible part sérialisée, une adresse en porte. */
+function jsonUnescaped(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
   for (let at = 0; at < text.length; ) {
-    const char = text[at] as string;
-    if (char === '%') {
-      const bytes: number[] = [];
-      let next = at;
-      while (/^%[0-9a-fA-F]{2}/.test(text.slice(next, next + 3))) {
-        bytes.push(Number.parseInt(text.slice(next + 1, next + 3), 16));
-        next += 3;
-      }
-      if (bytes.length > 0) {
-        emit(percentDecoded(Uint8Array.from(bytes)), at, next - 1);
-        at = next;
-        continue;
-      }
-    }
-    if (char === '\\') {
-      const escaped = text[at + 1];
-      const unicode = /^u[0-9a-fA-F]{4}/.test(text.slice(at + 1, at + 6));
-      if (unicode) {
-        emit(String.fromCharCode(Number.parseInt(text.slice(at + 2, at + 6), 16)), at, at + 5);
-        at += 6;
-        continue;
-      }
-      const known = escaped === undefined ? undefined : JSON_ESCAPES[escaped];
-      if (known !== undefined) {
-        emit(known, at, at + 1);
-        at += 2;
-        continue;
-      }
-      // Une adresse transforme `\\` en `/`.
-      emit('/', at, at);
+    const escaped = text[at] === '\\' ? text[at + 1] : undefined;
+    const known = escaped === undefined ? undefined : JSON_ESCAPES[escaped];
+    if (known !== undefined) {
+      emit(out, known, starts[at] as number, ends[at + 1] as number);
+      at += 2;
+    } else if (escaped === 'u' && /^[0-9a-fA-F]{4}$/.test(text.slice(at + 2, at + 6))) {
+      const char = String.fromCharCode(Number.parseInt(text.slice(at + 2, at + 6), 16));
+      emit(out, char, starts[at] as number, ends[at + 5] as number);
+      at += 6;
+    } else {
+      emit(out, text[at] as string, starts[at] as number, ends[at] as number);
       at += 1;
-      continue;
     }
-    if (char !== '+' && !/\s/.test(char)) emit(char, at, at);
-    at += 1;
   }
   return out;
 }
 
-/**
- * Une valeur débarrassée de ce qui change son écriture sans la changer.
- *
- * Comparer des sous-chaînes laissait passer toute valeur transformée, et aucune
- * liste de formes ne suffit : le navigateur n'encode pas comme `encodeURI`, une
- * application encode ce qu'elle veut, une redirection `next=` encode deux fois.
- * On ramène donc le texte et le secret à une même forme : encodage d'URL et
- * échappements JSON retirés jusqu'à stabilité, espaces et `+` supprimés. Les
- * positions d'origine sont conservées pour masquer le passage exact.
- *
- * Linéaire et sans expression régulière construite : un secret de plusieurs
- * kilo-octets, une clé PEM, faisait déborder la pile du moteur, et l'erreur
- * recopiait le secret. Reste hors de portée ce que l'application reformate
- * (« 1000 » réaffiché « 1 000 » passe, « 1000 » réaffiché « 1,000 » non).
- */
-function fold(text: string): Folded {
-  let folded: Folded = {
-    text,
-    starts: Array.from({ length: text.length }, (_, index) => index),
-    ends: Array.from({ length: text.length }, (_, index) => index + 1),
-  };
-  for (;;) {
-    const next = foldOnce(folded);
-    if (next.text === folded.text) return next;
-    folded = next;
+/** Les espaces réduits comme l'observation les réduit. */
+function collapsed(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at] as string;
+    if (!/\s/.test(char)) emit(out, char, starts[at] as number, ends[at] as number);
+    else if (at > 0 && !/\s/.test(text[at - 1] as string)) emit(out, ' ', starts[at] as number, ends[at] as number);
   }
+  return out;
 }
 
-function foldedValue(value: string): string {
-  return fold(value).text;
+/** Au-delà, ce n'est plus une application qui encode. */
+const MAX_ENCODINGS = 3;
+
+/**
+ * Le texte tel qu'il est, et tel qu'il se lit une fois décodé.
+ *
+ * Plusieurs lectures côte à côte, jamais une seule à force de réécritures : dans
+ * « Remise 20% 4242 », le décodage lit `%20` et `% 42`, et une forme unique perdait
+ * la valeur écrite en clair. Chaque lecture est cherchée pour elle-même, à coût
+ * linéaire et borné. Une expression construite sur le secret faisait déborder la
+ * pile à partir de quelques kilo-octets, et l'erreur recopiait le secret.
+ */
+function readings(text: string): View[] {
+  const raw = rawView(text);
+  const decoded = [raw];
+  for (let round = 0; round < MAX_ENCODINGS && (decoded.at(-1) as View).text.includes('%'); round += 1) {
+    decoded.push(percentDecoded(decoded.at(-1) as View));
+  }
+  // Un `+` sans `%` : un formulaire encodé n'a pas forcément d'autre marque.
+  if (decoded.length === 1 && text.includes('+')) decoded.push(percentDecoded(raw));
+  const all = decoded.flatMap((view) => (view.text.includes('\\') ? [view, jsonUnescaped(view)] : [view]));
+  return all.map(collapsed);
+}
+
+/**
+ * Les écritures d'une valeur à chercher dans ces lectures.
+ *
+ * L'analyseur d'URL change `\\` en `/` et retire tabulations et retours, et une
+ * valeur peut porter elle-même un `%xx`. Les espaces ne sont retirés que pour les
+ * valeurs qui en ont : les retirer du texte collait les mots voisins, et `test`
+ * sortait de « the exit code ».
+ */
+function writings(value: string): string[] {
+  const written = collapsed(rawView(value)).text.trim();
+  const decoded = percentDecoded(rawView(written.replaceAll('+', '%2B'))).text;
+  const forms = [written, written.replaceAll('\\', '/'), written.replaceAll(/\s/g, ''), decoded];
+  return [...new Set(forms)].filter((form) => form !== '');
 }
 
 /** Vrai quand `value`, encodée ou non, porte le masque. */
 export function holdsMask(value: unknown): boolean {
-  return foldedValue(JSON.stringify(value) ?? '').includes(MASK);
+  return readings(JSON.stringify(value) ?? '').some((view) => view.text.includes(MASK));
 }
 
 /**
@@ -248,7 +295,6 @@ export function holdsMask(value: unknown): boolean {
  * passe de test le remasquait à chaque passage.
  */
 function maskSpans(text: string, secrets: Iterable<string>, keep: readonly string[]): string {
-  const folded = fold(text);
   const kept: [number, number][] = [];
   for (const passage of [...keep, MASK]) {
     if (passage === '') continue;
@@ -257,9 +303,12 @@ function maskSpans(text: string, secrets: Iterable<string>, keep: readonly strin
     }
   }
   const spans: [number, number][] = [];
-  for (const secret of secrets) {
-    for (let at = folded.text.indexOf(secret); at >= 0; at = folded.text.indexOf(secret, at + 1)) {
-      spans.push([folded.starts[at] as number, folded.ends[at + secret.length - 1] as number]);
+  const forms = [...secrets];
+  for (const view of readings(text)) {
+    for (const secret of forms) {
+      for (let at = view.text.indexOf(secret); at >= 0; at = view.text.indexOf(secret, at + 1)) {
+        spans.push([view.starts[at] as number, view.ends[at + secret.length - 1] as number]);
+      }
     }
   }
   const visible = spans
@@ -282,7 +331,7 @@ function maskSpans(text: string, secrets: Iterable<string>, keep: readonly strin
 
 /** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
 export function redact(text: string, secrets: readonly string[]): string {
-  return maskSpans(text, secrets.map(foldedValue).filter((secret) => secret !== ''), []);
+  return maskSpans(text, secrets.flatMap(writings), []);
 }
 
 /**
@@ -333,10 +382,9 @@ export class SecretRegistry {
    * à une protection qui n'existe pas.
    */
   add(value: string): boolean {
-    // Mesuré sur la forme comparée : « a b » se compare comme « ab ».
-    const folded = foldedValue(value);
-    if (folded.length <= 2) return false;
-    this.#values.add(folded);
+    // Sans ses espaces : « a b » peut se lire « ab » dans une adresse.
+    if (value.replaceAll(/\s/g, '').length <= 2) return false;
+    for (const form of writings(value)) this.#values.add(form);
     return true;
   }
 

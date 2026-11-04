@@ -376,6 +376,26 @@ describe('ce que le modèle emploie sans que le scénario le nomme', () => {
   });
 });
 
+describe('une proposition refusée', () => {
+  it("n'apprend pas la variable qu'elle citait", async () => {
+    const provider = new ScriptedProvider([
+      { actions: [{ kind: 'fill', target: textbox, value: '{{env.QAI_MASK_PW}}' }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} },
+      { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} },
+    ]);
+    await withSecret(
+      () =>
+        generateResolution({
+          scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'remplir' }, { id: 's2', do: 'continuer' }] },
+          driver: new ExposingDriver('valeur-publique'),
+          provider,
+        }),
+      'valeur-publique',
+    );
+    assert.ok(JSON.stringify(provider.requests.at(-1)?.messages).includes('valeur-publique'));
+  });
+});
+
 describe('les noms de variables reconnus', () => {
   const click = { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} };
 
@@ -514,17 +534,17 @@ describe("ce que l'auteur a écrit", () => {
 describe('les variables connues avant le premier écran', () => {
   const click = { actions: [{ kind: 'click', target: textbox }], captures: {}, assertions: {} };
 
-  it("ne lit pas un sigle comme une variable", async () => {
+  it("ne lit pas un mot en capitales comme une variable", async () => {
     const provider = new ScriptedProvider([click]);
-    process.env['QAI'] = 'valeur-publique';
+    process.env['DEBUGMODE'] = 'valeur-publique';
     try {
       await generateResolution({
-        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'ouvrir le tableau QAI' }] },
+        scenario: { id: 'm', title: 't', steps: [{ id: 's1', do: 'activer DEBUGMODE' }] },
         driver: new ExposingDriver('valeur-publique'),
         provider,
       });
     } finally {
-      delete process.env['QAI'];
+      delete process.env['DEBUGMODE'];
     }
     assert.ok(JSON.stringify(provider.requests[0]?.messages).includes('valeur-publique'));
   });
