@@ -155,10 +155,12 @@ because it pays for every line. Replay reads the full one, where unnamed element
 (an icon, a spacer) still match a target. Captures and assertions are therefore
 verified on the full tree: judged on the pruned one, `{ "role": "text" }` was
 unique while resolving and ambiguous on replay, on identical data. The model does
-not see the element that causes this, so the refusal says how many match, how many
-it was shown, and to target by name or by `within`, not by `nth`, which counts
-those elements too. Only numbers go back: nothing of the full tree reaches the
-provider. Two cases are refused even though they would pass: a `nth` that lands on
+not see the element that causes this, so the refusal says how many match and how
+many it was shown, and to use a stable part of the name or `within`, never the value
+itself. When it was shown a single element, the refusal also gives that element's
+position on the full tree: a bare value has no stable part and no narrower
+container, and without that position the model copied the value into the name.
+Only numbers go back: nothing of the full tree reaches the provider. Two cases are refused even though they would pass: a `nth` that lands on
 another element than the one shown, and a capture or an assertion resting only on
 elements the model was never shown (`absent` excepted, since that is what it
 asserts). Each screen is observed twice, pruned then full.

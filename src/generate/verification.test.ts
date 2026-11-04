@@ -958,8 +958,8 @@ steps:
     assert.deepEqual(result.resolution.steps['s1']?.captures?.['reference']?.from, named);
     const refusal = result.steps[0]?.rejections[0] ?? '';
     assert.match(refusal, /ambiguous target, 2 element\(s\) match this target but your tree shows 1/);
-    assert.match(refusal, /"name".*"within" a named container/);
-    assert.match(refusal, /Do not use "nth"/);
+    assert.match(refusal, /stable part of the name, or "within" a named container/);
+    assert.match(refusal, /Never put the value itself in "name"/);
     // L'explication atteint le modèle, et l'arbre qu'il reçoit ne bouge pas.
     const retry = JSON.stringify(provider.requests[1]?.messages);
     assert.ok(retry.includes('your tree shows 1'));
@@ -978,24 +978,45 @@ steps:
     assert.equal(JSON.stringify(provider.requests).includes('Interne'), false);
   });
 
-  it('garde le refus d\'ambiguïté habituel quand tout est sous les yeux du modèle', async () => {
-    const both = [node('text', 'Order A is confirmed'), node('text', 'Order B is confirmed')];
-    const { driver } = screens(both, both);
-    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', nth: 0 })]);
+  it('donne la position réelle quand un seul élément est vu, et l\'accepte en retour', async () => {
+    const value = node('text', '42');
+    const { driver } = screens([value], [unnamed(), value]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', nth: 1 })]);
 
     const result = await generateResolution({ scenario: capturing, driver, provider });
 
     assert.equal(result.status, 'complete');
-    assert.match(result.steps[0]?.rejections[0] ?? '', /2 elements match — disambiguate with "within" or "nth"/);
+    assert.match(result.steps[0]?.rejections[0] ?? '', /keep this target and add "nth": 1 to it,/);
+    assert.deepEqual(result.resolution.steps['s1']?.captures?.['reference']?.from, { role: 'text', nth: 1 });
   });
 
-  it('distingue une cible absente d\'une cible ambiguë', async () => {
-    const { driver } = screens([node('text', CONFIRMED)], [node('text', CONFIRMED)]);
-    const provider = new ScriptedProvider([reading({ role: 'heading' }), reading({ role: 'text' })]);
+  it('ne propose pas de position quand plusieurs éléments sont vus', async () => {
+    const a = node('text', 'Order A is confirmed');
+    const b = node('text', 'Order B is confirmed');
+    const { driver } = screens([a, b], [unnamed(), a, b]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', name: { contains: 'B' } })]);
 
     const result = await generateResolution({ scenario: capturing, driver, provider });
 
-    assert.equal(result.steps[0]?.rejections[0], 'capture "reference": target not found on this screen');
+    const refusal = result.steps[0]?.rejections[0] ?? '';
+    assert.match(refusal, /3 element\(s\) match this target but your tree shows 2/);
+    assert.match(refusal, /not "nth", which counts them too/);
+    assert.doesNotMatch(refusal, /add "nth"/);
+  });
+
+  // Un message plus précis ici faisait recopier les valeurs au modèle : mesuré.
+  it('garde le message habituel quand tout est sous les yeux du modèle', async () => {
+    const both = [node('text', 'Order A is confirmed'), node('text', 'Order B is confirmed')];
+    const { driver } = screens(both, both);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'heading' }), reading({ role: 'text', nth: 0 })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.steps[0]?.rejections, [
+      'capture "reference": target not found or ambiguous on this screen',
+      'capture "reference": target not found or ambiguous on this screen',
+    ]);
   });
 
   it('compte comme non vu ce que le rendu tait dans un conteneur invisible', async () => {
@@ -1044,7 +1065,7 @@ steps:
 
     const result = await generateResolution({ scenario: expecting, driver, provider });
 
-    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches elements you are not shown/);
+    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches the unnamed and hidden elements your tree leaves out/);
   });
 
   it('ne capture pas le vide d\'un nœud jamais montré', async () => {
@@ -1053,7 +1074,7 @@ steps:
 
     const result = await generateResolution({ scenario: capturing, driver, provider });
 
-    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches elements you are not shown/);
+    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches the unnamed and hidden elements your tree leaves out/);
   });
 
   // Le cas muet : la capture lit « A » sans erreur, là où le modèle voulait « B ».
@@ -1067,6 +1088,22 @@ steps:
 
     assert.equal(result.status, 'complete');
     assert.match(result.steps[0]?.rejections[0] ?? '', /"nth" lands on another element than the one in your tree/);
+  });
+
+  it('donne la bonne position quand un seul élément est vu dans le conteneur', async () => {
+    const value = node('text', 'Priority: high');
+    const row = (...children: UINode[]): UINode => node('listitem', 'Printer offline', children);
+    const { driver } = screens([row(value)], [row(unnamed(), value)]);
+    const within = { role: 'listitem', name: 'Printer offline' };
+    const provider = new ScriptedProvider([
+      reading({ role: 'text', nth: 0, within }),
+      reading({ role: 'text', nth: 1, within }),
+    ]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.match(result.steps[0]?.rejections[0] ?? '', /"nth" lands on another element.*add "nth": 1 to it,/);
   });
 
   it('accepte une position qui désigne le même élément sur les deux arbres', async () => {

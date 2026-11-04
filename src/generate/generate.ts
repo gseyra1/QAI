@@ -493,19 +493,19 @@ function verifyChecks(
         errors.push(`capture "${name}": ${blind}`);
         continue;
       }
-      const matches = matchNodes(root, from);
-      if (matches.length === 0) {
-        errors.push(`capture "${name}": target not found on this screen`);
-        continue;
-      }
-      if (matches.length > 1) {
+      const node = matchOne(root, from);
+      if (node === null) {
+        // Séparer « introuvable » et « ambigu » poussait le modèle à recopier les
+        // valeurs (3 exécutions sur 3 sur le parcours témoin) : la précision ne
+        // sert que là où il ne peut pas voir la cause.
         const unseen = unseenMatches(screen, from);
         errors.push(
-          `capture "${name}": ambiguous target, ${unseen ?? `${matches.length} elements match — disambiguate with "within" or "nth"`}`,
+          unseen === null
+            ? `capture "${name}": target not found or ambiguous on this screen`
+            : `capture "${name}": ambiguous target, ${unseen}`,
         );
         continue;
       }
-      const node = matches[0] as UINode;
       const value = readCapture(node, spec);
       if (value === null) {
         errors.push(

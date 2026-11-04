@@ -375,10 +375,37 @@ function withoutPositions(locator: Locator): Locator {
   return within === undefined ? rest : { ...rest, within: withoutPositions(within) };
 }
 
-const NAME_OR_CONTAINER =
-  'target the element by "name", exact or { "contains": "..." } on its stable part, or "within" a named container';
-
 const LEFT_OUT = 'the unnamed and hidden elements your tree leaves out';
+
+/**
+ * « Par son nom » seul poussait le modèle à recopier la valeur : mesuré avec
+ * DeepSeek, `{ "name": "42" }` sur 5 exécutions sur 5, vert ici puis rouge dès que
+ * la donnée change. D'où la partie stable, et l'interdit dit en toutes lettres.
+ */
+const STABLE_NAME_OR_CONTAINER = 'Use { "contains": "..." } on a stable part of the name, or "within" a named container';
+const NEVER_THE_VALUE = 'Never put the value itself in "name"';
+
+/**
+ * Où le rejeu trouve l'élément montré, s'il n'y en a qu'un pour cette cible.
+ *
+ * Une valeur nue dans son conteneur n'a ni partie stable ni conteneur plus
+ * étroit : sa position réelle est alors la seule sortie qui survit à un
+ * changement de données. À plusieurs, rien ne dit lequel le modèle vise.
+ */
+function realPosition(screen: Screen, locator: Locator): number | null {
+  const { nth: _, ...anywhere } = locator;
+  const seen = matchNodes(renderedTree(screen.shown), anywhere);
+  if (seen.length !== 1) return null;
+  const only = seen[0] as UINode;
+  const position = matchNodes(screen.root, anywhere).findIndex((node) => readsAlike(node, only));
+  return position < 0 ? null : position;
+}
+
+function remedy(position: number | null): string {
+  return position === null
+    ? `${STABLE_NAME_OR_CONTAINER}, not "nth", which counts them too. ${NEVER_THE_VALUE}`
+    : `${STABLE_NAME_OR_CONTAINER}; if its name is only data, keep this target and add "nth": ${position} to it, where replay finds the element you see. ${NEVER_THE_VALUE}`;
+}
 
 /**
  * Une cible qui lit autre chose que ce que le modèle a sous les yeux.
@@ -395,15 +422,13 @@ export function blindTarget(screen: Screen, locator: Locator): string | null {
   if (read === undefined) return null;
   const tree = renderedTree(screen.shown);
   const seen = matchNodes(tree, withoutPositions(locator));
-  if (seen.length === 0) {
-    return `this target only matches elements you are not shown, among ${LEFT_OUT}: ${NAME_OR_CONTAINER}`;
-  }
+  if (seen.length === 0) return `this target only matches ${LEFT_OUT}: target an element you can see`;
   if (!positioned(locator)) return null;
   const meant = matchNodes(tree, locator);
   const wanted = meant.length > 0 ? meant : seen;
   return wanted.some((node) => readsAlike(node, read))
     ? null
-    : `"nth" lands on another element than the one in your tree: positions also count ${LEFT_OUT}. Instead, ${NAME_OR_CONTAINER}`;
+    : `"nth" lands on another element than the one in your tree: positions also count ${LEFT_OUT}. ${remedy(realPosition(screen, locator))}`;
 }
 
 /**
@@ -414,11 +439,11 @@ export function blindTarget(screen: Screen, locator: Locator): string | null {
  * contenu de l'arbre complet n'a pas à partir chez le fournisseur.
  */
 export function unseenMatches(screen: Screen, locator: Locator): string | null {
-  const free = withoutPositions(locator);
-  const matches = matchNodes(screen.root, free).length;
-  const seen = matchNodes(renderedTree(screen.shown), free).length;
+  const { nth: _, ...anywhere } = locator;
+  const matches = matchNodes(screen.root, anywhere).length;
+  const seen = matchNodes(renderedTree(screen.shown), anywhere).length;
   if (matches <= seen) return null;
-  return `${matches} element(s) match this target but your tree shows ${seen}: replay also counts ${LEFT_OUT}. Do not use "nth", which counts them too: ${NAME_OR_CONTAINER}`;
+  return `${matches} element(s) match this target but your tree shows ${seen}: replay also counts ${LEFT_OUT}. ${remedy(realPosition(screen, locator))}`;
 }
 
 const CAPTURE_REFERENCE = /\{\{(\w+)\}\}/g;
