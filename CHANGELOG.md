@@ -3,6 +3,19 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [Unreleased]
+
+### Fixed
+
+- **A check that stops using a capture its expectation names is refused.** "the
+  total equals {{prix}}", refused with `expected 0, observed 129` because the
+  capture had read another element, came back as the literal `129`: green at
+  resolving on a false expectation, red once the price changed (4 of 4 runs where
+  the capture read the wrong element; 0 of 16 with this fix, which end in a failed
+  step that gives the capture's value). A `visible`, or any check without
+  `{{name}}` in its value or target, is refused the same way, so an expectation
+  that cannot be written with its capture now fails at that step.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added

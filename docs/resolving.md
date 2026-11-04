@@ -180,6 +180,15 @@ the expectation names `{{name}}` and the check's value does not use it:
 | equals it, under 3 characters, or equals two captures at once | asked once: `{{name}}`, or resent unchanged; kept as is with a warning |
 | contains it | refused, with the exact rewrite: `write {{reference}} in place of "EMP-4418": "{{reference}} — en cours"` |
 | is only part of it (the capture read `Référence EMP-4418`) | warning: the fix belongs to the capture, with `after`/`before`, at a step already resolved |
+| has nothing to do with it, or the check compares no value, like `visible`, and the target does not use `{{name}}` either | refused: the check no longer tests what the scenario says |
+
+The last row is what stands between a wrong capture and a false green. A capture
+that read the cart counter holds `0`, "the total equals {{prix}}" is refused with
+`expected 0, observed 129`, and the model copies `129` off the screen: true on
+this screen, false as the scenario wrote it, and red as soon as the price changes.
+The refusal gives the capture's value, and the step fails: the fault is at a step
+already resolved. An expectation that cannot be written with its capture, like
+"twice {{prix}}", fails the same way.
 
 The target gets the same treatment: "the list contains {{reference}}" written as
 `visible` on `{ "contains": "CMD-7797" }` is green at resolving and red on the

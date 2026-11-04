@@ -600,6 +600,38 @@ function frozenValue(
   return null;
 }
 
+/**
+ * Une attente qui nomme une capture, traduite par une vérification qui ne
+ * l'emploie pas.
+ *
+ * `frozenCapture` reconnaît un littéral qui EST la valeur du jour ; ceci couvre
+ * tout le reste. Mesuré avec DeepSeek sur un parcours de commande : la capture
+ * du prix a lu le compteur du panier, « le total est égal à {{prix}} » est refusé
+ * (`expected 0, observed 129`), et le modèle recopie 129 de l'écran (4 fois sur
+ * 4). Vert à la génération sur une attente fausse, rouge au premier prix changé,
+ * et rien ne désigne la capture, seule fautive. Un `visible` sur le total serait
+ * pire : vert à tous les prix.
+ *
+ * Refusé, pas signalé : la vérification est vraie à l'écran alors que l'attente
+ * du scénario y est fausse, et le fichier serait écrit quand même. Une attente
+ * qui ne s'écrit pas avec sa capture (« le double de {{prix}} ») fait échouer
+ * l'étape : aucune vérification ne dirait ce que le scénario demande.
+ *
+ * Le refus donne la valeur de la capture : quand elle a lu le mauvais élément, le
+ * défaut est à une étape déjà résolue, et seul le lecteur du rapport peut le voir.
+ */
+export function droppedCaptures(
+  key: string,
+  check: unknown,
+  known: Readonly<Record<string, string>>,
+): string[] {
+  if (!isRecord(check)) return [];
+  return unusedCaptures(key, check, known).map(
+    ({ value, template }) =>
+      `assertion "${key}": the scenario compares against ${template}, which holds "${value}", but this check does not use it, so it no longer tests what the scenario says — write ${template} in its value or its target. If ${template} is false on this screen, check the target; a literal copied from the screen is not the fix: if the capture read the wrong element, this step cannot be resolved from here`,
+  );
+}
+
 /** Les noms littéraux d'un locator, `within` compris. */
 export function locatorNames(locator: Record<string, unknown>): string[] {
   const name = locator['name'];

@@ -43,6 +43,7 @@ import {
   actionIssue,
   captureIssue,
   checkIssue,
+  droppedCaptures,
   fallbackIssue,
   frozenCapture,
   frozenFrom,
@@ -779,8 +780,9 @@ function hostBoundChecks(assertions: Record<string, Check>, baseUrl: string | un
 }
 
 /**
- * Les captures nommées par une attente, figées en littéral : voir
- * `frozenCapture`. `known` comprend les captures produites à cette étape.
+ * Les captures nommées par une attente, figées en littéral (`frozenCapture`) ou
+ * abandonnées (`droppedCaptures`). `known` comprend les captures produites à
+ * cette étape.
  */
 function frozenLiterals(
   assertions: Record<string, Check>,
@@ -802,17 +804,21 @@ function frozenLiterals(
   let rewritten = false;
   for (const key of expectations) {
     const outcome = frozenCapture(key, assertions[key], known);
-    if (outcome === null) continue;
-    if (outcome.check !== undefined) {
+    if (outcome?.check !== undefined) {
       out[key] = outcome.check as unknown as Check;
       rewritten = true;
     }
-    if (outcome.note !== undefined) notes.push(outcome.note);
-    if (outcome.error !== undefined) errors.push(outcome.error);
-    if (outcome.question !== undefined) {
+    if (outcome?.note !== undefined) notes.push(outcome.note);
+    if (outcome?.error !== undefined) errors.push(outcome.error);
+    if (outcome?.question !== undefined) {
       questions.push({ key, question: outcome.question, warning: outcome.warning ?? '' });
-    } else if (outcome.warning !== undefined) {
+    } else if (outcome?.warning !== undefined) {
       warnings.push(outcome.warning);
+    }
+    // Sur la forme réécrite : une capture réécrite n'en excuse pas une autre.
+    // Un littéral déjà mis en doute a son motif, plus précis que celui-ci.
+    if (outcome?.error === undefined && outcome?.warning === undefined) {
+      errors.push(...droppedCaptures(key, out[key], known));
     }
   }
   return { assertions: out, rewritten, errors, warnings, notes, questions };
