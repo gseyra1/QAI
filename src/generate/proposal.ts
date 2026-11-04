@@ -2,6 +2,7 @@ import type { Locator, ResolvedTarget, UINode } from '../driver/types.ts';
 import type { CaptureSpec } from '../resolution/types.ts';
 import { numberTokens, toNumber } from '../engine/assert.ts';
 import { matchNodes } from '../engine/match.ts';
+import { renderedTree } from './render.ts';
 
 /**
  * La forme exacte de ce que le modèle propose, contrôlée avant tout usage.
@@ -344,6 +345,80 @@ export async function fallbackIssue(
   return elsewhere
     ? `fallback "${wrong}" is the identifier of another element (${carried}): once the label changes, the gesture would silently land on that element — use the targeted line's own #id, or no fallback`
     : `fallback "${wrong}" designates no element on this screen (${carried}): a fallback must be the targeted line's own #id — otherwise give no fallback`;
+}
+
+/**
+ * Un écran sous ses deux formes.
+ *
+ * `shown` est l'arbre élagué qui part au modèle : son poids se paie à chaque
+ * appel. `root` est l'arbre complet, le seul que le rejeu relit. Une
+ * vérification se juge donc sur `root` : jugée sur `shown`, une cible sans nom
+ * y était unique, puis ambiguë au rejeu sur les mêmes données.
+ */
+export interface Screen {
+  location: string;
+  shown: UINode;
+  root: UINode;
+}
+
+/** Rien ne les distingue à la lecture. Un identifiant n'est pas promis d'une observation à l'autre. */
+function readsAlike(a: UINode, b: UINode): boolean {
+  return a.role === b.role && a.name === b.name && a.value === b.value;
+}
+
+function positioned(locator: Locator): boolean {
+  return locator.nth !== undefined || (locator.within !== undefined && positioned(locator.within));
+}
+
+function withoutPositions(locator: Locator): Locator {
+  const { nth: _, within, ...rest } = locator;
+  return within === undefined ? rest : { ...rest, within: withoutPositions(within) };
+}
+
+const NAME_OR_CONTAINER =
+  'target the element by "name", exact or { "contains": "..." } on its stable part, or "within" a named container';
+
+const LEFT_OUT = 'the unnamed and hidden elements your tree leaves out';
+
+/**
+ * Une cible qui lit autre chose que ce que le modèle a sous les yeux.
+ *
+ * Rien d'autre ne la verrait : `nth` compte aussi les éléments élagués, et un
+ * nœud que le modèle n'a jamais vu ne peut pas être ce qu'il voulait prouver. La
+ * vérification passerait, le rejeu aussi, sur le mauvais élément : sur `["", "A",
+ * "B"]`, le second vu est « B », le second réel « A ». Une position hors de
+ * l'arbre montré reste admise si elle tombe sur un élément vu : elle est juste
+ * pour le rejeu, et c'est lui qui compte.
+ */
+export function blindTarget(screen: Screen, locator: Locator): string | null {
+  const read = matchNodes(screen.root, locator)[0];
+  if (read === undefined) return null;
+  const tree = renderedTree(screen.shown);
+  const seen = matchNodes(tree, withoutPositions(locator));
+  if (seen.length === 0) {
+    return `this target only matches elements you are not shown, among ${LEFT_OUT}: ${NAME_OR_CONTAINER}`;
+  }
+  if (!positioned(locator)) return null;
+  const meant = matchNodes(tree, locator);
+  const wanted = meant.length > 0 ? meant : seen;
+  return wanted.some((node) => readsAlike(node, read))
+    ? null
+    : `"nth" lands on another element than the one in your tree: positions also count ${LEFT_OUT}. Instead, ${NAME_OR_CONTAINER}`;
+}
+
+/**
+ * Ce qu'il faut dire au modèle d'une cible qui en désigne plus qu'il n'en voit.
+ *
+ * Le nœud en trop n'est pas dans son arbre : « ambigu » sans plus l'enverrait
+ * chercher un doublon qui n'existe pas sous ses yeux. Seulement des nombres : le
+ * contenu de l'arbre complet n'a pas à partir chez le fournisseur.
+ */
+export function unseenMatches(screen: Screen, locator: Locator): string | null {
+  const free = withoutPositions(locator);
+  const matches = matchNodes(screen.root, free).length;
+  const seen = matchNodes(renderedTree(screen.shown), free).length;
+  if (matches <= seen) return null;
+  return `${matches} element(s) match this target but your tree shows ${seen}: replay also counts ${LEFT_OUT}. Do not use "nth", which counts them too: ${NAME_OR_CONTAINER}`;
 }
 
 const CAPTURE_REFERENCE = /\{\{(\w+)\}\}/g;

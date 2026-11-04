@@ -14,6 +14,7 @@ import { loadScenario, parseScenario } from '../scenario/load.ts';
 import type { Scenario } from '../scenario/types.ts';
 // Confronté au schéma publié à chaque appel : voir conformance.ts.
 import { generateResolution } from './conformance.ts';
+import { renderTree } from './render.ts';
 
 const SCENARIO = 'examples/checkout-guest.qai.yaml';
 const KNOWN_GOOD = 'examples/.qai/resolutions/checkout-guest.web.json';
@@ -446,6 +447,92 @@ steps:
       assert.equal(report.steps.find((step) => step.status === 'failed')?.stepId, 's2');
     } finally {
       await blind.dispose();
+    }
+  });
+});
+
+/**
+ * Le défaut vu sur un vrai navigateur : l'élément décoratif n'existe que dans
+ * l'arbre complet, celui que le rejeu relit.
+ */
+describe('une cible sans nom face à un élément décoratif', () => {
+  const PAGE = `<!doctype html><html lang="en"><body><p>Order CMD-1042 is confirmed</p><span style="display:inline-block;width:8px;height:8px;background:red"></span></body></html>`;
+  const scenario = parseScenario(`
+id: decoratif
+title: decoratif
+steps:
+  - id: s1
+    do: open the page
+    capture:
+      reference: the order reference
+`);
+  const proposal = (from: unknown) => ({
+    actions: [{ kind: 'navigate', to: '/' }],
+    captures: { reference: { from, extract: 'text', after: 'Order ', before: ' is confirmed' } },
+    assertions: {},
+  });
+  const scripted = (outputs: unknown[]) => {
+    const requests: ModelRequest[] = [];
+    const provider: ModelProvider = {
+      name: 'scripted',
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        requests.push(request);
+        const output = outputs[requests.length - 1];
+        assert.ok(output !== undefined, `réponse ${requests.length} non scénarisée`);
+        return { output, usage: { inputTokens: 10, outputTokens: 10 } };
+      },
+    };
+    return { provider, requests };
+  };
+
+  let server: Server;
+  let baseUrl: string;
+
+  before(async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(PAGE);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('refuse à la génération ce que le rejeu refuserait, sans toucher à l\'arbre du modèle', async () => {
+    const { provider, requests } = scripted([
+      proposal({ role: 'text' }),
+      { captures: proposal({ role: 'text', name: { contains: 'is confirmed' } }).captures },
+    ]);
+    const driver = new PlaywrightWebDriver(() => chromium.launch());
+    let resolution: Resolution;
+    try {
+      await driver.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
+      const pruned = renderTree((await driver.observe({ interactiveOnly: true })).root);
+      assert.doesNotMatch(pruned, /^\s*text$/m, 'l\'élément décoratif ne doit pas être montré');
+
+      const result = await generateResolution({ scenario, driver, provider, baseUrl });
+
+      assert.equal(result.status, 'complete');
+      assert.match(result.steps[0]?.rejections[0] ?? '', /2 element\(s\) match this target but your tree shows 1/);
+      const sent = requests[0]?.messages[0]?.content[0];
+      assert.ok(sent?.type === 'text' && sent.text.includes(pruned));
+      resolution = result.resolution;
+    } finally {
+      await driver.dispose();
+    }
+
+    // Ce qui a été accepté rejoue vert, sur les mêmes données : c'est l'objet.
+    const replay = new PlaywrightWebDriver(() => chromium.launch());
+    try {
+      await replay.launch({ entry: baseUrl, viewport: { width: 1280, height: 800 } });
+      const report = await runScenario({ scenario, resolution, driver: replay, baseUrl, assertTimeoutMs: 0 });
+      assert.equal(report.status, 'passed');
+      assert.equal(report.captures['reference'], 'CMD-1042');
+    } finally {
+      await replay.dispose();
     }
   });
 });

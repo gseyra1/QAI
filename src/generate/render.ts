@@ -17,6 +17,14 @@ export function renderTree(root: UINode): string {
   return lines.join('\n');
 }
 
+/**
+ * L'arbre tel que `renderTree` le donne à lire : un nœud invisible s'en va avec
+ * tout ce qu'il contient, même quand l'élagage l'a gardé pour ses enfants.
+ */
+export function renderedTree(root: UINode): UINode {
+  return { ...root, children: root.children.filter((child) => child.state.visible).map(renderedTree) };
+}
+
 const STATE_MARKS: ReadonlyArray<[keyof UINode['state'], string]> = [
   ['disabled', 'disabled'],
   ['checked', 'checked'],

@@ -3,6 +3,19 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [Unreleased]
+
+### Fixed
+
+- **Captures and assertions are verified on the tree replay reads.** Generation
+  judged them on the pruned tree sent to the model, replay on the full one: a
+  target with no name, unique while resolving, was ambiguous on replay next to an
+  unnamed icon. Green, then red, on identical data. The tree sent to the model does
+  not change. A refusal says how many elements match and how many the model was
+  shown, and to target by name or by `within`. A `nth` that lands on another
+  element than the one shown is refused, and so is a check resting only on elements
+  the model never saw. `target not found or ambiguous` is now two messages.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added

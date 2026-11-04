@@ -41,6 +41,7 @@ import {
 import { checksMessage, questionMessage, retryMessage, stepMessage, systemPrompt } from './prompt.ts';
 import {
   actionIssue,
+  blindTarget,
   captureIssue,
   checkIssue,
   fallbackIssue,
@@ -51,8 +52,10 @@ import {
   nameLiteral,
   namedCaptures,
   readsWholeText,
+  type Screen,
   tautologicalCapture,
   tautologicalCheck,
+  unseenMatches,
 } from './proposal.ts';
 import { renderTree } from './render.ts';
 import { checksProposalSchema, stepProposalSchema } from './schema.ts';
@@ -440,14 +443,25 @@ interface CheckOutcome {
 }
 
 /**
+ * Lit l'écran sous ses deux formes : voir `Screen`.
+ *
+ * L'arbre complet en dernier : c'est lui qui juge, et il doit être le plus
+ * récent si l'écran bouge encore. Un écart ne coûte qu'un tour au modèle.
+ */
+async function look(driver: Driver): Promise<Screen> {
+  const shown = (await driver.observe({ interactiveOnly: true })).root;
+  const { root, location } = await driver.observe();
+  return { location, shown, root };
+}
+
+/**
  * Les captures et les assertions sont vérifiées contre l'écran réellement
- * obtenu. Pour une assertion, la vérité terrain est qu'elle **passe ici** :
- * on enregistre un état connu comme bon, donc une assertion fausse à la
- * génération serait un test faux pour toujours.
+ * obtenu, sur l'arbre que le rejeu relira. Pour une assertion, la vérité
+ * terrain est qu'elle **passe ici** : on enregistre un état connu comme bon,
+ * donc une assertion fausse à la génération serait un test faux pour toujours.
  */
 function verifyChecks(
-  root: UINode,
-  location: string,
+  screen: Screen,
   bag: Readonly<Record<string, string>>,
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
@@ -455,6 +469,7 @@ function verifyChecks(
   baseUrl: string | undefined,
   observable: boolean,
 ): CheckOutcome {
+  const { root, location } = screen;
   const errors: string[] = [];
   const warnings: string[] = [];
   const produced: Record<string, string> = {};
@@ -473,11 +488,24 @@ function verifyChecks(
     }
     try {
       const from = interpolateLocator(spec.from, merged);
-      const node = matchOne(root, from);
-      if (node === null) {
-        errors.push(`capture "${name}": target not found or ambiguous on this screen`);
+      const blind = blindTarget(screen, from);
+      if (blind !== null) {
+        errors.push(`capture "${name}": ${blind}`);
         continue;
       }
+      const matches = matchNodes(root, from);
+      if (matches.length === 0) {
+        errors.push(`capture "${name}": target not found on this screen`);
+        continue;
+      }
+      if (matches.length > 1) {
+        const unseen = unseenMatches(screen, from);
+        errors.push(
+          `capture "${name}": ambiguous target, ${unseen ?? `${matches.length} elements match — disambiguate with "within" or "nth"`}`,
+        );
+        continue;
+      }
+      const node = matches[0] as UINode;
       const value = readCapture(node, spec);
       if (value === null) {
         errors.push(
@@ -541,6 +569,13 @@ function verifyChecks(
       continue;
     }
     try {
+      const located = 'target' in check ? interpolateLocator(check.target, merged) : null;
+      // `absent` se passe de ce qui est vu : c'est même ce qu'il affirme.
+      const blind = located === null || check.check === 'absent' ? null : blindTarget(screen, located);
+      if (blind !== null) {
+        errors.push(`assertion "${expectation}": ${blind}`);
+        continue;
+      }
       if (
         (check.check === 'textEquals' ||
           check.check === 'textContains' ||
@@ -559,7 +594,10 @@ function verifyChecks(
         ...(baseUrl !== undefined ? { baseUrl } : {}),
       });
       if (!result.ok) {
-        errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
+        const unseen = located === null ? null : unseenMatches(screen, located);
+        errors.push(
+          `assertion "${expectation}" false on this screen: ${result.reason}${unseen === null ? '' : `. ${unseen}`}`,
+        );
       }
     } catch (error) {
       errors.push(
@@ -935,7 +973,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     };
 
     await driver.settle();
-    const before = await driver.observe({ interactiveOnly: true });
+    const before = await look(driver);
 
     /**
      * Une assertion déjà vraie AVANT le geste ne prouve pas qu'il a eu lieu.
@@ -977,7 +1015,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
             type: 'text',
             text: stepMessage({
               intent,
-              tree: renderTree(before.root),
+              tree: renderTree(before.shown),
               location: before.location,
               expectations: expectationsOf(step),
               captures: step.capture ?? {},
@@ -1148,14 +1186,14 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     await driver.settle();
-    let after = await driver.observe({ interactiveOnly: true });
+    let after = await look(driver);
 
     /**
      * Réécrit les adresses, PUIS vérifie : la forme prouvée contre l'écran est
      * celle qui sera versionnée.
      */
     const assess = (
-      screen: { root: UINode; location: string },
+      screen: Screen,
       candidate: Pick<Proposal, 'captures' | 'assertions'>,
     ): {
       checks: Pick<Proposal, 'captures' | 'assertions'>;
@@ -1177,7 +1215,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         ...hostBoundChecks(portable.assertions, checkBase),
       ];
       const verify = (): CheckOutcome =>
-        verifyChecks(screen.root, screen.location, bag, checks, step, secrets, checkBase, observable);
+        verifyChecks(screen, bag, checks, step, secrets, checkBase, observable);
       let verified = verify();
       // Les captures de cette étape comptent : « contient {{reference}} » peut
       // nommer la valeur qu'on vient de lire. La réécriture est vérifiée comme
@@ -1268,7 +1306,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
             {
               type: 'text',
               text: checksMessage({
-                tree: renderTree(after.root),
+                tree: renderTree(after.shown),
                 location: after.location,
                 expectations: expectationsOf(step),
                 captures: step.capture ?? {},
@@ -1344,7 +1382,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         continue;
       }
 
-      after = await driver.observe({ interactiveOnly: true });
+      after = await look(driver);
       const assessed = assess(after, candidate);
       ({ checks, outcome } = assessed);
       // La dernière proposition valide : une réponse qui tient, mais
