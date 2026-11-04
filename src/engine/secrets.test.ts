@@ -53,6 +53,177 @@ describe('SecretRegistry', () => {
     assert.equal(reg.redact('x abcdefgh y'), 'x [secret] y');
   });
 
+  it('masque une valeur encodée en partie', () => {
+    // Une application encode ce qu'elle veut : aucune liste de formes n'y suffit.
+    const reg = new SecretRegistry();
+    reg.add('a[b@c d');
+    assert.equal(reg.redact('?a=a%5Bb@c+d'), '?a=[secret]');
+    assert.equal(reg.redact('?a=a%5bb%40c%20d'), '?a=[secret]');
+  });
+
+  it("garde la casse d'un secret : seul l'hexadécimal est libre", () => {
+    const reg = new SecretRegistry();
+    reg.add('TokenABC');
+    assert.equal(reg.redact('tokenabc'), 'tokenabc');
+  });
+
+  it("ne compte pas les bords d'une valeur dans sa longueur utile", () => {
+    const reg = new SecretRegistry();
+    assert.equal(reg.add('  a  '), false);
+    assert.equal(reg.redact('banane'), 'banane');
+  });
+
+  it('tient un secret de plusieurs kilo-octets, sans le recopier dans une erreur', () => {
+    const pem = 'abcdefghij'.repeat(2_000);
+    const reg = new SecretRegistry();
+    assert.equal(reg.add(pem), true);
+    assert.equal(reg.redact(`clé ${pem} fin`), 'clé [secret] fin');
+  });
+
+  it('reconnaît un double encodage, comme dans une redirection next=', () => {
+    const reg = new SecretRegistry();
+    reg.add('p@ss w/rd-Tok3n');
+    const inner = `/compte?jeton=${encodeURIComponent('p@ss w/rd-Tok3n')}`;
+    assert.equal(reg.redact(`/login?next=${encodeURIComponent(inner)}`).includes('Tok3n'), false);
+  });
+
+  it('reconnaît un JSON dans une adresse, et un contrôle échappé', () => {
+    const reg = new SecretRegistry();
+    reg.add('ab"cd\\ef');
+    reg.add('gh\u0001ij');
+    const state = encodeURIComponent(JSON.stringify({ t: 'ab"cd\\ef' }));
+    assert.equal(reg.redact(`/cb?state=${state}`).includes('cd'), false);
+    assert.equal(reg.redact(JSON.stringify('gh\u0001ij')), '"[secret]"');
+  });
+
+  it("reconnaît tout espace encodé, pas seulement l'espace ordinaire", () => {
+    for (const space of [' ', '　', ' ', '\f', '\v', '﻿']) {
+      const value = `pass${space}word`;
+      const reg = new SecretRegistry();
+      reg.add(value);
+      assert.equal(reg.redact(`?j=${encodeURIComponent(value)}`), '?j=[secret]', JSON.stringify(space));
+    }
+  });
+
+  it("reconnaît une adresse encodée hors d'UTF-8", () => {
+    const reg = new SecretRegistry();
+    reg.add('motdepassé-résumé');
+    assert.equal(reg.redact('/f?q=motdepass%E9-r%E9sum%E9'), '/f?q=[secret]');
+  });
+
+  it('mesure la longueur sans les espaces : « a b » ne vaut pas mieux que « ab »', () => {
+    const reg = new SecretRegistry();
+    assert.equal(reg.add('a b'), false);
+    assert.equal(reg.redact('Tableau de bord'), 'Tableau de bord');
+  });
+
+  it('partage ce que les parcours précédents ont appris', () => {
+    const known = new Set<string>();
+    new SecretRegistry([], known).add('alice@acme.test');
+    assert.equal(new SecretRegistry([], known).redact('Compte alice@acme.test'), 'Compte [secret]');
+  });
+
+  it('trouve une valeur en clair juste après un % ou un antislash', () => {
+    for (const [value, text, expected] of [
+      ['4242 4242', 'Remise 20% 4242 4242', 'Remise 20% [secret]'],
+      ['david@example.com', 'Profil 100% david@example.com', 'Profil 100% [secret]'],
+      ['738291', 'Taux 5%738291', 'Taux 5%[secret]'],
+      ['robert', 'CORP\\robert', 'CORP\\[secret]'],
+      ['nadia', 'user=CORP\\nadia', 'user=CORP\\[secret]'],
+    ] as const) {
+      const reg = new SecretRegistry();
+      reg.add(value);
+      assert.equal(reg.redact(text), expected);
+    }
+  });
+
+  it('trouve une valeur qui porte elle-même un % ou un antislash', () => {
+    for (const [value, text] of [
+      ['Pass\\', JSON.stringify({ p: 'Pass\\' })],
+      ['abc%', `${encodeURIComponent('abc%')}12`],
+      ['pa\\ntoken', '/pa/ntoken'],
+      ['x\\"y', '?a=x\\%22y'],
+      ['Pa%cfé1', '?a=Pa%cf%C3%A91'],
+    ] as const) {
+      const reg = new SecretRegistry();
+      reg.add(value);
+      assert.notEqual(reg.redact(text), text, `${value} dans ${text}`);
+    }
+  });
+
+  it('ne colle pas deux mots voisins pour y lire un secret', () => {
+    const reg = new SecretRegistry();
+    reg.add('test');
+    assert.equal(reg.redact('and propagates the exit code'), 'and propagates the exit code');
+    assert.equal(reg.redact('un test ici'), 'un [secret] ici');
+  });
+
+  it("n'efface pas le mot voisin dans une séquence encodée", () => {
+    const reg = new SecretRegistry();
+    reg.add('пароль');
+    const masked = reg.redact(`?q=${encodeURIComponent('тест пароль')}`);
+    assert.ok(masked.startsWith('?q=%D1%82') && masked.endsWith('[secret]'), masked);
+  });
+
+  it("reconnaît une séquence valide à côté d'un octet invalide", () => {
+    const reg = new SecretRegistry();
+    reg.add('€€€');
+    assert.equal(reg.redact(`?q=${encodeURIComponent('€€€')}%FF`), '?q=[secret]%FF');
+  });
+
+  it('couvre les + aux bords de la valeur', () => {
+    const reg = new SecretRegistry();
+    reg.add('+abc+');
+    assert.equal(reg.redact('x +abc+ y'), 'x [secret] y');
+  });
+
+  it('reste linéaire sur une chaîne qui se nourrit elle-même', () => {
+    const reg = new SecretRegistry();
+    reg.add('valeur');
+    const started = performance.now();
+    reg.redact(`%25${'25'.repeat(50_000)}`);
+    reg.redact(`\\u005C${'u005C'.repeat(20_000)}`);
+    assert.ok(performance.now() - started < 3_000);
+  });
+
+  it('résiste au brassage : la valeur disparaît, le texte voisin reste', () => {
+    const alphabet = 'abcXYZ0129-_.~!*()@/:;=?&+,$ %\\"\'<>|[]{}^`é€😀';
+    let seed = 42;
+    const next = (bound: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % bound;
+    };
+    for (let round = 0; round < 3_000; round += 1) {
+      const chars = [...alphabet];
+      const value = `k${Array.from({ length: 6 + next(14) }, () => chars[next(chars.length)]).join('')}Z`;
+      const reg = new SecretRegistry();
+      reg.add(value);
+      const once = encodeURIComponent(value);
+      const forms = [
+        value,
+        once,
+        encodeURIComponent(once),
+        encodeURI(value),
+        JSON.stringify(value).slice(1, -1),
+        new URLSearchParams({ v: value }).toString().slice(2),
+      ];
+      for (const form of forms) {
+        const text = `avant ${form} après`;
+        const masked = reg.redact(text);
+        assert.ok(masked.includes('[secret]'), `${JSON.stringify(value)} dans ${JSON.stringify(text)}`);
+        assert.ok(masked.startsWith('avant') && masked.endsWith('après'), masked);
+      }
+    }
+  });
+
+  it('reste stable quand la valeur fait partie du masque', () => {
+    const reg = new SecretRegistry();
+    reg.add('secret');
+    const once = reg.redact('mot de passe secret');
+    assert.equal(once, 'mot de passe [secret]');
+    assert.equal(reg.redact(once), once);
+  });
+
   it('masque en entier deux secrets qui se chevauchent', () => {
     const reg = new SecretRegistry();
     reg.add('abcdefgh');

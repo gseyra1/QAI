@@ -166,16 +166,11 @@ function emit(out: View, chars: string, start: number, end: number): void {
   out.text += chars;
 }
 
-/** Un tour de décodage d'URL ; `+` y vaut une espace, comme dans un formulaire. */
+/** Un tour de décodage d'URL. */
 function percentDecoded(view: View): View {
   const { text, starts, ends } = view;
   const out = emptyView();
   for (let at = 0; at < text.length; ) {
-    if (text[at] === '+') {
-      emit(out, ' ', starts[at] as number, ends[at] as number);
-      at += 1;
-      continue;
-    }
     const bytes: number[] = [];
     let next = at;
     while (text[next] === '%' && /^[0-9a-fA-F]{2}$/.test(text.slice(next + 1, next + 3))) {
@@ -255,13 +250,10 @@ const MAX_ENCODINGS = 3;
  * pile à partir de quelques kilo-octets, et l'erreur recopiait le secret.
  */
 function readings(text: string): View[] {
-  const raw = rawView(text);
-  const decoded = [raw];
+  const decoded = [rawView(text)];
   for (let round = 0; round < MAX_ENCODINGS && (decoded.at(-1) as View).text.includes('%'); round += 1) {
     decoded.push(percentDecoded(decoded.at(-1) as View));
   }
-  // Un `+` sans `%` : un formulaire encodé n'a pas forcément d'autre marque.
-  if (decoded.length === 1 && text.includes('+')) decoded.push(percentDecoded(raw));
   const all = decoded.flatMap((view) => (view.text.includes('\\') ? [view, jsonUnescaped(view)] : [view]));
   return all.map(collapsed);
 }
@@ -269,15 +261,20 @@ function readings(text: string): View[] {
 /**
  * Les écritures d'une valeur à chercher dans ces lectures.
  *
- * L'analyseur d'URL change `\\` en `/` et retire tabulations et retours, et une
- * valeur peut porter elle-même un `%xx`. Les espaces ne sont retirés que pour les
- * valeurs qui en ont : les retirer du texte collait les mots voisins, et `test`
- * sortait de « the exit code ».
+ * L'analyseur d'URL change `\\` en `/` et retire tabulations et retours, un
+ * formulaire écrit l'espace `+`, et une valeur peut porter elle-même un `%xx`. Les
+ * espaces ne sont retirés que des valeurs qui en ont : les retirer du texte collait
+ * les mots voisins, et `test` sortait de « the exit code ».
  */
 function writings(value: string): string[] {
   const written = collapsed(rawView(value)).text.trim();
-  const decoded = percentDecoded(rawView(written.replaceAll('+', '%2B'))).text;
-  const forms = [written, written.replaceAll('\\', '/'), written.replaceAll(/\s/g, ''), decoded];
+  const forms = [
+    written,
+    written.replaceAll('\\', '/'),
+    written.replaceAll(/\s/g, ''),
+    value.trim().replaceAll(/\s/g, '+'),
+    percentDecoded(rawView(written)).text,
+  ];
   return [...new Set(forms)].filter((form) => form !== '');
 }
 
