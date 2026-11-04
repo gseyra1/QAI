@@ -4,6 +4,7 @@ import type {
   Action,
   Capabilities,
   Driver,
+  ObserveOptions,
   Platform,
   ResolveOutcome,
   UINode,
@@ -15,6 +16,7 @@ import type { Check } from '../resolution/types.ts';
 import { parseScenario } from '../scenario/load.ts';
 // Confronté au schéma publié à chaque appel : voir conformance.ts.
 import { generateResolution } from './conformance.ts';
+import { renderTree } from './render.ts';
 
 const ORDER = node('text', 'Commande CMD-1');
 const BUTTON = node('button', 'Valider');
@@ -895,5 +897,261 @@ steps:
     assert.equal(result.status, 'complete');
     assert.match(result.steps[0]?.rejections[0] ?? '', /action 0: "swipe" is not supported on web/);
     assert.deepEqual(result.resolution.steps['s1']?.actions, [CLICK]);
+  });
+});
+
+/** Deux arbres, comme un vrai pilote : l'élagué pour le modèle, le complet pour le rejeu. */
+class PruningDriver extends FakeDriver {
+  readonly #trees: (acted: readonly Action[]) => { shown: UINode; full: UINode };
+
+  constructor(trees: (acted: readonly Action[]) => { shown: UINode; full: UINode }) {
+    super('http://app.test/');
+    this.#trees = trees;
+  }
+
+  override async observe(options: ObserveOptions = {}): Promise<UISnapshot> {
+    const { shown, full } = this.#trees(this.acted);
+    return { ...(await super.observe()), root: options.interactiveOnly === true ? shown : full };
+  }
+}
+
+/**
+ * Le rejeu relit l'arbre complet. Juger ici sur l'arbre élagué rendait unique une
+ * cible ambiguë au rejeu : vert puis rouge, sur les mêmes données.
+ */
+describe('vérification sur l\'arbre que le rejeu relit', () => {
+  const capturing = parseScenario(`
+id: t
+title: t
+steps:
+  - capture:
+      reference: la référence de la commande
+    id: s1
+`);
+  const expecting = parseScenario(`
+id: t
+title: t
+steps:
+  - expect: le total est affiché
+    id: s1
+`);
+  const KEY = 'le total est affiché';
+  const CONFIRMED = 'Order CMD-1042 is confirmed';
+  const unnamed = (): UINode => node('text', '');
+  const page = (...children: UINode[]): UINode => node('group', 'page', children);
+  const screens = (shown: UINode[], full: UINode[]) => {
+    const trees = { shown: page(...shown), full: page(...full) };
+    return { driver: new PruningDriver(() => trees), shown: trees.shown };
+  };
+  const reading = (from: unknown, rest: object = {}): unknown => ({
+    captures: { reference: { from, extract: 'text', ...rest } },
+  });
+  const named = { role: 'text', name: { contains: 'is confirmed' } };
+
+  it('refuse une cible sans nom ambiguë au rejeu, et dit quoi faire au modèle', async () => {
+    const { driver, shown } = screens([node('text', CONFIRMED)], [node('text', CONFIRMED), unnamed()]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading(named)]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.resolution.steps['s1']?.captures?.['reference']?.from, named);
+    const refusal = result.steps[0]?.rejections[0] ?? '';
+    assert.match(refusal, /ambiguous target, 2 element\(s\) match this target but your tree shows 1/);
+    assert.match(refusal, /stable part of the name, or "within" a named container/);
+    assert.match(refusal, /Never put the value itself in "name"/);
+    // L'explication atteint le modèle, et l'arbre qu'il reçoit ne bouge pas.
+    const retry = JSON.stringify(provider.requests[1]?.messages);
+    assert.ok(retry.includes('your tree shows 1'));
+    assert.ok(firstText(provider.requests[0] as ModelRequest).includes(renderTree(shown)));
+  });
+
+  it('n\'envoie du contenu de l\'arbre complet que dans des nombres', async () => {
+    const { driver } = screens(
+      [node('text', CONFIRMED)],
+      [node('text', CONFIRMED), node('text', 'Interne, jamais montré', [], { state: { visible: false } })],
+    );
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading(named)]);
+
+    await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(JSON.stringify(provider.requests).includes('Interne'), false);
+  });
+
+  it('donne la position réelle quand un seul élément est vu, et l\'accepte en retour', async () => {
+    const value = node('text', '42');
+    const { driver } = screens([value], [unnamed(), value]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', nth: 1 })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.match(result.steps[0]?.rejections[0] ?? '', /keep this target and add "nth": 1 to it,/);
+    assert.deepEqual(result.resolution.steps['s1']?.captures?.['reference']?.from, { role: 'text', nth: 1 });
+  });
+
+  it('ne propose pas de position quand plusieurs éléments sont vus', async () => {
+    const a = node('text', 'Order A is confirmed');
+    const b = node('text', 'Order B is confirmed');
+    const { driver } = screens([a, b], [unnamed(), a, b]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', name: { contains: 'B' } })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    const refusal = result.steps[0]?.rejections[0] ?? '';
+    assert.match(refusal, /3 element\(s\) match this target but your tree shows 2/);
+    assert.match(refusal, /not "nth", which counts them too/);
+    assert.doesNotMatch(refusal, /add "nth"/);
+  });
+
+  // Un message plus précis ici faisait recopier les valeurs au modèle : mesuré.
+  it('garde le message habituel quand tout est sous les yeux du modèle', async () => {
+    const both = [node('text', 'Order A is confirmed'), node('text', 'Order B is confirmed')];
+    const { driver } = screens(both, both);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'heading' }), reading({ role: 'text', nth: 0 })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.steps[0]?.rejections, [
+      'capture "reference": target not found or ambiguous on this screen',
+      'capture "reference": target not found or ambiguous on this screen',
+    ]);
+  });
+
+  it('compte comme non vu ce que le rendu tait dans un conteneur invisible', async () => {
+    const tucked = node('group', 'tiroir', [node('text', CONFIRMED)], { state: { visible: false } });
+    const visible = node('text', CONFIRMED);
+    const { driver } = screens([tucked, visible], [tucked, visible]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'text', nth: 1 })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.match(result.steps[0]?.rejections[0] ?? '', /2 element\(s\) match this target but your tree shows 1/);
+  });
+
+  it('refuse une assertion que seul un nœud non montré fausse, avec la même explication', async () => {
+    const total = node('text', 'Total 129');
+    const { driver } = screens([total], [unnamed(), total]);
+    const provider = new ScriptedProvider([
+      { assertions: { [KEY]: { check: 'textEquals', target: { role: 'text' }, value: 'Total 129' } } },
+      { assertions: { [KEY]: { check: 'textContains', target: { role: 'text', name: { contains: 'Total' } }, value: '129' } } },
+    ]);
+
+    const result = await generateResolution({ scenario: expecting, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    const refusal = result.steps[0]?.rejections[0] ?? '';
+    assert.match(refusal, /false on this screen: expected "Total 129", observed ""\. 2 element\(s\) match/);
+  });
+
+  it('refuse un absent démenti par un nœud non montré', async () => {
+    const { driver } = screens([node('text', 'Total')], [node('text', 'Total'), node('image', '')]);
+    const absent = { check: 'absent', target: { role: 'image' } };
+    const visible = { check: 'visible', target: { role: 'text', name: 'Total' } };
+    const provider = new ScriptedProvider([{ assertions: { [KEY]: absent } }, { assertions: { [KEY]: visible } }]);
+
+    const result = await generateResolution({ scenario: expecting, driver, provider });
+
+    assert.match(result.steps[0]?.rejections[0] ?? '', /1 element\(s\) still present\. 1 element\(s\) match this target but your tree shows 0/);
+  });
+
+  it('ne laisse pas un nœud jamais montré servir de preuve', async () => {
+    const { driver } = screens([node('text', 'Total')], [node('text', 'Total'), node('image', '')]);
+    const provider = new ScriptedProvider([
+      { assertions: { [KEY]: { check: 'visible', target: { role: 'image' } } } },
+      { assertions: { [KEY]: { check: 'visible', target: { role: 'text', name: 'Total' } } } },
+    ]);
+
+    const result = await generateResolution({ scenario: expecting, driver, provider });
+
+    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches the unnamed and hidden elements your tree leaves out/);
+  });
+
+  it('ne capture pas le vide d\'un nœud jamais montré', async () => {
+    const { driver } = screens([node('heading', CONFIRMED)], [node('heading', CONFIRMED), unnamed()]);
+    const provider = new ScriptedProvider([reading({ role: 'text' }), reading({ role: 'heading' })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.match(result.steps[0]?.rejections[0] ?? '', /only matches the unnamed and hidden elements your tree leaves out/);
+  });
+
+  // Le cas muet : la capture lit « A » sans erreur, là où le modèle voulait « B ».
+  it('refuse une position qui tombe sur un autre élément que celui montré', async () => {
+    const a = node('text', 'Order A is confirmed');
+    const b = node('text', 'Order B is confirmed');
+    const { driver } = screens([a, b], [unnamed(), a, b]);
+    const provider = new ScriptedProvider([reading({ role: 'text', nth: 1 }), reading({ role: 'text', name: { contains: 'B' } })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.match(result.steps[0]?.rejections[0] ?? '', /"nth" lands on another element than the one in your tree/);
+  });
+
+  it('donne la bonne position quand un seul élément est vu dans le conteneur', async () => {
+    const value = node('text', 'Priority: high');
+    const row = (...children: UINode[]): UINode => node('listitem', 'Printer offline', children);
+    const { driver } = screens([row(value)], [row(unnamed(), value)]);
+    const within = { role: 'listitem', name: 'Printer offline' };
+    const provider = new ScriptedProvider([
+      reading({ role: 'text', nth: 0, within }),
+      reading({ role: 'text', nth: 1, within }),
+    ]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.match(result.steps[0]?.rejections[0] ?? '', /"nth" lands on another element.*add "nth": 1 to it,/);
+  });
+
+  it('accepte une position qui désigne le même élément sur les deux arbres', async () => {
+    const a = node('text', 'Order A is confirmed');
+    const { driver } = screens([a, node('text', 'Order B is confirmed')], [a, unnamed(), node('text', 'Order B is confirmed')]);
+    const provider = new ScriptedProvider([reading({ role: 'text', nth: 0 }, { after: 'Order ', before: ' is' })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.steps[0]?.rejections, []);
+  });
+
+  it('accepte une position juste sur l\'arbre complet, celui du rejeu', async () => {
+    const a = node('text', 'Order A is confirmed');
+    const b = node('text', 'Order B is confirmed');
+    const { driver } = screens([a, b], [unnamed(), a, b]);
+    const provider = new ScriptedProvider([reading({ role: 'text', nth: 2 }, { after: 'Order ', before: ' is' })]);
+
+    const result = await generateResolution({ scenario: capturing, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.steps[0]?.rejections, []);
+  });
+
+  it('juge « déjà vraie avant le geste » sur l\'arbre du rejeu', async () => {
+    const scenario = parseScenario(`
+id: t
+title: t
+steps:
+  - id: s1
+    do: valider
+    expect: le total est affiché
+`);
+    // Sans image à l'écran dans l'arbre élagué, mais présente pour le rejeu : la
+    // disparition est bien l'effet du geste.
+    const driver = new PruningDriver((acted) => {
+      const total = node('text', 'Total');
+      return acted.length === 0
+        ? { shown: page(total, BUTTON), full: page(total, BUTTON, node('image', '')) }
+        : { shown: page(total, BUTTON), full: page(total, BUTTON) };
+    });
+    const provider = new ScriptedProvider([{ actions: [CLICK], assertions: { [KEY]: { check: 'absent', target: { role: 'image' } } } }]);
+
+    const result = await generateResolution({ scenario, driver, provider });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(provider.requests.length, 1, 'aucune question à poser');
+    assert.deepEqual(result.steps[0]?.warnings, []);
   });
 });
