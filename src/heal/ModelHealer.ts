@@ -1,8 +1,10 @@
 import type { Driver, ResolvedTarget, UINode } from '../driver/types.ts';
 import type { HealRequest, HealResult, Healer } from '../engine/run.ts';
+import { holdsMask, MASK } from '../engine/assert.ts';
 import { renderTree } from '../generate/render.ts';
 import { fallbackIssue, targetIssue } from '../generate/proposal.ts';
 import { healProposalSchema } from '../generate/schema.ts';
+import { maskedProvider } from '../model/masked.ts';
 import type { ModelMessage, ModelProvider } from '../model/types.ts';
 
 export const HEAL_SYSTEM_PROMPT = `An automated test can no longer locate a UI element. You must relocate it.
@@ -25,6 +27,7 @@ Rules:
   "fallback": { "testId": "some-id" } — never the #id of another line, such
   as its container.
 - If several elements match, disambiguate with "within" or "nth".
+- "[secret]" replaces a secret you are not shown: never copy it into a name.
 - The note will be read by a developer in a review diff. Say what changed in
   the application — "the button label went from X to Y" — not what you did.`;
 
@@ -60,6 +63,10 @@ function asProposal(output: unknown): Proposal | string {
   return { target: target as ResolvedTarget, note };
 }
 
+function targetIn(output: unknown): unknown {
+  return typeof output === 'object' && output !== null ? (output as Record<string, unknown>)['target'] : undefined;
+}
+
 function describeFailure(request: HealRequest): string {
   if (request.outcome.reason === 'ambiguous') {
     return `${request.outcome.matches} elements matched: the target is ambiguous`;
@@ -89,6 +96,7 @@ export class ModelHealer implements Healer {
   }
 
   async heal(request: HealRequest): Promise<HealResult> {
+    const provider = maskedProvider(this.#provider, request.redact);
     const conversation: ModelMessage[] = [
       {
         role: 'user',
@@ -113,13 +121,17 @@ export class ModelHealer implements Healer {
     const rejections: string[] = [];
 
     for (let attempt = 0; attempt < this.#attempts; attempt += 1) {
-      const response = await this.#provider.complete({
+      const response = await provider.complete({
         system: HEAL_SYSTEM_PROMPT,
         messages: conversation,
         responseSchema: healProposalSchema(),
       });
 
-      const proposal = asProposal(response.output);
+      // Un repli peut sauver une cible dont le nom porte le masque : `resolve` ne
+      // verrait rien, et `[secret]` entrerait dans le fichier versionné.
+      const proposal = holdsMask(targetIn(response.output)) && !renderTree(request.snapshot.root).includes(MASK)
+        ? `"${MASK}" stands for a secret you are not shown: never copy it into a name`
+        : asProposal(response.output);
       if (typeof proposal === 'string') {
         rejections.push(proposal);
         conversation.push(

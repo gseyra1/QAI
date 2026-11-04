@@ -185,7 +185,7 @@ Containment counts on word boundaries only, and from 3 characters: "1" inside
 "Livraison en 1 jour" proves nothing, so a shorter value is reported, never
 refused. Equality with every named capture is tried before containment, the
 longest value first: `EMP-4418` is `{{reference}}`, not `{{prefix}}-4418`.
-Values from `{{env.…}}` are masked as `***` in the message.
+Values from `{{env.…}}` are masked as `[secret]` in the message.
 
 **Every proposal is checked key by key against the shape
 [schema/resolution.schema.json](../schema/resolution.schema.json) allows.** A
@@ -210,7 +210,7 @@ address with the client-fr data set" came back as `{{env.QAI_USER}}`. The noisy
 case — the variable does not exist — fails on its own. The silent case is the
 dangerous one: if CI does define `QAI_USER` for the login journey, the login is
 typed into the address field with no error, and because the value comes from
-the environment the registry masks it as `***` in every report. Wrong value,
+the environment the registry masks it as `[secret]` in every report. Wrong value,
 and invisible to whoever reviews it.
 
 ## The output file

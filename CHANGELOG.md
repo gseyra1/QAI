@@ -3,6 +3,50 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [0.4.2] - 2026-11-04
+
+### Security
+
+- **Known secrets are masked before reaching the model provider.** Generation and
+  repair sent the screen tree, the current address and capture values in clear:
+  only rejections were masked. An `{{env.NAME}}` value typed into a non-password
+  field, redisplayed by the application, or carried by the address reached the
+  provider as is, on every later step. Everything sent to a provider now passes
+  through `SecretRegistry` at one single point. If you ran `qai resolve` or
+  `qai run --heal` with a third-party provider on such a value, treat that value
+  as exposed and rotate it. What masking still misses is listed in
+  [docs/model.md](docs/model.md#what-reaches-the-provider-and-what-redaction-misses):
+  a value the application reformats, or splits across several elements.
+- **Secrets are known earlier and for longer.** Generation and replay register
+  the variables an intent or an expectation names before the first screen; replay
+  also registers every `{{env.NAME}}` of the resolution. Within one command, what
+  a journey learned stays masked in the next ones.
+- **A secret is recognised once encoded.** `p@ss` in `?q=p%40ss`, in the current
+  address or a network URL, was not masked, in reports either. The text is now
+  also searched as it reads decoded: up to three URL encodings, and JSON escapes.
+- **A value read from a secret is masked.** `extract: number` turned `00738291`
+  into `738291`, which no longer matched.
+- **A secret is masked whole.** A secret containing or overlapping another left
+  its end in clear. `Bearer {{env.X}}` registered only the whole string: `X` on
+  its own was missed.
+- Generation warns when a value is too short to be masked, as replay already did.
+  `a b` counts as two characters: an address can show it as `ab`.
+
+### Changed
+
+- **Masked values read `[secret]`, not `***`**, in reports and for the model. An
+  application displays `Card **** 4242`: the mask could not be told from real
+  text.
+- **A proposal copying `[secret]` is refused.** The model now sees the mask, and
+  could type it or store it in an address. A step that must `navigate` to an
+  address holding a secret can no longer be resolved that way: it used to store
+  the secret itself in the versioned file.
+- `generateResolution` and `runScenario` take an optional `knownSecrets`, to share
+  what was learned across journeys.
+- `HealRequest` has a required `redact` function. A custom `Healer` must pass what
+  it sends to a third party through it: `snapshot` stays unmasked.
+- Playwright 1.64.1, development dependencies and CI actions updated.
+
 ## [0.4.1] - 2026-10-17
 
 First npm release since 0.3.0: it ships 0.4.0 and 0.3.1, never published on
@@ -269,6 +313,7 @@ Not published to npm; shipped with 0.4.1.
 - A misspelled or non-object `watchdogs` block stops the command.
 - Runtime messages in English.
 
+[0.4.2]: https://github.com/gseyra1/QAI/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/gseyra1/QAI/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/gseyra1/QAI/compare/v0.3.0...v0.4.0
 [0.3.1]: https://github.com/gseyra1/QAI/compare/d9b5430...43ceebe

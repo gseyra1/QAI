@@ -78,6 +78,8 @@ Rules for typed values:
   pointing at a variable nobody defined fails the step outright.
 - The reason for the rule is narrow: a secret must not land in the produced
   file, which is versioned forever. It is not a general way to name values.
+- "[secret]" on a screen or in an address replaces a secret you are not shown.
+  Never copy it into a value, a name or an address.
 - {{capture}} also works in a typed value, to reuse what was read at an
   earlier step.
 

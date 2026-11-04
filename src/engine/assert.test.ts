@@ -84,7 +84,7 @@ describe('interpolate', () => {
   });
 
   it('efface les valeurs secrètes d\'un message de rapport', () => {
-    assert.equal(redact('saisie « hunter2 » refusée', ['hunter2']), 'saisie « *** » refusée');
+    assert.equal(redact('saisie « hunter2 » refusée', ['hunter2']), 'saisie « [secret] » refusée');
     assert.equal(redact('rien à cacher', []), 'rien à cacher');
     assert.equal(redact('rien à cacher', ['']), 'rien à cacher');
   });
@@ -277,7 +277,7 @@ describe('evaluateCheck', () => {
         const result = evaluateCheck({ check: 'urlEquals', value: 'clef/{{env.QAI_TEST_SEGMENT}}' }, ici);
         assert.equal(result.ok, false);
         const reason = result.ok === false ? result.reason : '';
-        assert.match(reason, /expected URL "\*\*\*"/);
+        assert.match(reason, /expected URL "\[secret\]"/);
         assert.doesNotMatch(reason, /jeton-secret-123/);
 
         const ok = at('http://127.0.0.1:9000/app/clef/jeton-secret-123', 'http://127.0.0.1:9000/app/');
@@ -326,7 +326,7 @@ describe('evaluateCheck', () => {
       assert.equal(result.ok, false);
       const reason = result.ok === false ? result.reason : '';
       assert.doesNotMatch(reason, /hunter2/);
-      assert.match(reason, /non-numeric value: "gratuit" vs "\*\*\*"/);
+      assert.match(reason, /non-numeric value: "gratuit" vs "\[secret\]"/);
     } finally {
       delete process.env['QAI_TEST_SECRET'];
     }
@@ -346,7 +346,7 @@ describe('evaluateCheck', () => {
       assert.equal(result.ok, false);
       const reason = result.ok === false ? result.reason : '';
       assert.doesNotMatch(reason, /4242/);
-      assert.match(reason, /expected \*\*\*, observed 7/);
+      assert.match(reason, /expected \[secret\], observed 7/);
     } finally {
       delete process.env['QAI_TEST_SECRET'];
     }

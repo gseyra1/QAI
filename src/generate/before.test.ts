@@ -630,12 +630,12 @@ steps:
 
       assert.equal(result.status, 'complete', JSON.stringify(result.steps));
       assert.deepEqual(result.steps[1]?.rejections, [
-        `assertion "${KEY}": the scenario names {{code}}, but "Rappel : ***" freezes its current value "***", and replay would keep comparing against it once the capture changes — write {{code}} in place of "***": "Rappel : {{code}}"`,
+        `assertion "${KEY}": the scenario names {{code}}, but "Rappel : [secret]" freezes its current value "[secret]", and replay would keep comparing against it once the capture changes — write {{code}} in place of "[secret]": "Rappel : {{code}}"`,
       ]);
       assert.ok(!JSON.stringify(result).includes(SECRET), 'le secret ne doit figurer nulle part dans le résultat');
       // Le refus tel que renvoyé au fournisseur, qui est un tiers.
       const refusal = firstText(provider.requests[2]).split('were rejected:')[1] ?? '';
-      assert.match(refusal, /in place of "\*\*\*"/);
+      assert.match(refusal, /in place of "\[secret\]"/);
       assert.ok(!refusal.includes(SECRET));
       assert.deepEqual(result.resolution.steps['s2']?.assertions?.[KEY], {
         check: 'textEquals',

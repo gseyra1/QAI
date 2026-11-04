@@ -116,21 +116,55 @@ prints it at the end of the command ("model spend: …") whenever a cap is set.
 
 ## What reaches the provider, and what redaction misses
 
-A provider is a third party. Every rejection sent back to it — like every
-rejection written into a report — passes through `SecretRegistry`, which
-replaces known secret values with `***`.
+A provider is a third party. Everything sent to it, on generation and on
+repair, passes through `SecretRegistry` at one single point: the screen tree,
+the current address, capture values, rejections. Known secret values become
+`[secret]`. The model writes `{{env.NAME}}` or `{{capture}}`, and QAI substitutes
+the value locally. Screenshots are never sent.
+
+The same registry masks reports, which end up in CI logs.
+
+What the scenario's author wrote goes as written: an expectation that names a
+value must come back word for word, and it is already versioned in clear. The
+same value stays masked everywhere else, on the screen and in the address, except
+where a screen repeats the author's whole sentence. An expectation that is just
+`alice@acme.test` is therefore left in clear everywhere.
+
+A proposal that copies `[secret]` is refused, in a typed value, a name or an
+address: it would pass generation on a value that does not exist. `{{env.NAME}}`
+works in typed values only, so a step that must `navigate` to an address holding
+a secret cannot be resolved that way: go through the form that builds it.
 
 "Known" is the whole limit. QAI can only redact what it knows to be a secret,
-and it knows that by origin: the value came from `{{env.NAME}}`. A token the
-application exposes on its own, never routed through the environment, stays out
-of reach.
+and it knows that by origin:
 
-Two symmetric blind spots follow from matching on substrings. Both are real,
-and neither is fixable at this layer:
+- **Before the first screen**, on generation and on replay: a variable an intent
+  or an expectation names in capitals with an underscore (`sign in with QAI_PASS`;
+  `CI` or `DEBUG` read as words), and any `{{env.NAME}}` they write. Replay also
+  learns every `{{env.NAME}}` of the resolution.
+- **On the way**: any `{{env.NAME}}` an accepted proposal uses, and what is read
+  from a node showing a secret (`extract: number` drops the zeros of `00738291`).
+- **Across journeys**: within one command, a value learned by a journey stays
+  masked in the next ones, in the order they ran.
+
+A token the application exposes on its own, never routed through the
+environment, stays out of reach. So does anything the screen shows of its own
+accord, such as a customer's name in test data: use data you can send to your
+provider, or a provider you host.
+
+The registry searches the text as it stands and as it reads once decoded, up to
+three URL encodings and JSON escapes, with spaces reduced the way observation
+reduces them. `p@ss` is found in `p%40ss`, in `p%2540ss` and in a JSON inside an
+address. Three blind spots remain, and none is fixable at this layer:
 
 - **A value the application reformats is no longer recognised.** `1000` typed
-  into a field and redisplayed as `1 000` no longer matches, and appears in
-  clear.
+  into a field and redisplayed as `1,000` no longer matches, and appears in
+  clear. The same goes for a value the browser rewrites, such as `a/../b` in a
+  path, or a long one Chromium shortens in a console preview.
+- **A value split across several elements is not recognised**, because the tree
+  separates them: a key shown one line per `<div>`, a phrase one word per `<li>`,
+  a token in two `<span>`. Each element goes in clear. Do not display such a value
+  to a page under test with a third-party provider.
 - **A value of two characters or less is refused outright.** Redacting `ab`
   would erase that fragment throughout the report. The registry declines the
   value, and the run reports a warning saying it will appear as-is — silence

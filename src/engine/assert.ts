@@ -47,6 +47,43 @@ export function usesEnv(template: string): boolean {
 }
 
 /**
+ * Les valeurs que les gabarits `{{env.NOM}}` d'un texte désignent.
+ *
+ * Connues avant le premier geste, elles sont masquées même sur un écran qui les
+ * affiche avant l'étape qui les saisit. Une variable absente n'a rien à masquer.
+ */
+export function envValuesIn(text: string): string[] {
+  const values: string[] = [];
+  PLACEHOLDER.lastIndex = 0;
+  for (const match of text.matchAll(PLACEHOLDER)) {
+    const name = match[1] as string;
+    if (!name.startsWith(ENV_PREFIX)) continue;
+    const value = process.env[name.slice(ENV_PREFIX.length)];
+    if (value !== undefined) values.push(value);
+  }
+  return values;
+}
+
+/**
+ * Les valeurs d'environnement que des textes désignent par leur nom.
+ *
+ * À masquer dès le premier écran : un compte déjà affiché au chargement partait
+ * en clair, avant l'étape qui le saisit. Le nom s'écrit en capitales (voir la
+ * consigne) avec un soulignement : `CI`, `API` ou `DEBUG` dans une intention sont
+ * des mots, et `DEBUG=true` masquerait « true » sur tous les écrans. Saisie, une
+ * telle variable reste enregistrée, et `{{env.CI}}` la désigne sans doute.
+ */
+export function namedEnvValues(texts: readonly string[]): string[] {
+  const names = new Set(
+    texts.flatMap((text) => text.match(/[A-Za-z0-9_]+/g) ?? []).filter((word) => /^_*[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(word)),
+  );
+  return [
+    ...[...names].flatMap((name) => process.env[name] ?? []),
+    ...texts.flatMap((text) => envValuesIn(text)),
+  ];
+}
+
+/**
  * Substitue les captures et les variables d'environnement.
  *
  * `{{env.NOM}}` est résolu **à l'exécution**, jamais à l'écriture : le fichier
@@ -78,13 +115,221 @@ export function interpolate(template: string, bag: Readonly<Record<string, strin
   return out;
 }
 
-/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
-export function redact(text: string, secrets: readonly string[]): string {
-  let out = text;
-  for (const secret of secrets) {
-    if (secret !== '') out = out.split(secret).join('***');
+/**
+ * Ce que rapports et modèle lisent à la place d'un secret.
+ *
+ * Pas `***` : une application affiche « Carte **** 4242 », et le masque ne se
+ * distinguait plus du vrai texte. Recopié par le modèle, il ne pouvait donc pas
+ * être refusé sans se tromper dans un sens ou dans l'autre.
+ */
+export const MASK = '[secret]';
+
+/** Un texte réécrit, et d'où vient chaque unité dans le texte d'origine. */
+interface View {
+  text: string;
+  starts: number[];
+  ends: number[];
+}
+
+/** Une séquence UTF-8 complète à partir de `at`, ou un octet seul dans le jeu d'une ancienne page. */
+function decodeSequence(bytes: readonly number[], at: number): { chars: string; length: number } {
+  const lead = bytes[at] as number;
+  const length = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc2 ? 2 : 0;
+  if (length > 0 && at + length <= bytes.length) {
+    try {
+      const sequence = Uint8Array.from(bytes.slice(at, at + length));
+      return { chars: new TextDecoder('utf-8', { fatal: true }).decode(sequence), length };
+    } catch {
+      // Séquence invalide : l'octet seul, ci-dessous.
+    }
+  }
+  return { chars: new TextDecoder('windows-1252').decode(Uint8Array.of(lead)), length: 1 };
+}
+
+function emptyView(): View {
+  return { text: '', starts: [], ends: [] };
+}
+
+function rawView(text: string): View {
+  return {
+    text,
+    starts: Array.from({ length: text.length }, (_, index) => index),
+    ends: Array.from({ length: text.length }, (_, index) => index + 1),
+  };
+}
+
+function emit(out: View, chars: string, start: number, end: number): void {
+  for (let unit = 0; unit < chars.length; unit += 1) {
+    out.starts.push(start);
+    out.ends.push(end);
+  }
+  out.text += chars;
+}
+
+/** Un tour de décodage d'URL. */
+function percentDecoded(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
+  for (let at = 0; at < text.length; ) {
+    const bytes: number[] = [];
+    let next = at;
+    while (text[next] === '%' && /^[0-9a-fA-F]{2}$/.test(text.slice(next + 1, next + 3))) {
+      bytes.push(Number.parseInt(text.slice(next + 1, next + 3), 16));
+      next += 3;
+    }
+    if (bytes.length === 0) {
+      emit(out, text[at] as string, starts[at] as number, ends[at] as number);
+      at += 1;
+      continue;
+    }
+    for (let index = 0; index < bytes.length; ) {
+      const { chars, length } = decodeSequence(bytes, index);
+      emit(out, chars, starts[at + index * 3] as number, ends[at + (index + length) * 3 - 1] as number);
+      index += length;
+    }
+    at = next;
   }
   return out;
+}
+
+const JSON_ESCAPES: Readonly<Record<string, string>> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+};
+
+/** Les échappements d'une chaîne JSON : une cible part sérialisée, une adresse en porte. */
+function jsonUnescaped(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
+  for (let at = 0; at < text.length; ) {
+    const escaped = text[at] === '\\' ? text[at + 1] : undefined;
+    const known = escaped === undefined ? undefined : JSON_ESCAPES[escaped];
+    if (known !== undefined) {
+      emit(out, known, starts[at] as number, ends[at + 1] as number);
+      at += 2;
+    } else if (escaped === 'u' && /^[0-9a-fA-F]{4}$/.test(text.slice(at + 2, at + 6))) {
+      const char = String.fromCharCode(Number.parseInt(text.slice(at + 2, at + 6), 16));
+      emit(out, char, starts[at] as number, ends[at + 5] as number);
+      at += 6;
+    } else {
+      emit(out, text[at] as string, starts[at] as number, ends[at] as number);
+      at += 1;
+    }
+  }
+  return out;
+}
+
+/** Les espaces réduits comme l'observation les réduit. */
+function collapsed(view: View): View {
+  const { text, starts, ends } = view;
+  const out = emptyView();
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at] as string;
+    if (!/\s/.test(char)) emit(out, char, starts[at] as number, ends[at] as number);
+    else if (at > 0 && !/\s/.test(text[at - 1] as string)) emit(out, ' ', starts[at] as number, ends[at] as number);
+  }
+  return out;
+}
+
+/** Au-delà, ce n'est plus une application qui encode. */
+const MAX_ENCODINGS = 3;
+
+/**
+ * Le texte tel qu'il est, et tel qu'il se lit une fois décodé.
+ *
+ * Plusieurs lectures côte à côte, jamais une seule à force de réécritures : dans
+ * « Remise 20% 4242 », le décodage lit `%20` et `% 42`, et une forme unique perdait
+ * la valeur écrite en clair. Chaque lecture est cherchée pour elle-même, à coût
+ * linéaire et borné. Une expression construite sur le secret faisait déborder la
+ * pile à partir de quelques kilo-octets, et l'erreur recopiait le secret.
+ */
+function readings(text: string): View[] {
+  const decoded = [rawView(text)];
+  for (let round = 0; round < MAX_ENCODINGS && (decoded.at(-1) as View).text.includes('%'); round += 1) {
+    decoded.push(percentDecoded(decoded.at(-1) as View));
+  }
+  const all = decoded.flatMap((view) => (view.text.includes('\\') ? [view, jsonUnescaped(view)] : [view]));
+  return all.map(collapsed);
+}
+
+/**
+ * Les écritures d'une valeur à chercher dans ces lectures.
+ *
+ * L'analyseur d'URL change `\\` en `/` et retire tabulations et retours, un
+ * formulaire écrit l'espace `+`, et une valeur peut porter elle-même un `%xx`. Les
+ * espaces ne sont retirés que des valeurs qui en ont : les retirer du texte collait
+ * les mots voisins, et `test` sortait de « the exit code ».
+ */
+function writings(value: string): string[] {
+  const written = collapsed(rawView(value)).text.trim();
+  const forms = [
+    written,
+    written.replaceAll('\\', '/'),
+    written.replaceAll(/\s/g, ''),
+    value.trim().replaceAll(/\s/g, '+'),
+    written.length === 0 ? '' : collapsed(rawView(value.trim().replaceAll(' ', '+'))).text,
+    percentDecoded(rawView(written)).text,
+  ];
+  return [...new Set(forms)].filter((form) => form !== '');
+}
+
+/** Vrai quand `value`, encodée ou non, porte le masque. */
+export function holdsMask(value: unknown): boolean {
+  return readings(JSON.stringify(value) ?? '').some((view) => view.text.includes(MASK));
+}
+
+/**
+ * Remplace par positions, pas par substitutions successives : deux secrets qui
+ * se chevauchent ou s'emboîtent laissaient la fin de l'un en clair.
+ *
+ * `keep` protège des passages entiers : une occurrence entièrement à l'intérieur
+ * reste telle quelle. Le masque en fait toujours partie : `secret` comme mot de
+ * passe de test le remasquait à chaque passage.
+ */
+function maskSpans(text: string, secrets: Iterable<string>, keep: readonly string[]): string {
+  const kept: [number, number][] = [];
+  for (const passage of [...keep, MASK]) {
+    if (passage === '') continue;
+    for (let at = text.indexOf(passage); at >= 0; at = text.indexOf(passage, at + 1)) {
+      kept.push([at, at + passage.length]);
+    }
+  }
+  const spans: [number, number][] = [];
+  const forms = [...secrets];
+  for (const view of readings(text)) {
+    for (const secret of forms) {
+      for (let at = view.text.indexOf(secret); at >= 0; at = view.text.indexOf(secret, at + 1)) {
+        spans.push([view.starts[at] as number, view.ends[at + secret.length - 1] as number]);
+      }
+    }
+  }
+  const visible = spans
+    .filter(([start, end]) => !kept.some(([from, to]) => from <= start && end <= to))
+    .sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const [start, end] of visible) {
+    const last = merged.at(-1);
+    if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  let out = '';
+  let from = 0;
+  for (const [start, end] of merged) {
+    out += text.slice(from, start) + MASK;
+    from = end;
+  }
+  return out + text.slice(from);
+}
+
+/** Le texte d'un rapport, débarrassé des valeurs venues de l'environnement. */
+export function redact(text: string, secrets: readonly string[]): string {
+  return maskSpans(text, secrets.flatMap(writings), []);
 }
 
 /**
@@ -105,7 +350,23 @@ export function redact(text: string, secrets: readonly string[]): string {
  * expose de son propre chef, sans passer par `{{env.X}}`, reste hors de portée.
  */
 export class SecretRegistry {
-  readonly #values = new Set<string>();
+  readonly #values: Set<string>;
+  readonly #authored: readonly string[];
+
+  /**
+   * `authored` : ce que l'auteur a écrit, rendu tel quel. Une attente qui nomme
+   * une valeur doit revenir mot pour mot, c'est sa clé ; et ce texte est déjà
+   * versionné en clair. La valeur reste masquée partout ailleurs, à l'écran
+   * comme dans l'adresse.
+   *
+   * `known` : les valeurs déjà apprises par les parcours précédents de la même
+   * commande. Un compte saisi par le parcours de connexion s'affiche dans le
+   * suivant, qui ne nomme aucune variable.
+   */
+  constructor(authored: readonly string[] = [], known: Set<string> = new Set()) {
+    this.#authored = authored;
+    this.#values = known;
+  }
 
   /**
    * Rend `false` quand la valeur est trop courte pour être masquée sans dégât.
@@ -119,8 +380,9 @@ export class SecretRegistry {
    * à une protection qui n'existe pas.
    */
   add(value: string): boolean {
-    if (value.length <= 2) return false;
-    this.#values.add(value);
+    // Sans ses espaces : « a b » peut se lire « ab » dans une adresse.
+    if (value.replaceAll(/\s/g, '').length <= 2) return false;
+    for (const form of writings(value)) this.#values.add(form);
     return true;
   }
 
@@ -129,7 +391,7 @@ export class SecretRegistry {
   }
 
   redact(text: string): string {
-    return this.#values.size === 0 ? text : redact(text, [...this.#values]);
+    return this.#values.size === 0 ? text : maskSpans(text, this.#values, this.#authored);
   }
 
   get size(): number {
@@ -203,6 +465,17 @@ export function extractValue(node: UINode, kind: ExtractKind): string | null {
   return parsed === null ? null : String(parsed);
 }
 
+/**
+ * Une valeur lue sur un nœud qui porte un secret en dérive.
+ *
+ * `extract: number` retire zéros et séparateurs : le masque ne reconnaît plus le
+ * résultat, et la capture partait en clair.
+ */
+export function learnDerived(secrets: SecretRegistry, node: UINode, read: string): void {
+  const sources = [node.name, node.value ?? ''];
+  if (sources.some((source) => secrets.redact(source) !== source)) secrets.add(read);
+}
+
 export type CheckResult = { ok: true } | { ok: false; reason: string };
 
 const STATE_LABEL = { checked: 'checked', disabled: 'disabled', selected: 'selected' } as const;
@@ -257,7 +530,9 @@ export function envSecrets(check: Check, bag: Readonly<Record<string, string>>):
   const template: unknown = (check as { value?: unknown }).value;
   if (typeof template !== 'string' || !usesEnv(template)) return [];
   try {
-    return [interpolate(template, bag)];
+    // La variable seule aussi : « Bearer {{env.X}} » ne s'affiche pas toujours
+    // avec son préfixe.
+    return [interpolate(template, bag), ...envValuesIn(template)];
   } catch {
     // Une variable absente n'a aucune valeur à masquer. L'échec est signalé
     // ailleurs, par le nom de la variable — qui n'est pas le secret.
@@ -319,14 +594,14 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
       if (interpolated === '') {
         return { ok: false, reason: 'urlContains value is empty: every URL contains it, so it proves nothing' };
       }
-      const shown = usesEnv(check.value) ? '***' : interpolated;
+      const shown = usesEnv(check.value) ? MASK : interpolated;
       return observed.includes(interpolated)
         ? { ok: true }
         : { ok: false, reason: `"${shown}" not found in URL "${observed}"` };
     }
     const expected = resolveAgainstBase(interpolated, context.baseUrl);
     if (observed === expected) return { ok: true };
-    const shown = usesEnv(check.value) ? '***' : expected;
+    const shown = usesEnv(check.value) ? MASK : expected;
     // Une valeur relative sans base, ou vide, ne peut jamais passer : le dire
     // évite de chercher la régression dans l'application.
     const unresolved = isDegenerateUrlValue(interpolated)
@@ -398,7 +673,7 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // Ce qui vient de l'environnement est un secret par hypothèse, et un rapport
   // d'échec finit dans les journaux d'une CI.
   const secret = usesEnv(check.value);
-  const shown = secret ? '***' : expected;
+  const shown = secret ? MASK : expected;
 
   if (check.check === 'textContains') {
     // Même garde que pour urlContains : tout texte contient la chaîne vide, et
@@ -422,6 +697,10 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
 
   const left = toNumber(observed);
   const right = toNumber(expected);
+  // La conversion réécrit le texte : « 00738291 » devient 738291, que le masque
+  // ne reconnaît plus. Le masque se décide donc sur le texte lu.
+  const masked = (text: string): boolean => context.secrets !== undefined && context.secrets.redact(text) !== text;
+  const read = masked(observed) ? MASK : left;
   if (left === null || right === null) {
     return { ok: false, reason: `non-numeric value: "${observed}" vs "${shown}"` };
   }
@@ -430,5 +709,5 @@ function evaluate(check: Check, context: CheckContext): CheckResult {
   // par le message d'inégalité au lieu du message de format.
   return left === right
     ? { ok: true }
-    : { ok: false, reason: `expected ${secret ? '***' : right}, observed ${left}` };
+    : { ok: false, reason: `expected ${secret || masked(expected) ? MASK : right}, observed ${read}` };
 }

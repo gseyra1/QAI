@@ -85,6 +85,22 @@ export function isVerificationOnly(step: Step, platform: Platform): boolean {
   return intentFor(step, platform) === '';
 }
 
+/**
+ * Ce que l'auteur a écrit et que le modèle reçoit.
+ *
+ * Une description de capture n'est pas vérifiée au chargement : seul le texte
+ * compte ici.
+ */
+export function authoredTexts(scenario: Scenario, platform: Platform): string[] {
+  return scenario.steps
+    .flatMap((step) => [
+      intentFor(step, platform),
+      ...expectationsOf(step),
+      ...Object.entries(step.capture ?? {}).flat(),
+    ])
+    .filter((text): text is string => typeof text === 'string');
+}
+
 export function expectationsOf(step: Step): string[] {
   if (step.expect === undefined) return [];
   return Array.isArray(step.expect) ? step.expect : [step.expect];

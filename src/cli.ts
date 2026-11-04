@@ -450,6 +450,8 @@ export async function main(argv: string[]): Promise<number> {
       : (await loadModule<StateProvider>(settings.states, 'StateProvider')).value;
 
   if (command === 'resolve') {
+    // Un seul pour toute la commande : voir `SecretRegistry`.
+    const knownSecrets = new Set<string>();
     const baseUrl = entry;
     if (baseUrl === undefined || settings.provider === undefined) {
       process.stderr.write(`${entryFlag} and --provider are required\n`);
@@ -482,6 +484,7 @@ export async function main(argv: string[]): Promise<number> {
           scenario,
           driver,
           provider,
+          knownSecrets,
           // Même base qu'au rejeu, sans quoi un chemin de fixture écrit ici ne
           // désigne pas le même fichier là-bas.
           baseDir: dirname(path),
