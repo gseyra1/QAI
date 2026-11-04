@@ -3,7 +3,7 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
-## [0.4.2] - 2026-11-03
+## [0.4.2] - 2026-11-04
 
 ### Security
 
