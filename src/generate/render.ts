@@ -25,9 +25,7 @@ const STATE_MARKS: ReadonlyArray<[keyof UINode['state'], string]> = [
   ['focused', 'focused'],
 ];
 
-function walk(node: UINode, depth: number, lines: string[]): void {
-  if (!node.state.visible) return;
-
+function line(node: UINode): string {
   const parts: string[] = [node.role];
   if (node.name !== '') parts.push(`"${node.name}"`);
   if (node.value !== undefined && node.value !== '') parts.push(`= "${node.value}"`);
@@ -35,7 +33,32 @@ function walk(node: UINode, depth: number, lines: string[]): void {
   const marks = STATE_MARKS.filter(([key]) => node.state[key] === true).map(([, label]) => label);
   if (marks.length > 0) parts.push(`[${marks.join(' ')}]`);
   if (node.testId !== undefined) parts.push(`#${node.testId}`);
+  return parts.join(' ');
+}
 
-  lines.push(`${'  '.repeat(depth)}${parts.join(' ')}`);
+function walk(node: UINode, depth: number, lines: string[]): void {
+  if (!node.state.visible) return;
+
+  lines.push(`${'  '.repeat(depth)}${line(node)}`);
   for (const child of node.children) walk(child, depth + 1, lines);
+}
+
+function pathTo(from: UINode, node: UINode): UINode[] | null {
+  if (from === node) return [];
+  for (const child of from.children) {
+    const below = pathTo(child, node);
+    if (below !== null) return [from, ...below];
+  }
+  return null;
+}
+
+/**
+ * Un élément et ses conteneurs nommés, du plus proche au plus lointain.
+ *
+ * Sa ligne seule ne dit pas où il est : `text "0"` n'apprend rien, « dans le lien
+ * Panier 0 » dit que ce n'est pas un prix.
+ */
+export function renderAt(root: UINode, node: UINode): string {
+  const named = (pathTo(root, node) ?? []).filter((parent) => parent.name !== '').reverse();
+  return [line(node), ...named.map((parent) => `inside ${line(parent)}`)].join(', ');
 }

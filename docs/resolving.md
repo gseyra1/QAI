@@ -144,6 +144,14 @@ first price change breaks it. Applies when the locator's name fully determines
 the value read; a partial label (`contains: "Référence"`) reads something and
 is not reported.
 
+A number gets a rewrite when it can: `{ "name": "129,00 €" }` becomes
+`{ "contains": "€" }`, the longest part of the text without a digit, provided that
+fragment designates the same element and reads the same number on this screen. It
+is a `note`. Anything else, a capture with no fixed part such as a product name, or
+a fragment that is ambiguous, is asked about once: the model shows what stays, or
+resends it, and the warning remains if it does. The question comes with the screen,
+on the same terms as the read-back below.
+
 Why not refuse: measured with a real model, refusing made things worse. It
 dropped the value for a `visible` on a structural target — green when the
 displayed status was wrong — captured the wrong element, or stopped converging
@@ -180,6 +188,15 @@ the expectation names `{{name}}` and the check's value does not use it:
 | equals it, under 3 characters, or equals two captures at once | asked once: `{{name}}`, or resent unchanged; kept as is with a warning |
 | contains it | refused, with the exact rewrite: `write {{reference}} in place of "EMP-4418": "{{reference}} — en cours"` |
 | is only part of it (the capture read `Référence EMP-4418`) | warning: the fix belongs to the capture, with `after`/`before`, at a step already resolved |
+| has nothing to do with it, or the check compares no value, like `visible`, and the target does not use `{{name}}` either | refused: the check no longer tests what the scenario says |
+
+The last row is what stands between a wrong capture and a false green. A capture
+that read the cart counter holds `0`, "the total equals {{prix}}" is refused with
+`expected 0, observed 129`, and the model copies `129` off the screen: true on
+this screen, false as the scenario wrote it, and red as soon as the price changes.
+The refusal gives the capture's value, and the step fails: the fault is at a step
+already resolved. An expectation that cannot be written with its capture, like
+"twice {{prix}}", fails the same way.
 
 The target gets the same treatment: "the list contains {{reference}}" written as
 `visible` on `{ "contains": "CMD-7797" }` is green at resolving and red on the
@@ -240,6 +257,19 @@ gestures and captures take exactly their own fields. A missing field is named
 not found`. Two shapes the schema allows are refused because they prove
 nothing: a `value` on `visible`/`absent` (never compared — the reviewer would
 believe it was) and `countAtLeast 0` (true on any screen).
+
+**A capture located by position alone is read back.** `{ "role": "text", "nth": 0 }`
+counts from the top of the page. An element is there, so it passes, and on a page
+with no named container it read the cart counter instead of the price. When a
+capture has an `nth` and no name, neither its own nor a container's, the model is
+shown what it read, where, and the screen, and either points `from` elsewhere or
+resends it. Same terms as the question above: at most two model calls, and a new
+capture must pass every check again. It is asked even on the last attempt, since
+that is when these captures arrive. Without a usable answer the capture is kept,
+with a warning.
+
+A capture whose target is missing says why: several elements match, its `within`
+designates nothing, or no element matches.
 
 **A verification-only step gets no actions; a step with an intent gets at least
 one.** For a step with no intent on the platform being resolved, phase A is
