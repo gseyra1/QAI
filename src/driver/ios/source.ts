@@ -216,7 +216,8 @@ function valueOf(element: XmlElement, type: string, role: Role): string | undefi
 }
 
 /**
- * Rendu, au sens du web : présent dans l'arbre avec une boîte non vide.
+ * Une boîte non vide : la première moitié de « rendu », au sens du web. La
+ * seconde — un descendant rendu — est jugée dans `walk`.
  *
  * L'attribut `visible` de XCUITest veut dire « à l'écran » : une ligne de
  * liste sous le pli y vaut « false ». Le reprendre tel quel faisait passer
@@ -224,11 +225,36 @@ function valueOf(element: XmlElement, type: string, role: Role): string | undefi
  * écran — un vert qui ne prouve rien — et faisait compter à `resolve` une
  * autre population que celle montrée au modèle. Le web ne regarde pas la
  * fenêtre non plus : un élément sous le pli y est visible. UIKit retire déjà
- * de l'arbre d'accessibilité les vues masquées ou transparentes ; reste la
- * boîte vide d'une vue repliée.
+ * de l'arbre d'accessibilité les vues masquées ou transparentes — les
+ * équivalents de `visibility:hidden` et `opacity:0` ; reste la boîte vide,
+ * qui montre ses enfants ou les rogne, et que `clippedOnScreen` départage.
  */
 function isRendered(rect: Rect): boolean {
   return rect.width > 0 && rect.height > 0;
+}
+
+function intersects(rect: Rect, viewport: Rect): boolean {
+  return (
+    rect.x < viewport.x + viewport.width &&
+    rect.x + rect.width > viewport.x &&
+    rect.y < viewport.y + viewport.height &&
+    rect.y + rect.height > viewport.y
+  );
+}
+
+/**
+ * Rogné par un ancêtre : la seule preuve que la source en donne.
+ *
+ * Le web lit le rognage sur le rogneur (`overflow`) ; la source XCUITest ne
+ * porte pas `clipsToBounds`. Reste ce que XCUITest dit de l'élément lui-même :
+ * hors de l'écran alors que sa boîte est DANS l'application, ce n'est pas le
+ * pli qui le cache. La règle n'est appliquée que sous un ancêtre de boîte
+ * vide — un conteneur replié —, jamais ailleurs : une ligne qu'une liste
+ * intérieure a fait défiler hors de ses bords reste rendue, comme sur le web.
+ * Sans l'attribut `visible` dans la source, rien n'est rogné.
+ */
+function clippedOnScreen(element: XmlElement, rect: Rect, viewport: Rect): boolean {
+  return element.attributes['visible'] === 'false' && isRendered(rect) && intersects(rect, viewport);
 }
 
 /**
@@ -239,17 +265,12 @@ function isRendered(rect: Rect): boolean {
 function isOnScreen(element: XmlElement, rect: Rect, viewport: Rect): boolean {
   const raw = element.attributes['visible'];
   if (raw !== undefined) return raw === 'true';
-  return (
-    isRendered(rect) &&
-    rect.x < viewport.x + viewport.width &&
-    rect.x + rect.width > viewport.x &&
-    rect.y < viewport.y + viewport.height &&
-    rect.y + rect.height > viewport.y
-  );
+  return isRendered(rect) && intersects(rect, viewport);
 }
 
-function stateOf(element: XmlElement, role: Role, traits: Set<string>, rect: Rect): UINode['state'] {
-  const state: UINode['state'] = { visible: isRendered(rect) };
+/** `visible` est décidé par l'appelant : il dépend des descendants et des ancêtres. */
+function stateOf(element: XmlElement, role: Role, traits: Set<string>, visible: boolean): UINode['state'] {
+  const state: UINode['state'] = { visible };
 
   if (element.attributes['enabled'] === 'false' || traits.has('NotEnabled')) state.disabled = true;
 
@@ -331,20 +352,31 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
   let counter = 0;
   let navigationTitle: string | undefined;
 
+  /**
+   * `underEmpty` : un ancêtre a une boîte vide. `clippedAbove` : un ancêtre a
+   * été jugé rogné, et rien ne s'en échappe — UIKit n'a pas l'équivalent des
+   * `absolute` et `fixed` du web.
+   */
   function walk(
     element: XmlElement,
     xpath: string,
     isRoot: boolean,
     inTabBar: boolean,
     modal: string | undefined,
-  ): UINode | null {
+    underEmpty: boolean,
+    clippedAbove: boolean,
+  ): { node: UINode | null; rendered: boolean } {
     const type = shortType(element);
-    if (!isRoot && SKIPPED.has(type)) return null;
+    if (!isRoot && SKIPPED.has(type)) return { node: null, rendered: false };
 
     const traits = traitsOf(element);
     const rect = rectOf(element);
     const role = roleOf(type, traits, inTabBar);
-    const state = stateOf(element, role, traits, rect);
+    const boxed = isRendered(rect);
+    const clipped = clippedAbove || (underEmpty && clippedOnScreen(element, rect, viewport));
+    // `visible` est fixé une fois les enfants lus : une boîte vide est rendue
+    // par ses descendants.
+    const state = stateOf(element, role, traits, false);
     const onScreen = isOnScreen(element, rect, viewport);
     // L'identifiant est réservé avant les enfants : ils doivent pouvoir
     // désigner le dialogue qui les contient.
@@ -360,12 +392,31 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     // tout élagage — puisque c'est sur elle que XCUITest évaluera le chemin.
     const ranks = new Map<string, number>();
     const children: UINode[] = [];
+    let renderedChild = false;
     for (const child of element.children) {
       const rank = (ranks.get(child.tag) ?? 0) + 1;
       ranks.set(child.tag, rank);
-      const built = walk(child, `${xpath}/${child.tag}[${rank}]`, false, inTabBar || type === 'TabBar', within);
-      if (built !== null) children.push(built);
+      const built = walk(
+        child,
+        `${xpath}/${child.tag}[${rank}]`,
+        false,
+        inTabBar || type === 'TabBar',
+        within,
+        underEmpty || !boxed,
+        clipped,
+      );
+      if (built.rendered) renderedChild = true;
+      if (built.node !== null) children.push(built.node);
     }
+
+    /**
+     * Rendu : une boîte non vide, ou un descendant rendu — même règle que le
+     * web. Un conteneur SwiftUI de taille nulle montre ses enfants ; le juger
+     * invisible retirait tout son contenu de l'arbre rendu au modèle, puisque
+     * le rendu écarte un nœud invisible avec ses descendants.
+     */
+    const rendered = !clipped && (boxed || renderedChild);
+    state.visible = rendered;
 
     const node: UINode = {
       id,
@@ -400,8 +451,8 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     elements.set(node.id, info);
     if (isModal) modals.push({ id, name: node.name });
 
-    if (isRoot || complete) return node;
-    if (!state.visible && children.length === 0) return null;
+    if (isRoot || complete) return { node, rendered };
+    if (!rendered && children.length === 0) return { node: null, rendered };
 
     // Les vues anonymes s'empilent sur iOS plus encore que les `div` sur le
     // web : un emballage sans nom, non interactif, à enfant unique, ne dit
@@ -409,13 +460,13 @@ export function readScreen(xml: string, options: ReadOptions): Screen {
     const only = children[0];
     if (interactiveOnly && only !== undefined && children.length === 1 && node.name === '' && !INTERACTIVE.has(role)) {
       if (node.testId !== undefined && only.testId === undefined) only.testId = node.testId;
-      return only;
+      return { node: only, rendered };
     }
 
-    return keep(node, interactiveOnly) ? node : null;
+    return { node: keep(node, interactiveOnly) ? node : null, rendered };
   }
 
-  const root = walk(app, `//${app.tag}[1]`, true, false, undefined) as UINode;
+  const root = walk(app, `//${app.tag}[1]`, true, false, undefined, false, false).node as UINode;
   const declared = app.attributes['bundleId'];
   const bundleId = declared !== undefined && declared !== '' ? declared : options.bundleId;
   const screen: Screen = {

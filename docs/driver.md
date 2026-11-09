@@ -41,6 +41,46 @@ a second "Valider" button, a test that "passes" by silently clicking the wrong
 one is worse than no test at all. The driver refuses to choose and reports the
 match count.
 
+## What `visible` means
+
+`state.visible` is what the user can see once the page is scrolled to it:
+**rendered**, even below the fold. `visible` and `absent` checks read it, the
+tree shown to the model leaves out every invisible node with its whole
+subtree, and `resolve()` answers `not-visible` on it. Hence one invariant: an
+invisible node has no visible descendant.
+
+A node is visible when it paints its own box, or when one of its descendants
+is visible, unless an ancestor hides it. An empty box alone decides nothing:
+
+| Page | Empty box | Its content |
+|---|---|---|
+| `display:contents` wrapper | yes, no box at all | visible: the wrapper is visible through it |
+| container holding only floats | zero height, `overflow:visible` | visible, and so is the container |
+| `height:0; overflow-x:clip; overflow-y:visible` | zero height, does not clip vertically | visible |
+| collapsed accordion, `height:0; overflow:hidden` | zero height, clips | hidden: the children keep their own box, the ancestor decides |
+
+On the web, an ancestor hides its descendants when it is `display:none`,
+`opacity:0` or `content-visibility:hidden`, when it is the content of a closed
+`<details>` (its first `<summary>` excepted), or when its box is empty on an
+axis where `overflow` (or `contain: paint`) clips. `visibility:hidden` is read
+on each element: it is inherited, and a descendant that sets `visible` again is
+painted, so it stays visible. What the browser paints outside the clipping
+ancestor stays visible too: a `position:absolute` whose containing block is
+above it, a `position:fixed` with no transformed ancestor in between, and the
+top layer — a modal `<dialog>`, an open popover — which escapes the opacity of
+its ancestors as well. The root never clips, and neither does `body` while the
+root leaves its own overflow `visible`: it is propagated to the viewport.
+
+`resolve()` describes one element without walking the page, so it computes the
+context its ancestors impose first: an element is judged the same way in the
+full tree and alone. Elements with `aria-hidden` stay out of the tree, but a
+wrapper with no box still counts them when deciding whether it is visible.
+
+Not covered: content clipped by `clip`, `clip-path` or a box of 1×1 pixel
+(the usual "visually hidden" class), content covered by another element, and
+content scrolled out of an inner scroll container. These read as visible, as
+before.
+
 ## Uploading a file
 
 ```json
@@ -251,9 +291,17 @@ normalized tree with the role table above, and:
   is ambiguous. `fallback.selector` is web-only and ignored;
 - **heading** — a `StaticText` (or `Other`) carrying the `Header` trait;
 - **state** — `visible` means **rendered**, as on the web: present with a
-  non-empty frame, even below the fold. XCUITest's own `visible` attribute
-  means on screen; it only decides whether `scrollTo` must scroll. `enabled`,
-  switch value `1`/`0` as `checked`, the `Selected` trait as `selected`;
+  non-empty frame, even below the fold, or holding a rendered descendant (a
+  zero-frame SwiftUI container shows its children). XCUITest's own `visible`
+  attribute means on screen; it decides whether `scrollTo` must scroll, and
+  one thing more. The source carries no `clipsToBounds`, so under an ancestor
+  with an empty frame, an element XCUITest reports off screen although its
+  frame lies inside the application is read as clipped — a collapsed
+  container — and is not rendered, with its descendants. Nowhere else: a row
+  an inner list scrolled out of its bounds stays rendered. Hidden and
+  transparent views need no rule, UIKit already leaves them out of the
+  accessibility tree. `enabled`, switch value `1`/`0` as `checked`, the
+  `Selected` trait as `selected`;
 - **value** — never the value of a `SecureTextField`, as `type=password` on
   the web. A text field whose value equals its placeholder is empty;
 - **location** — `<bundle id>/<on-screen navigation bar title>`, or the bundle
@@ -347,7 +395,10 @@ On real screens covering a navigation bar, a table longer than the screen, a
 
 - [ ] elements carry `traits`, `placeholderValue` and `visible`;
 - [ ] cells below the fold have a non-zero `width` and `height` — QAI reads a
-  zero frame as not rendered;
+  zero frame with no rendered descendant as not rendered;
+- [ ] in a collapsed container (zero height, `clipsToBounds`), the children
+  report `visible="false"` — QAI relies on it to hide them; if they report
+  `true`, collapsed content reads as visible;
 - [ ] the dump looks like `fixtures/ios/*.xml`, which the driver is tested
   against. Any difference is a finding.
 
@@ -390,5 +441,6 @@ the XPath latency with its node count.
 Implement `Driver` from `src/driver/types.ts`, then pass the same test suite
 as the web driver: `src/driver/web/PlaywrightWebDriver.test.ts` covers
 normalization, geometry, exclusion of hidden nodes, states, resolution,
-ambiguity, fallback, observable action, refused capability. It is the de facto
-conformance test of the contract.
+ambiguity, fallback, observable action, refused capability, and
+`src/driver/web/visibility.test.ts` what [`visible` means](#what-visible-means).
+They are the de facto conformance test of the contract.
