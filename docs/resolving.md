@@ -273,8 +273,19 @@ or when the meaning of a stored field changes (v3: relative
 `urlEquals` values resolved against the base, empty `actions` for
 verification-only steps). A file is written with the lowest version its content
 needs, so a heal does not make it unreadable for a teammate on an older QAI. A
-QAI older than the file refuses it. `qai check` and `qai run` warn about v1
-files only: a v2 file is a valid v3 and v4 file.
+QAI older than the file refuses it.
+
+The file also records the `observation` it was written under: what the screen
+tree shows, and under which names. It is not a format version — nothing stored
+changes meaning — so a QAI that ignores the field still reads the file: 0.5.x
+reads files written today. Observation 5 changed
+[visibility](driver.md#what-visible-means). `qai check` and `qai run` warn about
+a file observed under an older version, or written before the field existed
+(0.5.x and earlier): a `visible` check on something the user cannot see turns
+red, which is the fix; regenerate with `qai resolve` if one turns red where the
+screen is right. A file that replays green can be kept as is: the next heal or
+resolve records observation 5. A file observed by a newer QAI is read, and
+reported.
 
 `qai resolve --strict` writes nothing when a warning remains, and exits 1.
 Without it, warnings are printed and the file is written. It turns every signal

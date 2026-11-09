@@ -13,6 +13,11 @@
       "minimum": 1,
       "description": "Version of the resolution format, not of the application. Absent means 1. It goes up when the observation changes (v2), when the meaning of a stored field changes (v3: a relative urlEquals value is resolved against the base URL; actions may be empty for a verification-only step), or when a new field appears (v4: after and before on a capture). A file is written with the lowest version its content needs. A QAI refuses a file newer than the version it reads."
     },
+    "observation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of the observation the file was written under: what the screen tree shows, and under which names (v5: visibility). Not a format version: a QAI that ignores it still reads the file. Absent in files written by QAI 0.5.x or earlier, which were observed under at most their version. A file observed under an older version is reported by qai check and qai run, never refused."
+    },
     "scenario": {
       "type": "string",
       "description": "Id of the scenario this file resolves."

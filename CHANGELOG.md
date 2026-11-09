@@ -3,6 +3,56 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [Unreleased]
+
+Replay behavior changes: release this as 0.6.0 at least.
+
+### Changed
+
+- **Visibility follows what the user sees, not the size of a box.** A box of
+  zero size used to make its element invisible, and the tree shown to the model
+  drops an invisible node with its whole subtree. Content inside a
+  `display:contents` wrapper, or inside a container holding only floats, was
+  therefore never shown to the model although the user sees it; a button that is
+  itself `display:contents` was refused at replay as "not visible". Such a
+  wrapper is now visible when its content is, and so is a `visibility:hidden`
+  element whose descendant sets `visibility:visible` again. See
+  [what `visible` means](docs/driver.md#what-visible-means).
+- **A resolution records the observation it was written under**, in a new
+  `observation` field (5 for this release). The format stays v4: nothing stored
+  changes meaning, and 0.5.x, which ignores the field, still reads every file.
+  `qai check` and `qai run` warn about a file written by 0.5.x or earlier, or
+  observed under an older version; they read a file observed by a newer QAI,
+  and report it. The example resolutions carry the field; their versions do not
+  change.
+- On iOS, a zero-frame element holding a rendered descendant is rendered, as on
+  the web. Under such an element, a descendant XCUITest reports off screen
+  although it lies inside the application is read as clipped. The source does
+  not say whether a view clips, so this is the only evidence; it is not yet
+  validated on a device.
+
+### Fixed
+
+- **A `visible` check on collapsed content no longer passes.** Inside a
+  collapsed accordion (`height:0; overflow:hidden`), under `opacity:0` or inside
+  a closed `<details>`, the children kept their own box and read as visible:
+  `visible` was green and `absent` red although nothing was on screen. Such an
+  ancestor now hides its descendants, which leave the tree, and `resolve`
+  answers `not-visible` on them. What the browser paints outside the clipping
+  ancestor stays visible: an absolutely positioned element whose containing
+  block is above it, a fixed element with no transformed ancestor in between,
+  a modal dialog or an open popover.
+- The content of a closed `<details>` was shown to the model as visible.
+
+Measured on every page of `fixtures/` and `examples/`, the previous and the new
+observation side by side on the same screen: the three shop scenarios against
+the healthy demo and each of its four regressions, the library scenario, the
+driver test page — 54 distinct screens — and the six iOS sources in each mode.
+No rendered tree, no `visible` flag, no replay verdict and none of the 1,043
+evaluations of their checks and captures changed: these pages use none of the
+affected layouts. The new tests of each changed case fail on the previous
+observation.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added
