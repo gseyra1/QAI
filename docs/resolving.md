@@ -81,6 +81,50 @@ Braces, quotes, and repeated field names make up most of a JSON payload's bytes
 and carry no information. The tree is paid for on every call: its density is an
 architecture decision.
 
+## Two trees must agree
+
+The model is shown the pruned tree. Replay reads the full one, where unnamed
+elements (an icon, a spacer, an empty cell) still match a target: judged on the
+pruned tree alone, `{ "role": "text" }` was unique while resolving and ambiguous
+on replay, on identical data. So every capture and assertion is verified on both:
+
+- A capture's target must be unique on both trees and read the same element (the
+  same value with a third-party driver). The value is read on the full tree.
+- An assertion must hold on both. With a built-in driver it must also read the same
+  elements: the first match for `textEquals`, `numberEquals` and `stateIs`, every
+  match otherwise. A position, `nth` or a container's, that lands on another
+  element at replay is refused.
+- Nothing the pruned tree alone would refuse is accepted.
+
+What goes back to the model never quotes what only the full tree holds. A check
+false on the model's tree gets the usual reason, read on that tree. A check true there but not on replay's tree
+gets counts only: how many elements replay reads for the target, how many the
+model's tree shows, and to use a stable part of the name or `within` a named
+container, never the value itself (measured with DeepSeek: told only to target by
+name, the model copied the value into the name). When the model's tree shows one
+element and a position reads it on both trees, that position is given. A position
+counted on the full tree alone is never suggested, since the pruned tree would read
+another element and refuse it. A capture target missing or ambiguous on the model's
+own tree keeps the single "target not found or ambiguous" message: splitting the
+two made the model copy values. `absent` and `countAtLeast` get the counts without
+the advice to narrow the target, which would make an `absent` vacuous.
+
+"Already true before the gesture" (below) counts a check true on either tree. The
+value-located and self-comparison warnings are computed on both and merged.
+
+Built-in drivers are read once per look: the pruned tree is derived from the full
+one by the same rules (`src/driver/prune.ts`), which tests check on every demo page
+and iOS source fixture. A third-party driver is read twice, pruned then full, and
+only the value read links the two, so a value that changes between the reads (a
+timer) is refused as a capture. A verification-only step no longer reads the screen
+before it.
+
+One limit follows: a bare value whose only identity is its position, after an
+unnamed element, has no `nth` that reads it on both trees. Without a named
+container around it, the step fails at resolving (it used to resolve, then fail on
+replay), or the model puts the value in the name, which is reported as a capture
+located by its own value.
+
 ## What is not left to the prompt
 
 All of these are guaranteed mechanically, because they can be. A rule stated in

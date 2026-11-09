@@ -3,6 +3,33 @@
 All notable changes to `tilmiqai`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may break.
 
+## [Unreleased]
+
+### Fixed
+
+- **Captures and assertions are verified on the tree replay reads, too.** They were
+  judged on the pruned tree the model is shown only, so a target with no name,
+  unique while resolving, was ambiguous on replay next to an unnamed icon: green,
+  then red, on identical data. Each check must now hold on both trees, and with a
+  built-in driver read the same elements on both: a `nth` that lands on another
+  element at replay is refused. Nothing the pruned tree alone refused is accepted.
+  The tree sent to the model does not change.
+
+### Changed
+
+- **A refusal caused by the full tree only gives counts**: how many elements replay
+  reads for the target, how many the model's tree shows, and to use a stable part
+  of the name or `within` a named container, never the value itself. When the
+  model's tree shows one element and a position reads it on both trees, that
+  position is given. A target missing or ambiguous on the model's own tree keeps
+  the single "target not found or ambiguous" message.
+- "Already true before the gesture" now also counts a check true on the full tree.
+  Value-located and self-comparison warnings are computed on both trees and merged.
+- Built-in drivers are read once per look, the pruned tree being derived from the
+  full one. A third-party driver is read twice, pruned then full, and a capture
+  must read the same value on both reads. A verification-only step no longer reads
+  the screen before it.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added

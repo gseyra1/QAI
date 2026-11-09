@@ -15,6 +15,7 @@ import type {
   UINode,
   UISnapshot,
 } from '../types.ts';
+import { prunesLikeBuiltIns } from '../prune.ts';
 import { buildFallback, buildLocator } from './locator.ts';
 import { collectTree } from './observe-script.ts';
 
@@ -77,6 +78,11 @@ function withTrailingSlash(entry: string): string {
 }
 
 export class PlaywrightWebDriver implements Driver {
+  // `collectTree` élague comme `pruneInteractive` : la génération lit une fois.
+  static {
+    prunesLikeBuiltIns(PlaywrightWebDriver.prototype.observe);
+  }
+
   readonly platform: Platform = 'web';
   readonly capabilities: Capabilities = {
     hover: true,

@@ -1,3 +1,4 @@
+import { derivesPruned, pruneInteractive } from '../driver/prune.ts';
 import type { Action, Driver, Locator, UINode } from '../driver/types.ts';
 import {
   evaluateCheck,
@@ -268,6 +269,21 @@ function selfComparisons(
   });
 }
 
+/** `selfComparisons` sur les deux arbres du regard, réunis. */
+function selfCompared(
+  checks: Pick<Proposal, 'captures' | 'assertions'>,
+  expectations: readonly string[],
+  screen: Look,
+  known: Readonly<Record<string, string>>,
+): string[] {
+  return [
+    ...new Set([
+      ...selfComparisons(checks, expectations, screen.shown, known),
+      ...selfComparisons(checks, expectations, screen.root, known),
+    ]),
+  ];
+}
+
 /** Les captures figées dans le `from` d'une capture dont la description les nomme. */
 function frozenSources(
   captures: Record<string, CaptureSpec>,
@@ -426,6 +442,107 @@ async function verifyActions(driver: Driver, actions: Action[]): Promise<string[
   return errors;
 }
 
+/**
+ * Un regard sur l'écran : l'arbre montré au modèle, et celui que le rejeu relit.
+ *
+ * Le modèle reçoit l'arbre élagué, parce qu'il en paie chaque ligne ; le rejeu
+ * cherche dans l'arbre complet, où un élément sans nom (une icône, un espaceur)
+ * correspond encore à une cible. Jugée sur le seul arbre élagué, `{ role: text }`
+ * était unique ici et ambiguë au rejeu, sur les mêmes données. Captures et
+ * assertions doivent donc tenir sur les deux.
+ */
+interface Look {
+  location: string;
+  /** L'arbre élagué, celui que le modèle reçoit. */
+  shown: UINode;
+  /** L'arbre complet, celui que le rejeu relit. */
+  root: UINode;
+  /**
+   * `shown` est tiré de `root`, dans le même instantané : un même élément y porte
+   * le même identifiant. Sinon, deux lectures, et seule la valeur lue les relie.
+   */
+  aligned: boolean;
+}
+
+/**
+ * Une lecture pour les pilotes intégrés, dont l'élagage se rejoue sur l'arbre
+ * complet (`src/driver/prune.ts`) ; deux pour un pilote tiers, élaguée puis
+ * complète, puisque le contrat publié ne dit rien de son élagage.
+ */
+async function look(driver: Driver): Promise<Look> {
+  if (derivesPruned(driver)) {
+    const { location, root } = await driver.observe();
+    return { location, shown: pruneInteractive(root), root, aligned: true };
+  }
+  const pruned = await driver.observe({ interactiveOnly: true });
+  const full = await driver.observe();
+  return { location: pruned.location, shown: pruned.root, root: full.root, aligned: false };
+}
+
+const LEFT_OUT = 'the unnamed and hidden elements your tree leaves out';
+
+/**
+ * Mesuré avec DeepSeek (#48) : « cibler par son nom » seul faisait recopier la
+ * valeur (`{ name: "42" }`, 5 exécutions sur 5), vert ici puis rouge dès que la
+ * donnée change. D'où la partie stable, et l'interdit dit en toutes lettres.
+ */
+const STABLE_NAME_OR_CONTAINER = 'Use { "contains": "..." } on a stable part of the name, or "within" a named container';
+const NEVER_THE_VALUE = 'Never put the value itself in "name"';
+
+/**
+ * Où le rejeu trouve l'élément montré, quand l'arbre du modèle n'en montre qu'un.
+ *
+ * Retrouvé par identité, jamais par ce qu'il lit : une copie identique dans un
+ * tiroir fermé, avant lui, n'est pas lui. Donnée seulement si cette position lit
+ * le même élément sur l'arbre du modèle : sinon la cible conseillée serait refusée
+ * à son tour, comme 0.5.0 la refusait, et le conseil tournerait en rond.
+ */
+function realPosition(screen: Look, locator: Locator): number | null {
+  if (!screen.aligned) return null;
+  const { nth: _, ...anywhere } = locator;
+  const seen = matchNodes(screen.shown, anywhere);
+  if (seen.length !== 1) return null;
+  const only = (seen[0] as UINode).id;
+  const position = matchNodes(screen.root, anywhere).findIndex((node) => node.id === only);
+  if (position < 0) return null;
+  return matchNodes(screen.shown, { ...anywhere, nth: position })[0]?.id === only ? position : null;
+}
+
+/**
+ * Ce que le rejeu lit autrement que l'arbre du modèle, en nombres seulement : le
+ * nœud en cause n'est pas sous ses yeux, et rien de l'arbre complet n'a à partir
+ * chez le fournisseur. `advise` à faux : sans le conseil de resserrer la cible,
+ * qui rendrait un `absent` vide et ne ferait jamais passer un `countAtLeast`.
+ */
+function replayReads(screen: Look, locator: Locator, advise: boolean, visibleOnly = false): string {
+  const { nth: _, ...anywhere } = locator;
+  const count = (root: UINode): number =>
+    matchNodes(root, anywhere).filter((node) => !visibleOnly || node.state.visible).length;
+  const counted = `replay reads ${count(screen.root)}${visibleOnly ? ' visible' : ''} element(s) matching this target where your tree shows ${count(screen.shown)}: it also counts ${LEFT_OUT}`;
+  if (!advise) return counted;
+  const position = realPosition(screen, locator);
+  return position === null
+    ? `${counted}. ${STABLE_NAME_OR_CONTAINER}, not "nth", which counts them too. ${NEVER_THE_VALUE}`
+    : `${counted}. ${STABLE_NAME_OR_CONTAINER}; if its name is only data, keep this target and add "nth": ${position} to it, where replay finds the element you see. ${NEVER_THE_VALUE}`;
+}
+
+/** Les vérifications qui ne lisent que la première correspondance (voir `evaluateCheck`). */
+const FIRST_MATCH: ReadonlySet<string> = new Set(['textEquals', 'numberEquals', 'stateIs']);
+
+/**
+ * Sur un même instantané, ce que la vérification lit sur l'arbre du modèle, le
+ * rejeu doit le lire aussi : la première correspondance quand elle seule compte,
+ * et chaque correspondance sinon — une position (`nth`, ou celle d'un conteneur)
+ * qui désigne un autre élément au rejeu y passerait sur lui.
+ */
+function readsElsewhere(screen: Look, check: Check & { target: Locator }, target: Locator): boolean {
+  if (!screen.aligned) return false;
+  const meant = matchNodes(screen.shown, target).map((node) => node.id);
+  const read = matchNodes(screen.root, target).map((node) => node.id);
+  if (FIRST_MATCH.has(check.check)) return meant[0] !== read[0];
+  return meant.some((id) => !read.includes(id));
+}
+
 interface CheckOutcome {
   errors: string[];
   produced: Record<string, string>;
@@ -444,10 +561,14 @@ interface CheckOutcome {
  * obtenu. Pour une assertion, la vérité terrain est qu'elle **passe ici** :
  * on enregistre un état connu comme bon, donc une assertion fausse à la
  * génération serait un test faux pour toujours.
+ *
+ * Sur les deux arbres du regard : l'arbre du modèle dit ce qu'il voulait, celui du
+ * rejeu ce qui sera lu. Rien n'est accepté qui ne le serait pas sur le premier
+ * seul, comme en 0.5.0, et rien qui se lirait autrement sur le second. Un refus
+ * dû au second ne cite que des nombres.
  */
 function verifyChecks(
-  root: UINode,
-  location: string,
+  screen: Look,
   bag: Readonly<Record<string, string>>,
   proposal: Pick<Proposal, 'captures' | 'assertions'>,
   step: Step,
@@ -473,20 +594,35 @@ function verifyChecks(
     }
     try {
       const from = interpolateLocator(spec.from, merged);
-      const node = matchOne(root, from);
-      if (node === null) {
+      // Séparer « introuvable » et « ambigu » faisait recopier les valeurs au
+      // modèle (#48, 3 exécutions sur 3) : le message reste celui de 0.5.0 là où
+      // son arbre montre la cause.
+      const seen = matchOne(screen.shown, from);
+      if (seen === null) {
         errors.push(`capture "${name}": target not found or ambiguous on this screen`);
         continue;
       }
-      const value = readCapture(node, spec);
-      if (value === null) {
+      if (readCapture(seen, spec) === null) {
         errors.push(
           spec.after === undefined && spec.before === undefined
             ? `capture "${name}": unreadable value with extract="${spec.extract}"`
-            : `capture "${name}": nothing readable between "after" and "before" in ${JSON.stringify(captureSource(node, spec))}: copy the fixed words around the value exactly`,
+            : `capture "${name}": nothing readable between "after" and "before" in ${JSON.stringify(captureSource(seen, spec))}: copy the fixed words around the value exactly`,
         );
         continue;
       }
+      // Le rejeu lit l'arbre complet : la valeur vient de là, et doit être celle
+      // de l'élément montré — le même nœud, ou à défaut la même lecture.
+      const node = matchOne(screen.root, from);
+      const value = node === null ? null : readCapture(node, spec);
+      if (
+        node === null ||
+        value === null ||
+        (screen.aligned ? node.id !== seen.id : value !== readCapture(seen, spec))
+      ) {
+        errors.push(`capture "${name}": found on your tree, but ${replayReads(screen, from, true)}`);
+        continue;
+      }
+      learnDerived(secrets, seen, value);
       learnDerived(secrets, node, value);
       for (const anchor of [spec.after, spec.before]) {
         if (anchor !== undefined && holdsNumber(anchor)) {
@@ -500,7 +636,10 @@ function verifyChecks(
         }
       }
       // Un `from` nommé par une capture suit la valeur au rejeu.
-      if (namedCaptures(nameLiteral(spec.from) ?? '').length === 0 && tautologicalCapture(from, spec.extract, node, value)) {
+      if (
+        namedCaptures(nameLiteral(spec.from) ?? '').length === 0 &&
+        (tautologicalCapture(from, spec.extract, seen, value) || tautologicalCapture(from, spec.extract, node, value))
+      ) {
         warnings.push(
           `capture "${name}" is located by the very value it reads ("${value}"): when that value changes, replay reports "target not found" instead of reading the new one`,
         );
@@ -545,21 +684,35 @@ function verifyChecks(
         (check.check === 'textEquals' ||
           check.check === 'textContains' ||
           check.check === 'numberEquals') &&
-        tautological(check, root, merged)
+        (tautological(check, screen.shown, merged) || tautological(check, screen.root, merged))
       ) {
         warnings.push(
           `assertion "${expectation}" is located by the very value it asserts ("${usesEnv(String(check.value)) ? MASK : interpolate(String(check.value), merged)}"): when that value changes, replay reports "no element" instead of "expected …, observed …"`,
         );
       }
-      const result = evaluateCheck(check, {
-        root,
-        location,
-        bag: merged,
-        secrets,
-        ...(baseUrl !== undefined ? { baseUrl } : {}),
-      });
+      const on = (root: UINode) =>
+        evaluateCheck(check, {
+          root,
+          location: screen.location,
+          bag: merged,
+          secrets,
+          ...(baseUrl !== undefined ? { baseUrl } : {}),
+        });
+      const result = on(screen.shown);
       if (!result.ok) {
         errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
+        continue;
+      }
+      if (!('target' in check)) continue;
+      const target = interpolateLocator(check.target, merged);
+      if (!on(screen.root).ok || readsElsewhere(screen, check, target)) {
+        errors.push(
+          `assertion "${expectation}": true on your tree, but ${
+            check.check === 'absent'
+              ? replayReads(screen, target, false, true)
+              : replayReads(screen, target, check.check !== 'countAtLeast')
+          }`,
+        );
       }
     } catch (error) {
       errors.push(
@@ -824,10 +977,13 @@ function frozenLiterals(
  * Une forme invalide, une observation (réseau, console : elles ne parlent
  * d'aucun écran) ou une capture encore inconnue ne « tiennent » pas : c'est
  * le côté prudent, puisque ce qui tient avant le geste est renvoyé au modèle.
+ *
+ * Vraie sur l'un des deux arbres suffit : vraie avant sur celui du modèle, comme
+ * en 0.5.0, ou sur celui du rejeu, elle ne prouve pas plus le geste.
  */
 function holdsOn(
   check: unknown,
-  screen: { root: UINode; location: string },
+  screen: Look,
   bag: Readonly<Record<string, string>>,
   baseUrl: string | undefined,
 ): boolean {
@@ -835,12 +991,15 @@ function holdsOn(
   const typed = check as Check;
   if (isObservationCheck(typed)) return false;
   try {
-    return evaluateCheck(typed, {
-      root: screen.root,
-      location: screen.location,
-      bag,
-      ...(baseUrl !== undefined ? { baseUrl } : {}),
-    }).ok;
+    return [screen.shown, screen.root].some(
+      (root) =>
+        evaluateCheck(typed, {
+          root,
+          location: screen.location,
+          bag,
+          ...(baseUrl !== undefined ? { baseUrl } : {}),
+        }).ok,
+    );
   } catch {
     // Une interpolation impossible avant le geste — la capture de cette étape
     // n'existe pas encore — n'est pas une vérification déjà vraie.
@@ -934,8 +1093,13 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       if (!warnings.includes(redacted)) warnings.push(redacted);
     };
 
-    await driver.settle();
-    const before = await driver.observe({ interactiveOnly: true });
+    // Une étape qui ne fait que vérifier ne lit jamais l'écran d'avant : ni
+    // phase A, ni « déjà vraie avant le geste », puisqu'il n'y a pas de geste.
+    let before: Look | undefined;
+    if (!verificationOnly) {
+      await driver.settle();
+      before = await look(driver);
+    }
 
     /**
      * Une assertion déjà vraie AVANT le geste ne prouve pas qu'il a eu lieu.
@@ -969,24 +1133,27 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
     };
 
-    const conversation: ModelMessage[] = [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: stepMessage({
-              intent,
-              tree: renderTree(before.root),
-              location: before.location,
-              expectations: expectationsOf(step),
-              captures: step.capture ?? {},
-              availableCaptures: bag,
-            }),
-          },
-        ],
-      },
-    ];
+    const conversation: ModelMessage[] =
+      before === undefined
+        ? []
+        : [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: stepMessage({
+                    intent,
+                    tree: renderTree(before.shown),
+                    location: before.location,
+                    expectations: expectationsOf(step),
+                    captures: step.capture ?? {},
+                    availableCaptures: bag,
+                  }),
+                },
+              ],
+            },
+          ];
 
     let proposal: Proposal | null = verificationOnly
       ? { actions: [], captures: {}, assertions: {} }
@@ -1047,11 +1214,12 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
          * assertion vraie avant mais fausse après serait refusée en phase B de
          * toute façon : la renvoyer ici ne coûte pas un vert légitime.
          */
+        const start = before;
         const challenges =
-          used < attempts - 1
+          used < attempts - 1 && start !== undefined
             ? Object.entries(portableChecks(candidate.assertions, checkBase, () => {}).assertions)
                 .filter(([key]) => expectations.includes(key) && !challenged.has(key))
-                .filter(([, check]) => holdsOn(check, before, bag, checkBase))
+                .filter(([, check]) => holdsOn(check, start, bag, checkBase))
                 .map(([key]) => key)
             : [];
         if (challenges.length === 0) {
@@ -1148,14 +1316,14 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
     }
 
     await driver.settle();
-    let after = await driver.observe({ interactiveOnly: true });
+    let after = await look(driver);
 
     /**
      * Réécrit les adresses, PUIS vérifie : la forme prouvée contre l'écran est
      * celle qui sera versionnée.
      */
     const assess = (
-      screen: { root: UINode; location: string },
+      screen: Look,
       candidate: Pick<Proposal, 'captures' | 'assertions'>,
     ): {
       checks: Pick<Proposal, 'captures' | 'assertions'>;
@@ -1177,7 +1345,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         ...hostBoundChecks(portable.assertions, checkBase),
       ];
       const verify = (): CheckOutcome =>
-        verifyChecks(screen.root, screen.location, bag, checks, step, secrets, checkBase, observable);
+        verifyChecks(screen, bag, checks, step, secrets, checkBase, observable);
       let verified = verify();
       // Les captures de cette étape comptent : « contient {{reference}} » peut
       // nommer la valeur qu'on vient de lire. La réécriture est vérifiée comme
@@ -1199,7 +1367,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       ];
       const warnings = [
         ...(verified.warnings ?? []),
-        ...[...portableWarnings, ...sources.warnings, ...frozen.warnings, ...selfComparisons(checks, expectations, screen.root, { ...bag, ...verified.produced })].map(
+        ...[...portableWarnings, ...sources.warnings, ...frozen.warnings, ...selfCompared(checks, expectations, screen, { ...bag, ...verified.produced })].map(
           (warning) => secrets.redact(warning),
         ),
       ];
@@ -1212,7 +1380,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       // une question, pas un motif de plus noyé parmi des refus. Une étape qui
       // ne fait que vérifier n'a pas de geste dont l'effet serait à prouver.
       const pending: { key: string; question: string; warning: string }[] = [...frozen.questions];
-      if (!verificationOnly) {
+      if (before !== undefined) {
         for (const key of expectations) {
           const check = checks.assertions[key];
           if (check === undefined || !holdsOn(check, before, known, checkBase)) continue;
@@ -1268,7 +1436,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
             {
               type: 'text',
               text: checksMessage({
-                tree: renderTree(after.root),
+                tree: renderTree(after.shown),
                 location: after.location,
                 expectations: expectationsOf(step),
                 captures: step.capture ?? {},
@@ -1344,7 +1512,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
         continue;
       }
 
-      after = await driver.observe({ interactiveOnly: true });
+      after = await look(driver);
       const assessed = assess(after, candidate);
       ({ checks, outcome } = assessed);
       // La dernière proposition valide : une réponse qui tient, mais
@@ -1382,7 +1550,9 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       const spec = checks.captures[name] as CaptureSpec;
       const read = produced[name];
       if (read === undefined) return false;
-      const node = designated(screen.root, spec.from, { ...bag, ...produced });
+      // Acceptée, la capture lit le même élément sur les deux arbres : l'arbre
+      // montré suffit, comme en 0.5.0.
+      const node = designated(screen.shown, spec.from, { ...bag, ...produced });
       return node !== null && readsWholeText(spec, read, captureSource(node, spec));
     });
     let settled = loose.length === 0;
