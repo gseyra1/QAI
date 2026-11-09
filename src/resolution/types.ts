@@ -112,15 +112,49 @@ export interface StepResolution {
 export const RESOLUTION_VERSION = 4;
 
 /**
- * La dernière version dont le changement portait sur l'observation.
+ * La plus petite version de format qu'un fichier écrit aujourd'hui porte.
+ *
+ * La v2 est la dernière montée d'observation passée par le format : un QAI
+ * qui lit la v1 nomme autrement les éléments, et doit refuser le fichier.
+ * Depuis, l'observation a son propre champ — voir `OBSERVATION_VERSION`.
+ */
+export const FORMAT_FLOOR = 2;
+
+/**
+ * La version de l'observation : ce que l'arbre montre, et sous quels noms.
+ * Écrite dans le champ `observation` de chaque fichier.
  *
  * C'est elle, et non `RESOLUTION_VERSION`, qui décide de l'avertissement
  * « résolution périmée » : un fichier v2 est un fichier v3 parfaitement
- * valide — ses cibles ont été calculées sous l'observation d'aujourd'hui — et
+ * valide — ses cibles ont été calculées sous la même observation — et
  * l'avertir pousserait à régénérer pour rien, donc à ne plus lire
  * l'avertissement le jour où il comptera.
+ *
+ * **2** : les noms observés s'élargissent (portée alors par le format v2).
+ * **5** : la visibilité. Une boîte vide qui ne rogne pas (`display:contents`,
+ * conteneur de flottants) est visible par son contenu ; un ancêtre qui rogne
+ * (accordéon replié), transparent ou non rendu cache ses descendants. Une
+ * vérification `visible` sur un contenu replié, verte jusque-là, devient rouge.
+ *
+ * Un champ à part, pas une version de format : rien de ce que le fichier
+ * stocke ne change de sens, et un QAI 0.5.x, qui ignore le champ, continue de
+ * lire les fichiers écrits depuis — l'auto-test de l'action rejoue les
+ * exemples avec la dernière version publiée. Le prix est connu : relu par un
+ * 0.5.x, un tel fichier l'est sous l'ancienne visibilité.
+ *
+ * La numérotation suit celle du format pour qu'un fichier sans le champ, écrit
+ * par 0.5.x ou avant, ait été observé sous sa `version` au plus : les v3 et v4
+ * n'ont rien changé à l'observation.
  */
-export const OBSERVATION_VERSION = 2;
+export const OBSERVATION_VERSION = 5;
+
+/**
+ * Sous quelle observation un fichier a été écrit — au plus, pour un fichier
+ * d'avant le champ `observation`.
+ */
+export function observedUnder(resolution: Pick<Resolution, 'version' | 'observation'>): number {
+  return resolution.observation ?? resolution.version ?? 1;
+}
 
 /**
  * La plus petite version qui donne à ce contenu le sens qu'il a ici.
@@ -129,12 +163,12 @@ export const OBSERVATION_VERSION = 2;
  * une étape sans action, ou un `urlEquals` qui n'est pas une adresse absolue
  * littérale (un gabarit sans schéma compte : sa valeur peut être relative à
  * l'exécution).
- * Sinon il reste à la version d'observation, lisible tel quel par un QAI qui
- * lit la v2 — une réparation en CI ne doit pas rendre illisible, pour un
- * coéquipier pas encore mis à jour, un fichier dont rien n'a changé de sens.
+ * Sinon il reste au plancher, lisible tel quel par un QAI qui lit la v2 — une
+ * réparation en CI ne doit pas rendre illisible, pour un coéquipier pas encore
+ * mis à jour, un fichier dont rien n'a changé de sens.
  */
 export function requiredVersion(resolution: Pick<Resolution, 'steps'>): number {
-  let required = OBSERVATION_VERSION;
+  let required = FORMAT_FLOOR;
   for (const step of Object.values(resolution.steps)) {
     for (const capture of Object.values(step.captures ?? {})) {
       if (capture.after !== undefined || capture.before !== undefined) return RESOLUTION_VERSION;
@@ -150,6 +184,11 @@ export function requiredVersion(resolution: Pick<Resolution, 'steps'>): number {
 export interface Resolution {
   /** Absent dans les fichiers d'avant l'introduction du champ : vaut 1. */
   version?: number;
+  /**
+   * L'observation sous laquelle le fichier a été écrit. Absent dans les
+   * fichiers écrits par 0.5.x ou avant : voir `observedUnder`.
+   */
+  observation?: number;
   scenario: string;
   platform: Platform;
   recordedAt: string;

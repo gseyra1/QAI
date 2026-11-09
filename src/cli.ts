@@ -23,7 +23,7 @@ import { formatMarkdown } from './report/markdown.ts';
 import { formatSuite, intentLabel } from './report/text.ts';
 import { applyHeals } from './resolution/apply.ts';
 import { loadResolution } from './resolution/load.ts';
-import { OBSERVATION_VERSION } from './resolution/types.ts';
+import { OBSERVATION_VERSION, observedUnder } from './resolution/types.ts';
 import { saveResolution } from './resolution/save.ts';
 import { loadScenario } from './scenario/load.ts';
 import type { Scenario } from './scenario/types.ts';
@@ -580,17 +580,29 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     // Une résolution écrite sous une observation plus ancienne se recharge,
-    // mais ses cibles ont pu être calculées sur des noms accessibles que ce
-    // moteur ne produit plus à l'identique : le rejeu peut passer au rouge sans
-    // qu'aucune régression n'existe. On le dit clairement plutôt que de laisser
-    // deviner — régénérer avec « qai resolve » réaligne le cache. Le seuil est
-    // la version d'observation, pas celle du format : une montée de format qui
-    // ne touche pas l'observation ne périme aucun fichier.
-    const version = resolution.version ?? 1;
-    if (version < OBSERVATION_VERSION) {
+    // mais ses cibles ont pu être calculées sur un arbre que ce moteur ne
+    // produit plus à l'identique — d'autres noms, une autre visibilité : le
+    // rejeu peut passer au rouge sans qu'aucune régression n'existe. On le dit
+    // clairement plutôt que de laisser deviner — régénérer avec « qai resolve »
+    // réaligne le cache. Le seuil est la version d'observation, pas celle du
+    // format : une montée de format qui ne touche pas l'observation ne périme
+    // aucun fichier.
+    const observed = observedUnder(resolution);
+    if (observed < OBSERVATION_VERSION) {
+      const written =
+        resolution.observation === undefined
+          ? `resolution is v${resolution.version ?? 1}`
+          : `resolution was observed under v${observed}`;
       process.stderr.write(
-        `${scenario.id}: resolution is v${version}, this QAI observes v${OBSERVATION_VERSION} — ` +
+        `${scenario.id}: ${written}, this QAI observes v${OBSERVATION_VERSION} — ` +
           `regenerate with "qai resolve" if assertions fail unexpectedly (${resolutionPath})\n`,
+      );
+    } else if (observed > OBSERVATION_VERSION) {
+      // Écrit par un QAI plus récent : lisible, puisque le format l'est, mais
+      // rejoué sous une observation plus ancienne que celle qui l'a produit.
+      process.stderr.write(
+        `${scenario.id}: resolution was observed under v${observed}, this QAI observes v${OBSERVATION_VERSION} — ` +
+          `upgrade QAI if assertions fail unexpectedly (${resolutionPath})\n`,
       );
     }
 

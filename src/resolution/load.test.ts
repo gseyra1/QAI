@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { loadResolution, parseResolution, ResolutionError } from './load.ts';
 import { serializeResolution } from './save.ts';
-import { OBSERVATION_VERSION, RESOLUTION_VERSION, requiredVersion } from './types.ts';
+import { FORMAT_FLOOR, OBSERVATION_VERSION, RESOLUTION_VERSION, observedUnder, requiredVersion } from './types.ts';
 
 const SCHEMA = 'schema/resolution.schema.json';
 const EXAMPLES = [
@@ -43,7 +43,8 @@ describe('version de format d\'une résolution', () => {
     for (const path of EXAMPLES) {
       const resolution = await loadResolution(path);
       assert.equal(resolution.version, requiredVersion(resolution), path);
-      assert.ok((resolution.version ?? 1) >= OBSERVATION_VERSION, path);
+      assert.ok((resolution.version ?? 1) >= FORMAT_FLOOR, path);
+      assert.equal(resolution.observation, OBSERVATION_VERSION, path);
     }
   });
 
@@ -65,14 +66,47 @@ describe('version de format d\'une résolution', () => {
     assert.throws(() => parseResolution(document({ version: 1.5 })), ResolutionError);
   });
 
-  it('estampille au moins la version d\'observation, même sur un fichier chargé sans elle', () => {
+  it('estampille le plancher et l\'observation courante, même sur un fichier chargé sans eux', () => {
     // On n'écrit qu'après avoir résolu ou réparé les cibles contre
     // l'observation d'aujourd'hui : conserver « version: 1 » mentirait sur ce
     // que le fichier contient, et se tairait sur lui-même le jour du changement.
-    assert.match(
-      serializeResolution(parseResolution(document())),
-      new RegExp(`"version": ${OBSERVATION_VERSION}`),
-    );
+    const written = serializeResolution(parseResolution(document()));
+    assert.match(written, new RegExp(`"version": ${FORMAT_FLOOR}`));
+    assert.match(written, new RegExp(`"observation": ${OBSERVATION_VERSION}`));
+  });
+
+  /**
+   * Un fichier écrit par 0.5.x porte la v2, la v3 ou la v4, sans champ
+   * d'observation. Il doit se charger tel quel — pour que l'avertissement
+   * d'observation périmée le désigne — et, une fois réécrit, garder la version
+   * qu'exige son contenu en gagnant l'observation d'aujourd'hui.
+   */
+  it('relit les résolutions écrites par 0.5.x : v2, v3 et v4', () => {
+    const from = { role: 'text' as const };
+    const navigate = { kind: 'navigate', to: '/' };
+    const written: Record<number, unknown> = {
+      2: { s1: { actions: [navigate], assertions: { a: { check: 'visible', target: from } } } },
+      3: { s1: { actions: [] }, s2: { actions: [navigate], assertions: { a: { check: 'urlEquals', value: 'orders' } } } },
+      4: { s1: { actions: [navigate], captures: { c: { from, extract: 'text', after: 'Réf ' } } } },
+    };
+    for (const [version, steps] of Object.entries(written)) {
+      const loaded = parseResolution(document({ version: Number(version), steps }));
+      assert.equal(loaded.version, Number(version));
+      assert.equal(loaded.observation, undefined);
+      assert.ok(observedUnder(loaded) < OBSERVATION_VERSION, `v${version} doit être signalé`);
+
+      const rewritten = parseResolution(serializeResolution(loaded));
+      assert.equal(rewritten.version, Number(version), 'le contenu exige toujours la même version');
+      assert.equal(rewritten.observation, OBSERVATION_VERSION);
+    }
+  });
+
+  it('lit une observation plus récente sans la refuser, et refuse une observation invalide', () => {
+    const later = parseResolution(document({ version: FORMAT_FLOOR, observation: OBSERVATION_VERSION + 1 }));
+    assert.equal(later.observation, OBSERVATION_VERSION + 1);
+    assert.throws(() => parseResolution(document({ observation: 'cinq' })), ResolutionError);
+    assert.throws(() => parseResolution(document({ observation: 0 })), ResolutionError);
+    assert.throws(() => parseResolution(document({ observation: 4.5 })), ResolutionError);
   });
 
   const stamp = (steps: unknown) =>
@@ -84,15 +118,15 @@ describe('version de format d\'une résolution', () => {
    * d'un fichier v2 ne doit pas le rendre illisible pour un QAI qui lit la v2.
    */
   it('n\'estampille la v3 que pour un contenu qui en use', () => {
-    assert.equal(stamp({ s1: { actions: [click] } }), OBSERVATION_VERSION);
+    assert.equal(stamp({ s1: { actions: [click] } }), FORMAT_FLOOR);
     assert.equal(
       stamp({ s1: { actions: [click], assertions: { a: { check: 'urlEquals', value: 'http://h/x' } } } }),
-      OBSERVATION_VERSION,
+      FORMAT_FLOOR,
       'un urlEquals absolu a le même sens en v2',
     );
     assert.equal(
       stamp({ s1: { actions: [click], assertions: { a: { check: 'urlContains', value: 'x' } } } }),
-      OBSERVATION_VERSION,
+      FORMAT_FLOOR,
       'urlContains n\'a pas changé de sens',
     );
     assert.equal(stamp({ s1: { actions: [] } }), 3);
@@ -111,7 +145,7 @@ describe('version de format d\'une résolution', () => {
     const from = { role: 'text' as const };
     assert.equal(
       stamp({ s1: { actions: [click], captures: { c: { from, extract: 'text' } } } }),
-      OBSERVATION_VERSION,
+      FORMAT_FLOOR,
     );
     assert.equal(
       stamp({ s1: { actions: [click], captures: { c: { from, extract: 'text', after: 'Réf ' } } } }),

@@ -5,8 +5,9 @@ import type { Role, UINode } from '../types.ts';
  * page. Il ne peut donc rien capturer de sa portée extérieure : tout ce dont il
  * a besoin passe par son argument.
  *
- * Il est isolé dans son propre module pour rester testable hors navigateur —
- * voir observe-script.test.ts, qui l'exécute sur un DOM factice.
+ * Il est isolé dans son propre module pour être sérialisé tel quel. Ses
+ * règles de visibilité se vérifient sur Chromium — voir visibility.test.ts :
+ * ce sont les boîtes du navigateur qui les départagent.
  */
 export function collectTree(
   root: Element,
@@ -306,13 +307,233 @@ export function collectTree(
     return now ?? undefined;
   }
 
-  function isVisible(el: Element, rect: DOMRect): boolean {
-    if (rect.width <= 0 || rect.height <= 0) return false;
-    const style = el.ownerDocument.defaultView?.getComputedStyle(el);
-    if (!style) return true;
-    if (style.visibility === 'hidden' || style.display === 'none') return false;
-    if (Number.parseFloat(style.opacity) === 0) return false;
+  /**
+   * Ce que les ancêtres imposent à un élément, indépendamment de sa propre boîte.
+   *
+   * Une boîte vide ne dit rien à elle seule : un `display:contents` ou un
+   * conteneur de flottants mesure 0 et montre pourtant ses enfants, alors
+   * qu'un accordéon replié (`height:0; overflow:hidden`) mesure 0 et les
+   * cache. Les enfants, eux, gardent leur boîte dans les deux cas. Seul ce
+   * contexte, transmis du haut vers le bas, sépare les deux.
+   *
+   * - `hidden` : rien n'est peint, et rien n'y échappe sauf la top layer.
+   *   `display:none`, `opacity:0`, `content-visibility:hidden`, le contenu
+   *   d'un `<details>` fermé.
+   * - `clipped` : une boîte vide qui rogne. En échappe ce dont le bloc
+   *   conteneur est au-dessus du rogneur — un `absolute` sans ancêtre
+   *   positionné depuis le rogneur, un `fixed` sans ancêtre transformé —
+   *   exactement comme le navigateur le peint.
+   * - `absContained` / `fixedContained` : depuis le rogneur le plus haut, un
+   *   ancêtre fournit le bloc conteneur d'un `absolute` / d'un `fixed`.
+   *
+   * `visibility:hidden` n'y figure pas : la propriété s'hérite déjà par le
+   * style calculé, et un descendant qui la remet à `visible` est réellement
+   * peint.
+   */
+  interface Scope {
+    hidden: boolean;
+    clipped: boolean;
+    absContained: boolean;
+    fixedContained: boolean;
+  }
+
+  const OPEN: Scope = { hidden: false, clipped: false, absContained: false, fixedContained: false };
+
+  function styleOf(el: Element): CSSStyleDeclaration | null {
+    return el.ownerDocument.defaultView?.getComputedStyle(el) ?? null;
+  }
+
+  function matches(el: Element, selector: string): boolean {
+    try {
+      return el.matches(selector);
+    } catch {
+      // Pseudo-classe inconnue du moteur : l'élément ne peut pas en relever.
+      return false;
+    }
+  }
+
+  // Lu une fois : l'accesseur n'est pas gratuit, et l'arbre passe par
+  // `inTopLayer` pour chaque élément.
+  const fullscreen = root.ownerDocument.fullscreenElement;
+
+  /**
+   * Un dialogue modal, un popover ouvert, un plein écran : peints au-dessus
+   * de tout, hors de l'arbre de leurs ancêtres. Ni leur rognage ni leur
+   * opacité ne s'y appliquent.
+   */
+  function inTopLayer(el: Element): boolean {
+    if (el === fullscreen) return true;
+    if (el.tagName === 'DIALOG' && matches(el, ':modal')) return true;
+    return el.hasAttribute('popover') && matches(el, ':popover-open');
+  }
+
+  const PAINT_CONTAINMENT = /\b(paint|strict|content)\b/;
+
+  /** Une valeur calculée au défaut : absente du moteur, vide, ou son mot-clé initial. */
+  function initial(value: string | undefined): boolean {
+    return value === undefined || value === '' || value === 'none' || value === 'normal' || value === 'auto';
+  }
+
+  /** Le bloc conteneur d'un descendant `fixed` : un ancêtre transformé, filtré ou contenu. */
+  function holdsFixed(style: CSSStyleDeclaration): boolean {
+    if (!initial(style.transform) || !initial(style.perspective) || !initial(style.filter)) return true;
+    if (!initial(style.translate) || !initial(style.rotate) || !initial(style.scale)) return true;
+    if (!initial(style.backdropFilter) || !initial(style.containerType)) return true;
+    if (/\b(layout|paint|strict|content)\b/.test(style.contain ?? '')) return true;
+    return /\b(transform|perspective|filter|translate|rotate|scale)\b/.test(style.willChange ?? '');
+  }
+
+  /** `overflow` ne s'applique qu'aux conteneurs de blocs, de flex, de grille. */
+  function canClip(display: string): boolean {
+    if (display === 'inline' || display === 'contents' || display === 'none') return false;
+    if (display.startsWith('table-')) return display === 'table-cell' || display === 'table-caption';
     return true;
+  }
+
+  /**
+   * Une boîte de taille nulle qui rogne, sur l'axe où elle est nulle.
+   *
+   * `overflow-x:clip` avec `overflow-y:visible` laisse déborder vers le bas :
+   * un `height:0` ainsi réglé montre son contenu. La racine ne rogne jamais
+   * — son `overflow` est celui de la fenêtre —, et `body` non plus tant que
+   * la racine laisse le sien à `visible` : il est alors reporté sur la
+   * fenêtre. C'est le motif « modale ouverte » (`body { overflow:hidden }`),
+   * où `body` mesure souvent 0 parce que l'application est en `fixed`.
+   */
+  function clipsEmpty(el: Element, style: CSSStyleDeclaration, rect: DOMRect): boolean {
+    if (rect.width > 0 && rect.height > 0) return false;
+    if (!canClip(style.display)) return false;
+    const doc = el.ownerDocument;
+    if (el === doc.documentElement) return false;
+    if (el === doc.body && doc.documentElement !== null) {
+      const root = styleOf(doc.documentElement);
+      if (root === null || (root.overflowX === 'visible' && root.overflowY === 'visible')) return false;
+    }
+    const contained = PAINT_CONTAINMENT.test(style.contain ?? '');
+    const clipsX = contained || style.overflowX !== 'visible';
+    const clipsY = contained || style.overflowY !== 'visible';
+    return (rect.width <= 0 && clipsX) || (rect.height <= 0 && clipsY);
+  }
+
+  /** Le contexte qui s'applique à l'élément lui-même, une fois ses échappées comptées. */
+  function scopeOf(el: Element, style: CSSStyleDeclaration | null, inherited: Scope): Scope {
+    if (inTopLayer(el)) return OPEN;
+    if (!inherited.clipped || inherited.hidden || style === null) return inherited;
+    if (style.position === 'fixed' && !inherited.fixedContained) return { ...inherited, clipped: false };
+    if (style.position === 'absolute' && !inherited.absContained) return { ...inherited, clipped: false };
+    return inherited;
+  }
+
+  /** Le contexte que l'élément transmet à ses enfants. */
+  function scopeBelow(el: Element, style: CSSStyleDeclaration | null, rect: DOMRect, own: Scope): Scope {
+    if (style === null || own.hidden) return own;
+    const hides =
+      style.display === 'none' ||
+      Number.parseFloat(style.opacity) === 0 ||
+      style.contentVisibility === 'hidden';
+    if (hides) return { ...own, hidden: true };
+    if (own.clipped) {
+      if (own.fixedContained) return own;
+      const fixed = holdsFixed(style);
+      const abs = own.absContained || fixed || style.position !== 'static';
+      return abs === own.absContained && fixed === own.fixedContained
+        ? own
+        : { ...own, absContained: abs, fixedContained: fixed };
+    }
+    if (!clipsEmpty(el, style, rect)) return own;
+    // Le bloc conteneur d'un `absolute` : tout ancêtre positionné, ou qui tient un `fixed`.
+    const fixed = holdsFixed(style);
+    return { ...own, clipped: true, absContained: fixed || style.position !== 'static', fixedContained: fixed };
+  }
+
+  /**
+   * Le contexte de chacun des enfants. Un `<details>` fermé ne peint que son
+   * premier `<summary>` : le reste est caché.
+   */
+  function childScopes(parent: Element, below: Scope): (child: Element) => Scope {
+    if (below.hidden || parent.tagName !== 'DETAILS' || parent.hasAttribute('open')) return () => below;
+    const summary = Array.from(parent.children).find((one) => one.tagName === 'SUMMARY');
+    const hidden = { ...below, hidden: true };
+    return (child) => (child === summary ? below : hidden);
+  }
+
+  /** L'élément peint-il sa propre boîte ? Ses enfants sont jugés à part. */
+  function paintsItself(style: CSSStyleDeclaration | null, rect: DOMRect): boolean {
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (style === null) return true;
+    if (style.display === 'none' || style.display === 'contents') return false;
+    if (style.visibility !== 'visible') return false;
+    return Number.parseFloat(style.opacity) !== 0;
+  }
+
+  /** Un texte nu, posé directement dans un élément sans boîte : `display:contents`. */
+  function paintsText(el: Element, style: CSSStyleDeclaration | null, below: Scope): boolean {
+    if (below.hidden || below.clipped) return false;
+    if (style !== null && style.visibility !== 'visible') return false;
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType !== 3 || (child.textContent ?? '').trim() === '') continue;
+      const range = el.ownerDocument.createRange();
+      range.selectNodeContents(child);
+      if (Array.from(range.getClientRects()).some((box) => box.width > 0 && box.height > 0)) return true;
+    }
+    return false;
+  }
+
+  interface Judged {
+    style: CSSStyleDeclaration | null;
+    rect: DOMRect;
+    /** Le contexte de l'élément lui-même. */
+    scope: Scope;
+    /** Celui de ses enfants. */
+    below: Scope;
+  }
+
+  function judge(el: Element, inherited: Scope): Judged {
+    const style = styleOf(el);
+    const rect = el.getBoundingClientRect();
+    const scope = scopeOf(el, style, inherited);
+    // Sans enfant ni texte, rien n'hérite de son contexte.
+    const below = el.firstChild === null ? scope : scopeBelow(el, style, rect, scope);
+    return { style, rect, scope, below };
+  }
+
+  /**
+   * Visible : peint par lui-même, ou par l'un de ses descendants.
+   *
+   * La seconde moitié est ce qui rend un emballage sans boîte visible quand
+   * son contenu l'est — et garantit l'invariant dont dépend le rendu pour le
+   * modèle : un nœud invisible n'a aucun descendant visible. `children`
+   * n'est consulté que si l'élément ne se peint pas lui-même — y compris
+   * quand un ancêtre le cache : un descendant peut encore s'en échapper
+   * (`absolute`, `fixed`, top layer), et l'emballage qui le porte doit rester
+   * visible pour que le rendu le garde.
+   */
+  function shown(el: Element, judged: Judged, children: () => boolean): boolean {
+    const { style, rect, scope, below } = judged;
+    if (style !== null && style.display === 'none') return false;
+    if (!scope.hidden && !scope.clipped && paintsItself(style, rect)) return true;
+    return children() || paintsText(el, style, below);
+  }
+
+  /** La même décision, sans construire de nœud : pour ce que l'arbre ne parcourt pas. */
+  function shownDeep(el: Element, inherited: Scope): boolean {
+    const judged = judge(el, inherited);
+    const scopeOfChild = childScopes(el, judged.below);
+    return shown(el, judged, () => Array.from(el.children).some((child) => shownDeep(child, scopeOfChild(child))));
+  }
+
+  /**
+   * Le contexte hérité d'une racine qui n'est pas le document : `resolve`
+   * décrit un élément seul, et doit le juger comme l'arbre complet le jugerait.
+   */
+  function scopeAbove(el: Element): Scope {
+    const chain: Element[] = [];
+    for (let up = el.parentElement; up !== null; up = up.parentElement) chain.unshift(up);
+    let scope = OPEN;
+    chain.forEach((ancestor, index) => {
+      scope = childScopes(ancestor, judge(ancestor, scope).below)(chain[index + 1] ?? el);
+    });
+    return scope;
   }
 
   function ariaFlag(el: Element, attr: string): boolean | undefined {
@@ -358,20 +579,38 @@ export function collectTree(
 
   const maxDepth = options.maxDepth ?? Number.POSITIVE_INFINITY;
 
-  function walk(el: Element, isRoot: boolean, depth: number): UINode | null {
-    if (!isRoot && SKIP.has(el.tagName)) return null;
-    if (!isRoot && el.getAttribute('aria-hidden') === 'true') return null;
+  /** Le nœud construit, et si l'élément est visible — même quand le nœud est écarté. */
+  interface Walked {
+    node: UINode | null;
+    /** `null` : non jugé, l'arbre ne l'a pas parcouru. */
+    visible: boolean | null;
+  }
 
-    const rect = el.getBoundingClientRect();
-    const visible = isVisible(el, rect);
+  function walk(el: Element, isRoot: boolean, depth: number, inherited: Scope): Walked {
+    // Les balises écartées ne sont jamais rendues ; `aria-hidden` l'est
+    // peut-être, et n'est jugé qu'à la demande d'un parent sans boîte.
+    if (!isRoot && SKIP.has(el.tagName)) return { node: null, visible: false };
+    if (!isRoot && el.getAttribute('aria-hidden') === 'true') return { node: null, visible: null };
 
+    const judged = judge(el, inherited);
+    const rect = judged.rect;
+
+    const scopeOfChild = childScopes(el, judged.below);
     const children: UINode[] = [];
-    if (depth < maxDepth) {
-      for (const child of Array.from(el.children)) {
-        const built = walk(child, false, depth + 1);
-        if (built !== null) children.push(built);
+    const verdicts: { child: Element; visible: boolean | null }[] = [];
+    for (const child of Array.from(el.children)) {
+      if (depth >= maxDepth) {
+        verdicts.push({ child, visible: null });
+        continue;
       }
+      const built = walk(child, false, depth + 1, scopeOfChild(child));
+      verdicts.push({ child, visible: built.visible });
+      if (built.node !== null) children.push(built.node);
     }
+
+    const visible = shown(el, judged, () =>
+      verdicts.some(({ child, visible: known }) => known ?? shownDeep(child, scopeOfChild(child))),
+    );
 
     const node: UINode = {
       id: `n${counter++}`,
@@ -388,8 +627,8 @@ export function collectTree(
     const testId = el.getAttribute('data-testid');
     if (testId !== null && testId !== '') node.testId = testId;
 
-    if (isRoot) return node;
-    if (!visible && children.length === 0) return null;
+    if (isRoot) return { node, visible };
+    if (!visible && children.length === 0) return { node: null, visible };
 
     // Aplatir les emballages anonymes. Un conteneur non interactif, sans nom
     // accessible et n'ayant qu'un seul enfant survivant, ne dit rien au modèle
@@ -406,11 +645,11 @@ export function collectTree(
       // L'identifiant de test d'un emballage aplati descend sur son unique
       // enfant : c'est le même élément aux yeux de l'auteur de la page.
       if (node.testId !== undefined && only.testId === undefined) only.testId = node.testId;
-      return only;
+      return { node: only, visible };
     }
 
-    return keep(node) ? node : null;
+    return { node: keep(node) ? node : null, visible };
   }
 
-  return walk(root, true, 0) as UINode;
+  return walk(root, true, 0, scopeAbove(root)).node as UINode;
 }

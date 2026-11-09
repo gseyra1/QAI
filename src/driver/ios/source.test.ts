@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { UINode } from '../types.ts';
 import { fixture } from './fake-appium.ts';
+import { renderTree } from '../../generate/render.ts';
 import { readScreen } from './source.ts';
 
 function flatten(node: UINode): UINode[] {
@@ -199,5 +200,55 @@ describe('XCUITest page source → UINode tree', () => {
     assert.equal(screen.elements.get(named(screen.root, 'button', 'Shown').id)?.onScreen, true);
     // Sans attribut bundleId dans la source, le bundle connu du pilote sert.
     assert.equal(screen.location, 'com.example.known');
+  });
+});
+
+/**
+ * Les règles du pilote web, là où la source XCUITest permet de les appliquer.
+ *
+ * Une boîte vide montre ses enfants ; elle ne les cache que si XCUITest les
+ * dit hors de l'écran alors qu'ils sont dans l'application — la source ne
+ * porte pas `clipsToBounds`, c'est la seule preuve disponible.
+ */
+describe('XCUITest page source → visibility under an empty frame', () => {
+  const app = (body: string, height = 800): string =>
+    '<AppiumAUT><XCUIElementTypeApplication type="XCUIElementTypeApplication" name="A" label="A" ' +
+    `visible="true" x="0" y="0" width="400" height="${height}">${body}</XCUIElementTypeApplication></AppiumAUT>`;
+  const wrapper = (inner: string): string =>
+    `<XCUIElementTypeOther type="XCUIElementTypeOther" visible="true" x="0" y="100" width="400" height="0">${inner}</XCUIElementTypeOther>`;
+  const button = (name: string, attributes: string): string =>
+    `<XCUIElementTypeButton type="XCUIElementTypeButton" name="${name}" label="${name}" ${attributes}/>`;
+
+  it('shows a rendered child through its empty wrapper, and renders both', () => {
+    const xml = app(wrapper(button('Inside', 'visible="true" x="0" y="100" width="100" height="40"')));
+    const screen = readScreen(xml, { mode: 'complete' });
+    const outer = flatten(screen.root).find((node) => node.role === 'group' && node.children.length === 1 && node.rect.height === 0);
+    assert.equal(outer?.state.visible, true);
+    assert.equal(named(screen.root, 'button', 'Inside').state.visible, true);
+    assert.match(renderTree(readScreen(xml, { mode: 'observe' }).root), /button "Inside"/);
+  });
+
+  it('hides what XCUITest reports off screen while it lies inside the application', () => {
+    const xml = app(wrapper(button('Clipped', 'visible="false" x="0" y="100" width="100" height="40"')));
+    assert.equal(named(readScreen(xml, { mode: 'complete' }).root, 'button', 'Clipped').state.visible, false);
+    const observed = readScreen(xml, { mode: 'observe' }).root;
+    assert.equal(flatten(observed).some((node) => node.name === 'Clipped'), false);
+  });
+
+  it('keeps below-the-fold content rendered, as on the web', () => {
+    const xml = app(wrapper(button('Below', 'visible="false" x="0" y="900" width="100" height="40"')));
+    assert.equal(named(readScreen(xml, { mode: 'complete' }).root, 'button', 'Below').state.visible, true);
+  });
+
+  it('infers no clipping outside an empty frame, nor without the visible attribute', () => {
+    const scrolled = app(
+      '<XCUIElementTypeTable type="XCUIElementTypeTable" visible="true" x="0" y="100" width="400" height="200">' +
+        button('Scrolled out', 'visible="false" x="0" y="400" width="100" height="40"') +
+        '</XCUIElementTypeTable>',
+    );
+    assert.equal(named(readScreen(scrolled, { mode: 'complete' }).root, 'button', 'Scrolled out').state.visible, true);
+
+    const bare = app(wrapper(button('No attribute', 'x="0" y="100" width="100" height="40"')));
+    assert.equal(named(readScreen(bare, { mode: 'complete' }).root, 'button', 'No attribute').state.visible, true);
   });
 });

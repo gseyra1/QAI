@@ -67,6 +67,17 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
     version = rawVersion;
   }
 
+  // Facultatif, et jamais refusé quand il dépasse : il ne change le sens
+  // d'aucun champ. Un fichier observé plus récemment que ce moteur est
+  // seulement signalé, à la vérification.
+  const rawObservation = doc['observation'];
+  if (
+    rawObservation !== undefined &&
+    (typeof rawObservation !== 'number' || !Number.isInteger(rawObservation) || rawObservation < 1)
+  ) {
+    throw new ResolutionError('invalid observation field (expected an integer ≥ 1)', path);
+  }
+
   const parsed: Record<string, StepResolution> = {};
   for (const [stepId, value] of Object.entries(steps)) {
     if (!isRecord(value)) throw new ResolutionError(`step ${stepId} is malformed`, path);
@@ -83,6 +94,7 @@ export function parseResolution(raw: string, path = '<inline>'): Resolution {
     recordedAt,
     steps: parsed,
   };
+  if (rawObservation !== undefined) resolution.observation = rawObservation;
   if (typeof doc['appVersion'] === 'string') resolution.appVersion = doc['appVersion'];
   return resolution;
 }
