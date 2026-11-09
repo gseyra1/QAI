@@ -28,6 +28,10 @@ import type {
 } from './types.ts';
 import { PlaywrightWebDriver } from './web/PlaywrightWebDriver.ts';
 
+function everyNode(root: UINode): UINode[] {
+  return [root, ...root.children.flatMap(everyNode)];
+}
+
 /** Un écran lu des deux façons : l'arbre tiré du complet, et celui que le pilote élague. */
 interface Pair {
   derived: UINode;
@@ -249,6 +253,54 @@ describe('l\'arbre élagué tiré du complet, sur un vrai navigateur', () => {
     <script>document.querySelector('textarea').focus();</script>
   </body></html>`;
 
+  /**
+   * Chaque rôle que le collecteur peut déclarer, en feuille sans nom, en feuille
+   * nommée et en emballage à enfant unique : une règle de rôle changée d'un côté
+   * seulement (l'ensemble interactif, l'exception du groupe nommé, la condition
+   * d'aplatissement) change au moins l'un d'eux.
+   */
+  const ROLES = [
+    'button', 'link', 'text', 'heading', 'image', 'textbox', 'searchbox', 'combobox',
+    'checkbox', 'radio', 'switch', 'slider', 'list', 'listitem', 'table', 'row',
+    'cell', 'tab', 'tablist', 'dialog', 'menu', 'menuitem', 'progressbar', 'alert',
+    'group',
+  ] as const;
+  const BOX = 'style="display:inline-block;width:8px;height:8px"';
+  const MATRIX = `<!doctype html><html lang="en"><body>${ROLES.map(
+    (role) =>
+      `<div role="${role}" data-testid="leaf-${role}" ${BOX}></div>` +
+      `<div role="${role}" data-testid="named-${role}" aria-label="Named ${role}" ${BOX}></div>` +
+      `<div role="${role}" data-testid="wrap-${role}"><span role="img" aria-label="Inside ${role}" ${BOX}></span></div>`,
+  ).join('')}</body></html>`;
+
+  it('rend exactement ce qu\'élague le pilote, pour chaque rôle', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(MATRIX);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const driver = new PlaywrightWebDriver(() => chromium.launch());
+    try {
+      await driver.launch({ entry: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` });
+      const pair = await readBoth(driver);
+      const full = (await driver.observe()).root;
+      // Chaque cas est bien là, avec son rôle : sinon la comparaison ne prouverait rien.
+      const byTestId = new Map(everyNode(full).flatMap((each) => (each.testId === undefined ? [] : [[each.testId, each] as const])));
+      for (const role of ROLES) {
+        for (const kind of ['leaf', 'named', 'wrap']) {
+          const found = byTestId.get(`${kind}-${role}`);
+          assert.equal(found?.role, role, `${kind}-${role}`);
+          assert.equal(found?.state.visible, true, `${kind}-${role}`);
+        }
+        assert.equal(byTestId.get(`leaf-${role}`)?.name, '', role);
+      }
+      assertSame([pair], 'roles');
+    } finally {
+      await driver.dispose();
+    }
+  });
+
   it('rend exactement ce qu\'élague le pilote, sur chaque règle de l\'élagage', async () => {
     const server = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -272,7 +324,62 @@ describe('l\'arbre élagué tiré du complet, sur un vrai navigateur', () => {
   });
 });
 
+/**
+ * Chaque type que `readScreen` projette, en feuille sans nom, en feuille nommée
+ * et en emballage sans nom à enfant unique, plus un emballage qui porte un
+ * identifiant de test sans nom affiché : même rôle de garde-fou que la page des
+ * rôles sur le web.
+ */
+const IOS_TYPES = [
+  'Button', 'Link', 'StaticText', 'Image', 'Icon', 'TextField', 'SecureTextField', 'TextView',
+  'SearchField', 'PickerWheel', 'ComboBox', 'CheckBox', 'RadioButton', 'Switch', 'Toggle', 'Slider',
+  'Table', 'CollectionView', 'Cell', 'TabBar', 'Alert', 'Sheet', 'Menu', 'MenuItem',
+  'ProgressIndicator', 'ActivityIndicator', 'Other',
+];
+const IOS_BOX = 'enabled="true" visible="true" x="0" y="0" width="20" height="20"';
+const iosElement = (type: string, attributes: string, children = ''): string =>
+  `<XCUIElementType${type} type="XCUIElementType${type}" ${attributes} ${IOS_BOX}>${children}</XCUIElementType${type}>`;
+const IOS_MATRIX = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>${iosElement(
+  'Application',
+  'name="Matrix" label="Matrix" bundleId="com.example.matrix"',
+  iosElement(
+    'Window',
+    '',
+    [
+      ...IOS_TYPES.map(
+        (type) =>
+          iosElement(type, 'label=""') +
+          iosElement(type, `label="Named ${type}"`) +
+          iosElement(type, 'label=""', iosElement('StaticText', `label="Inside ${type}"`)),
+      ),
+      // `Button` dans une barre d'onglets, et un texte d'en-tête : deux rôles de plus.
+      iosElement('TabBar', 'label="Tabs"', iosElement('Button', 'label=""') + iosElement('Button', 'label="Named tab"')),
+      iosElement('StaticText', 'label="" traits="Header"'),
+      iosElement('StaticText', 'label="Named header" traits="Header"'),
+      // Un identifiant sans nom lisible : l'emballage s'efface et le lègue à son enfant.
+      iosElement('Other', 'name=" " label=""', iosElement('StaticText', 'label="Inherits an id"')),
+    ].join(''),
+  ),
+)}</AppiumAUT>`;
+
 describe('l\'arbre élagué tiré du complet, sur les sources iOS', () => {
+  it('rend exactement ce qu\'élague readScreen, pour chaque type projeté', () => {
+    const full = readScreen(IOS_MATRIX, { mode: 'observe' }).root;
+    const pruned = readScreen(IOS_MATRIX, { mode: 'observe', interactiveOnly: true }).root;
+    // Chaque rôle a sa feuille sans nom, sa feuille nommée et son emballage.
+    const nodes = everyNode(full).slice(1);
+    const roles = new Set(nodes.map((each) => each.role));
+    for (const role of roles) {
+      const own = nodes.filter((each) => each.role === role);
+      assert.ok(own.some((each) => each.name === '' && each.children.length === 0), `${role}: unnamed leaf`);
+      assert.ok(own.some((each) => each.name !== '' && each.children.length === 0), `${role}: named leaf`);
+    }
+    assert.ok(['button', 'tab', 'heading', 'textbox', 'switch', 'list', 'listitem', 'group'].every((role) => roles.has(role as UINode['role'])));
+    assert.ok(nodes.some((each) => each.testId === ' ' && each.name === '' && each.children.length === 1));
+    assert.ok(everyNode(pruned).some((each) => each.name === 'Inherits an id' && each.testId === ' '));
+    assertSame([{ derived: pruneInteractive(full), pruned }], 'matrix');
+  });
+
   it('rend exactement ce qu\'élague readScreen, sur chaque source d\'exemple', async () => {
     const files = (await readdir(FIXTURES)).filter((file) => file.endsWith('.xml')).sort();
     assert.ok(files.length > 0);
@@ -300,8 +407,9 @@ describe('l\'arbre élagué tiré du complet, sur les sources iOS', () => {
     });
 
     it('rend exactement ce qu\'il élague lui-même, sur chaque source d\'exemple', async () => {
-      for (const file of (await readdir(FIXTURES)).filter((name) => name.endsWith('.xml')).sort()) {
-        fake.source = fixture(file);
+      const sources = (await readdir(FIXTURES)).filter((name) => name.endsWith('.xml')).sort().map((file) => [file, fixture(file)]);
+      for (const [file, source] of [...sources, ['matrix', IOS_MATRIX]] as const) {
+        fake.source = source;
         const full = (await driver.observe()).root;
         const pruned = (await driver.observe({ interactiveOnly: true })).root;
         assertSame([{ derived: pruneInteractive(full), pruned }], file);

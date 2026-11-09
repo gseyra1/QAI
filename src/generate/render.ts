@@ -17,6 +17,22 @@ export function renderTree(root: UINode): string {
   return lines.join('\n');
 }
 
+/**
+ * Les nœuds dont `renderTree` écrit une ligne : un nœud invisible est tu, et tout
+ * ce qu'il contient avec lui. Compter « ce que l'arbre du modèle montre » se fait
+ * ici, pas sur l'arbre élagué, qui garde ce conteneur et ses enfants.
+ */
+export function printedIds(root: UINode): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: UINode): void => {
+    if (!node.state.visible) return;
+    ids.add(node.id);
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return ids;
+}
+
 const STATE_MARKS: ReadonlyArray<[keyof UINode['state'], string]> = [
   ['disabled', 'disabled'],
   ['checked', 'checked'],
