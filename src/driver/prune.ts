@@ -67,8 +67,8 @@ const DERIVABLE = new WeakSet<object>();
  * Déclare qu'un `observe` élague par les règles de `pruneInteractive`.
  *
  * Réservé aux pilotes intégrés, dont l'équivalence est prouvée par les tests. Un
- * pilote tiers implémente le contrat publié, qui ne dit rien de son élagage : il
- * garde deux lectures.
+ * pilote tiers implémente le contrat publié, qui ne dit rien de son élagage : la
+ * génération le lit comme en 0.5.0, élagué seulement.
  */
 export function prunesLikeBuiltIns(observe: Driver['observe']): void {
   DERIVABLE.add(observe);

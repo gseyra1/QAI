@@ -7,37 +7,27 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
 
 ### Fixed
 
-- **Captures and assertions are verified on the tree replay reads, too.** They were
-  judged on the pruned tree the model is shown only, so a target with no name,
-  unique while resolving, was ambiguous on replay next to an unnamed icon: green,
-  then red, on identical data. Each check must now hold on both trees, and with a
-  built-in driver read the same elements on both: a `nth`, the target's or a
-  container's, that lands on another element at replay is refused, `absent`
-  included. Nothing the pruned tree alone refused is accepted. The tree sent to
-  the model does not change.
+- **With the built-in drivers, captures and assertions are verified on the tree
+  replay reads, too.** They were judged on the pruned tree the model is shown
+  only, so a target with no name, unique while resolving, was ambiguous on replay
+  next to an unnamed icon: green, then red, on identical data. A capture must now
+  find the same element on both trees. An assertion must hold on both and read
+  the same elements: the first match for `textEquals`, `numberEquals` and
+  `stateIs`, every element read otherwise; `absent` and `countAtLeast` only have
+  to hold. Nothing the pruned tree alone refused is accepted, and the tree sent
+  to the model does not change. Third-party drivers are resolved as in 0.5.0.
 
 ### Changed
 
-- **A refusal caused by the full tree only gives counts**: how many elements replay
-  reads for the target, how many lines of the model's tree show one, and to use a
-  stable part of the name or `within` a named container, never the value itself.
-  When a container's `nth` lands on another container, the containers are
-  counted; one its `nth` designates on both trees is not blamed. When the
-  model's tree shows one element and a position reads it on both trees, that
-  position is given. A target missing or ambiguous on the model's own tree keeps
-  the single "target not found or ambiguous" message.
-- "Already true before the gesture" now also counts a check true on the full tree.
-  Value-located and self-comparison warnings are computed on both trees and merged.
-- Built-in drivers are read once per look, the pruned tree being derived from the
-  full one. A third-party driver is read twice, pruned then full. A capture there
-  must read the same value on both reads, or designate the same element: no `nth`,
-  or as many candidates on both reads at every level that carries one. Otherwise
-  the screen is read once more, with no model call: a value that moved on both
-  reads is live and accepted as the pruned tree alone would accept it, one that
-  did not is refused. A live value keeps the one the model saw, with a warning;
-  the full read's value only serves on the full tree, so a live capture compared
-  with another display of it in the same step holds, as on replay. A
-  verification-only step no longer reads the screen before it.
+- A refusal caused by the full tree alone gets one fixed message, which quotes
+  nothing from that tree: replay would read another element, so name it by a
+  stable part of its name or within a named container rather than with `nth`.
+- With the built-in drivers, "already true before the gesture" also counts a
+  check true on the full tree, and the self-comparison warning is computed on
+  both trees.
+- The built-in drivers are read once per look, the pruned tree being derived
+  from the full one. With them, a verification-only step no longer reads the
+  screen before it.
 
 ## [0.5.0] - 2026-11-04
 
