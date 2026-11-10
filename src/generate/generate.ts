@@ -269,17 +269,21 @@ function selfComparisons(
   });
 }
 
-/** `selfComparisons` sur les deux arbres du regard, réunis. */
+/**
+ * `selfComparisons` sur les deux arbres du regard, réunis, chacun avec les valeurs
+ * qu'il a données (voir `CheckOutcome.replayed`).
+ */
 function selfCompared(
   checks: Pick<Proposal, 'captures' | 'assertions'>,
   expectations: readonly string[],
   screen: Look,
   known: Readonly<Record<string, string>>,
+  replayed: Readonly<Record<string, string>>,
 ): string[] {
   return [
     ...new Set([
       ...selfComparisons(checks, expectations, screen.shown, known),
-      ...selfComparisons(checks, expectations, screen.root, known),
+      ...selfComparisons(checks, expectations, screen.root, replayed),
     ]),
   ];
 }
@@ -463,12 +467,30 @@ interface Look {
    * `samePositions`.
    */
   aligned: boolean;
+  /**
+   * Pilote tiers seulement : le regard précédent sur le même écran, repris quand
+   * une capture y lisait deux valeurs sans que rien dise si c'était le même
+   * élément. Voir `moved`.
+   */
+  earlier?: Look;
+}
+
+/**
+ * Une cible telle que chaque arbre la lit, interpolée avec les valeurs que chacun
+ * a données. Les deux ne diffèrent que sur les deux lectures d'un pilote tiers,
+ * quand une capture de l'étape est vivante : le rejeu lit capture et vérification
+ * dans un même instantané, l'arbre complet aussi.
+ */
+interface OnBoth {
+  shown: Locator;
+  root: Locator;
 }
 
 /**
  * Une lecture pour les pilotes intégrés, dont l'élagage se rejoue sur l'arbre
  * complet (`src/driver/prune.ts`) ; deux pour un pilote tiers, élaguée puis
- * complète, puisque le contrat publié ne dit rien de son élagage.
+ * complète, puisque le contrat publié ne dit rien de son élagage. Un regard de
+ * plus, parfois, chez ce dernier : voir `moved`.
  */
 async function look(driver: Driver): Promise<Look> {
   if (derivesPruned(driver)) {
@@ -498,6 +520,12 @@ function levels(locator: Locator): Locator[] {
   return out;
 }
 
+/** Les niveaux d'une cible, appariés d'un arbre à l'autre. */
+function levelPairs(target: OnBoth): OnBoth[] {
+  const replayed = levels(target.root);
+  return levels(target.shown).map((shown, index) => ({ shown, root: replayed[index] as Locator }));
+}
+
 /** Ce que compte la position d'un niveau : le même locator, sans elle. */
 function unpositioned(locator: Locator): Locator {
   const { nth: _, ...anywhere } = locator;
@@ -515,12 +543,34 @@ function unpositioned(locator: Locator): Locator {
  * élément ; une position aussi, quand chaque niveau qui en porte une compte
  * autant de candidats des deux côtés.
  */
-function samePositions(screen: Look, locator: Locator): boolean {
-  return levels(locator).every((level) => {
-    if (level.nth === undefined) return true;
-    const anywhere = unpositioned(level);
-    return matchNodes(screen.shown, anywhere).length === matchNodes(screen.root, anywhere).length;
-  });
+function samePositions(screen: Look, target: OnBoth): boolean {
+  return levelPairs(target).every(
+    (level) =>
+      level.shown.nth === undefined ||
+      matchNodes(screen.shown, unpositioned(level.shown)).length === matchNodes(screen.root, unpositioned(level.root)).length,
+  );
+}
+
+/**
+ * La valeur a-t-elle bougé sur les deux lectures depuis le regard précédent ?
+ *
+ * Quand les comptes ne disent pas si deux lectures sans identifiant commun
+ * désignent le même élément — un candidat de plus au rejeu, avant la cible ou
+ * après —, deux valeurs différentes sont un élément vivant lu à deux instants, ou
+ * un autre élément. Le premier bouge d'un regard à l'autre sur l'une et l'autre
+ * lecture ; un autre élément, figé, ne bouge pas, et reste refusé. Vivante, la
+ * capture est jugée comme en 0.5.0 sur l'arbre du modèle, avec l'avertissement :
+ * une position que le rejeu compte autrement ne se prouve pas sans identifiant,
+ * et la refuser ferait réécrire au modèle une cible juste.
+ */
+function moved(screen: Look, target: OnBoth, spec: CaptureSpec, shownValue: string, value: string): boolean {
+  const earlier = screen.earlier;
+  if (earlier === undefined) return false;
+  const reread = (root: UINode, locator: Locator): string | null => {
+    const found = matchOne(root, locator);
+    return found === null ? null : readCapture(found, spec);
+  };
+  return reread(earlier.shown, target.shown) !== shownValue && reread(earlier.root, target.root) !== value;
 }
 
 /**
@@ -549,7 +599,9 @@ function realPosition(screen: Look, locator: Locator): number | null {
  *
  * La cause est cherchée du conteneur le plus extérieur à la cible : la position
  * d'un conteneur que le rejeu compte parmi plus de candidats désigne un autre
- * conteneur, et le reste en découle. Sans nœud de plus au rejeu, à aucun niveau,
+ * conteneur, et le reste en découle. Sur un seul instantané, un conteneur que la
+ * position désigne sur les deux arbres n'est pas en cause, même compté parmi plus
+ * de candidats : ceux de plus viennent après lui. Sans nœud de plus au rejeu, à aucun niveau,
  * c'est l'écran qui a changé entre les deux lectures d'un pilote tiers : dire
  * qu'il « compte aussi » des éléments serait faux. Le nombre côté modèle est
  * celui des lignes que son arbre rendu écrit : `renderTree` tait un conteneur
@@ -559,33 +611,37 @@ function realPosition(screen: Look, locator: Locator): number | null {
  * pour `countAtLeast`, qu'il ne ferait jamais passer : seul le conteneur nommé
  * vaut pour ce dernier.
  */
-function replayReads(screen: Look, locator: Locator, kind: string, visibleOnly = false): string {
+function replayReads(screen: Look, target: OnBoth, kind: string, visibleOnly = false): string {
   const printed = printedIds(screen.shown);
-  const tally = (anywhere: Locator, kept: (node: UINode) => boolean) => {
-    const shown = matchNodes(screen.shown, anywhere).filter(kept);
+  const tally = (level: OnBoth, kept: (node: UINode) => boolean) => {
+    const shown = matchNodes(screen.shown, unpositioned(level.shown)).filter(kept);
     return {
-      full: matchNodes(screen.root, anywhere).filter(kept).length,
+      full: matchNodes(screen.root, unpositioned(level.root)).filter(kept).length,
       shown: shown.length,
       printed: shown.filter((node) => printed.has(node.id)).length,
     };
   };
 
-  for (const container of levels(locator).slice(0, -1)) {
-    if (container.nth === undefined) continue;
-    const counts = tally(unpositioned(container), () => true);
+  for (const container of levelPairs(target).slice(0, -1)) {
+    if (container.shown.nth === undefined) continue;
+    const counts = tally(container, () => true);
     if (counts.full <= counts.shown) continue;
+    if (screen.aligned && matchNodes(screen.shown, container.shown)[0]?.id === matchNodes(screen.root, container.root)[0]?.id) {
+      continue;
+    }
     const counted = `replay reads ${counts.full} element(s) matching its "within" where your tree shows ${counts.printed}: it also counts ${LEFT_OUT}`;
     if (kind === 'absent') return counted;
     if (kind === 'countAtLeast') return `${counted}. ${NAMED_CONTAINER}, not "nth", which counts them too`;
     return `${counted}. ${STABLE_NAME_OR_CONTAINER}, not "nth", which counts them too. ${NEVER_THE_VALUE}`;
   }
 
-  const counts = tally(unpositioned(locator), (node) => !visibleOnly || node.state.visible);
+  const counts = tally(target, (node) => !visibleOnly || node.state.visible);
   const read = `replay reads ${counts.full}${visibleOnly ? ' visible' : ''} element(s) matching this target where your tree shows ${counts.printed}`;
   if (counts.full <= counts.shown) return `${read}: the screen changed between two reads of it`;
   const counted = `${read}: it also counts ${LEFT_OUT}`;
   if (kind === 'absent' || kind === 'countAtLeast') return counted;
-  const position = realPosition(screen, locator);
+  // Sur un seul instantané, les deux côtés de la cible sont égaux.
+  const position = realPosition(screen, target.shown);
   return position === null
     ? `${counted}. ${STABLE_NAME_OR_CONTAINER}, not "nth", which counts them too. ${NEVER_THE_VALUE}`
     : `${counted}. ${STABLE_NAME_OR_CONTAINER}; if its name is only data, keep this target and add "nth": ${position} to it, where replay finds the element you see. ${NEVER_THE_VALUE}`;
@@ -599,11 +655,22 @@ const FIRST_MATCH: ReadonlySet<string> = new Set(['textEquals', 'numberEquals', 
  * rejeu doit le lire aussi : la première correspondance quand elle seule compte,
  * et chaque correspondance sinon — une position (`nth`, ou celle d'un conteneur)
  * qui désigne un autre élément au rejeu y passerait sur lui.
+ *
+ * Chaque position, de la cible ou d'un conteneur, doit désigner le même élément
+ * sur les deux arbres, même quand la cible n'y trouve rien : un `absent` lu dans
+ * un autre conteneur au rejeu tient des deux côtés quand ni l'un ni l'autre ne
+ * contient l'élément, puis reste vert le jour où celui qu'il visait le contient.
  */
-function readsElsewhere(screen: Look, check: Check & { target: Locator }, target: Locator): boolean {
+function readsElsewhere(screen: Look, check: Check & { target: Locator }, target: OnBoth): boolean {
   if (!screen.aligned) return false;
-  const meant = matchNodes(screen.shown, target).map((node) => node.id);
-  const read = matchNodes(screen.root, target).map((node) => node.id);
+  const moves = levelPairs(target).some(
+    (level) =>
+      level.shown.nth !== undefined &&
+      matchNodes(screen.shown, level.shown)[0]?.id !== matchNodes(screen.root, level.root)[0]?.id,
+  );
+  if (moves) return true;
+  const meant = matchNodes(screen.shown, target.shown).map((node) => node.id);
+  const read = matchNodes(screen.root, target.root).map((node) => node.id);
   if (FIRST_MATCH.has(check.check)) return meant[0] !== read[0];
   const reread = new Set(read);
   return meant.some((id) => !reread.has(id));
@@ -612,6 +679,17 @@ function readsElsewhere(screen: Look, check: Check & { target: Locator }, target
 interface CheckOutcome {
   errors: string[];
   produced: Record<string, string>;
+  /**
+   * Ce que le rejeu lit pour les mêmes captures : la valeur de l'arbre complet.
+   * Égale à `produced`, sauf pour une valeur vivante lue deux fois par un pilote
+   * tiers. Ne sert qu'à juger l'arbre complet, jamais rendue au modèle.
+   */
+  replayed?: Record<string, string>;
+  /**
+   * Une capture refusée faute de savoir si ses deux lectures désignent le même
+   * élément : un regard de plus le dira (voir `moved`).
+   */
+  undecided?: true;
   /** Rapportés à l'utilisateur si la proposition est retenue, jamais rendus au modèle. */
   warnings?: string[];
   notes?: string[];
@@ -646,6 +724,12 @@ function verifyChecks(
   const warnings: string[] = [];
   const produced: Record<string, string> = {};
   const merged: Record<string, string> = { ...bag };
+  // Les mêmes captures, lues sur l'arbre complet : c'est lui que le rejeu lit, et
+  // dans le même instantané que les vérifications. Ce qui en est jugé n'est jamais
+  // cité au modèle, seulement compté.
+  const replayedProduced: Record<string, string> = {};
+  const replayed: Record<string, string> = { ...bag };
+  let undecided = false;
 
   for (const name of Object.keys(step.capture ?? {})) {
     const spec = proposal.captures[name];
@@ -677,31 +761,40 @@ function verifyChecks(
         );
         continue;
       }
-      // Le rejeu lit l'arbre complet : la valeur vient de là, et doit être celle
-      // de l'élément montré — le même nœud, ou sur deux lectures la même valeur,
-      // ou une cible qui y désigne le même élément.
-      const node = matchOne(screen.root, from);
+      // Le rejeu lit l'arbre complet : la valeur doit y être celle de l'élément
+      // montré — le même nœud, ou sur deux lectures la même valeur, une cible qui
+      // y désigne le même élément, ou une valeur vivante.
+      const target: OnBoth = { shown: from, root: interpolateLocator(spec.from, replayed) };
+      const node = matchOne(screen.root, target.root);
       const value = node === null ? null : readCapture(node, spec);
+      if (node === null || value === null || (screen.aligned && node.id !== seen.id)) {
+        errors.push(`capture "${name}": found on your tree, but ${replayReads(screen, target, 'capture')}`);
+        continue;
+      }
       if (
-        node === null ||
-        value === null ||
-        (screen.aligned ? node.id !== seen.id : value !== shownValue && !samePositions(screen, from))
+        !screen.aligned &&
+        value !== shownValue &&
+        !samePositions(screen, target) &&
+        !moved(screen, target, spec, shownValue, value)
       ) {
-        errors.push(`capture "${name}": found on your tree, but ${replayReads(screen, from, 'capture')}`);
+        if (screen.earlier === undefined) undecided = true;
+        errors.push(`capture "${name}": found on your tree, but ${replayReads(screen, target, 'capture')}`);
         continue;
       }
       // Les deux valeurs sont égales, sauf sur les deux lectures d'un pilote tiers
       // quand l'élément est vivant : la valeur gardée est alors celle que le
       // modèle a vue, comme en 0.5.0, pour que rien de la seconde lecture ne lui
-      // parvienne avec les captures connues.
+      // parvienne avec les captures connues. Celle de la seconde ne sert qu'à
+      // juger l'arbre complet, où elle a été lue.
       const read = shownValue;
       if (value !== read) {
         warnings.push(
           `capture "${name}" changed between the two reads of this screen: the value is live, and replay reads it at its own time`,
         );
       }
-      learnDerived(secrets, seen, read);
-      learnDerived(secrets, node, read);
+      for (const [source, derived] of [[seen, read], [node, read], [seen, value], [node, value]] as const) {
+        learnDerived(secrets, source, derived);
+      }
       for (const anchor of [spec.after, spec.before]) {
         if (anchor !== undefined && holdsNumber(anchor)) {
           warnings.push(
@@ -716,7 +809,7 @@ function verifyChecks(
       // Un `from` nommé par une capture suit la valeur au rejeu.
       if (
         namedCaptures(nameLiteral(spec.from) ?? '').length === 0 &&
-        (tautologicalCapture(from, spec.extract, seen, read) || tautologicalCapture(from, spec.extract, node, value))
+        (tautologicalCapture(from, spec.extract, seen, read) || tautologicalCapture(target.root, spec.extract, node, value))
       ) {
         warnings.push(
           `capture "${name}" is located by the very value it reads ("${read}"): when that value changes, replay reports "target not found" instead of reading the new one`,
@@ -724,6 +817,8 @@ function verifyChecks(
       }
       produced[name] = read;
       merged[name] = read;
+      replayedProduced[name] = value;
+      replayed[name] = value;
     } catch (error) {
       errors.push(`capture "${name}": ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -762,28 +857,31 @@ function verifyChecks(
         (check.check === 'textEquals' ||
           check.check === 'textContains' ||
           check.check === 'numberEquals') &&
-        (tautological(check, screen.shown, merged) || tautological(check, screen.root, merged))
+        (tautological(check, screen.shown, merged) || tautological(check, screen.root, replayed))
       ) {
         warnings.push(
           `assertion "${expectation}" is located by the very value it asserts ("${usesEnv(String(check.value)) ? MASK : interpolate(String(check.value), merged)}"): when that value changes, replay reports "no element" instead of "expected …, observed …"`,
         );
       }
-      const on = (root: UINode) =>
+      const on = (root: UINode, values: Readonly<Record<string, string>>) =>
         evaluateCheck(check, {
           root,
           location: screen.location,
-          bag: merged,
+          bag: values,
           secrets,
           ...(baseUrl !== undefined ? { baseUrl } : {}),
         });
-      const result = on(screen.shown);
+      const result = on(screen.shown, merged);
       if (!result.ok) {
         errors.push(`assertion "${expectation}" false on this screen: ${result.reason}`);
         continue;
       }
       if (!('target' in check)) continue;
-      const target = interpolateLocator(check.target, merged);
-      if (!on(screen.root).ok || readsElsewhere(screen, check, target)) {
+      const target: OnBoth = {
+        shown: interpolateLocator(check.target, merged),
+        root: interpolateLocator(check.target, replayed),
+      };
+      if (!on(screen.root, replayed).ok || readsElsewhere(screen, check, target)) {
         errors.push(
           `assertion "${expectation}": true on your tree, but ${
             check.check === 'absent'
@@ -811,7 +909,9 @@ function verifyChecks(
   return {
     errors: errors.map((error) => secrets.redact(error)),
     produced,
+    replayed: replayedProduced,
     warnings: warnings.map((warning) => secrets.redact(warning)),
+    ...(undecided ? { undecided: true as const } : {}),
   };
 }
 
@@ -1445,13 +1545,22 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       ];
       const warnings = [
         ...(verified.warnings ?? []),
-        ...[...portableWarnings, ...sources.warnings, ...frozen.warnings, ...selfCompared(checks, expectations, screen, { ...bag, ...verified.produced })].map(
+        ...[...portableWarnings, ...sources.warnings, ...frozen.warnings, ...selfCompared(checks, expectations, screen, { ...bag, ...verified.produced }, { ...bag, ...verified.replayed })].map(
           (warning) => secrets.redact(warning),
         ),
       ];
 
       if (errors.length > 0) {
-        return { checks, outcome: { errors, produced: verified.produced, warnings, notes } };
+        return {
+          checks,
+          outcome: {
+            errors,
+            produced: verified.produced,
+            warnings,
+            notes,
+            ...(verified.undecided === true ? { undecided: true as const } : {}),
+          },
+        };
       }
 
       // Seulement sur une proposition par ailleurs acceptable : le renvoi est
@@ -1495,7 +1604,20 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       };
     };
 
-    let { checks, outcome, kept } = assess(after, proposal);
+    /**
+     * `assess` sur le regard du moment, et sur un de plus quand une capture lue
+     * deux fois par un pilote tiers ne dit pas encore si c'est le même élément :
+     * sans appel au modèle ni arbre renvoyé, ce regard dit si la valeur est vivante
+     * (voir `moved`). Le second regard devient celui du tour, pour tout.
+     */
+    const assessLooking = async (candidate: Pick<Proposal, 'captures' | 'assertions'>): Promise<ReturnType<typeof assess>> => {
+      const assessed = assess(after, candidate);
+      if (assessed.outcome.undecided !== true) return assessed;
+      after = { ...(await look(driver)), earlier: after };
+      return assess(after, candidate);
+    };
+
+    let { checks, outcome, kept } = await assessLooking(proposal);
 
     const checksConversation: ModelMessage[] = [];
     // Une étape qui ne fait que vérifier n'a encore rien proposé : ses
@@ -1591,7 +1713,7 @@ export async function generateResolution(input: GenerateInput): Promise<Generate
       }
 
       after = await look(driver);
-      const assessed = assess(after, candidate);
+      const assessed = await assessLooking(candidate);
       ({ checks, outcome } = assessed);
       // La dernière proposition valide : une réponse qui tient, mais
       // interrogée à son tour, la remplace.

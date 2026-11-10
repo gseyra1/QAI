@@ -322,6 +322,35 @@ describe('l\'arbre élagué tiré du complet, sur un vrai navigateur', () => {
       await driver.dispose();
     }
   });
+
+  /**
+   * La racine est gardée telle quelle : sans nom et à enfant unique, comme une page
+   * d'application montée dans un seul conteneur, ou sans aucun enfant qui reste.
+   */
+  for (const [label, body, kept] of [
+    ['un seul emballage sans nom', '<div id="app"><h1>A</h1><p>B</p><button>Go</button></div><script></script>', 1],
+    ['aucun enfant qui reste', '<script></script><p aria-hidden="true">Hidden</p>', 0],
+  ] as const) {
+    it(`rend exactement ce qu'élague le pilote, sur une racine à ${label}`, async () => {
+      const server = createServer((_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(`<!doctype html><html lang="en"><body>${body}</body></html>`);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      servers.push(server);
+      const driver = new PlaywrightWebDriver(() => chromium.launch());
+      try {
+        await driver.launch({ entry: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` });
+        const pair = await readBoth(driver);
+        assert.equal(pair.pruned.name, '');
+        assert.equal(pair.pruned.children.length, kept);
+        if (kept === 1) assert.equal(pair.pruned.children[0]?.children.length, 3);
+        assertSame([pair], label);
+      } finally {
+        await driver.dispose();
+      }
+    });
+  }
 });
 
 /**
@@ -362,7 +391,23 @@ const IOS_MATRIX = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>${iosElemen
   ),
 )}</AppiumAUT>`;
 
+/** Une application sans nom ni libellé, à fenêtre unique : la racine reste la racine. */
+const IOS_BARE_ROOT = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>${iosElement(
+  'Application',
+  'bundleId="com.example.bare"',
+  iosElement('Window', '', iosElement('StaticText', 'label="Alone"') + iosElement('Button', 'label="Go"')),
+)}</AppiumAUT>`;
+
 describe('l\'arbre élagué tiré du complet, sur les sources iOS', () => {
+  it('rend exactement ce qu\'élague readScreen, sur une racine sans nom à enfant unique', () => {
+    const full = readScreen(IOS_BARE_ROOT, { mode: 'observe' }).root;
+    const pruned = readScreen(IOS_BARE_ROOT, { mode: 'observe', interactiveOnly: true }).root;
+    assert.equal(pruned.name, '');
+    assert.equal(pruned.children.length, 1);
+    assert.equal(pruned.children[0]?.children.length, 2);
+    assertSame([{ derived: pruneInteractive(full), pruned }], 'bare root');
+  });
+
   it('rend exactement ce qu\'élague readScreen, pour chaque type projeté', () => {
     const full = readScreen(IOS_MATRIX, { mode: 'observe' }).root;
     const pruned = readScreen(IOS_MATRIX, { mode: 'observe', interactiveOnly: true }).root;
@@ -408,7 +453,7 @@ describe('l\'arbre élagué tiré du complet, sur les sources iOS', () => {
 
     it('rend exactement ce qu\'il élague lui-même, sur chaque source d\'exemple', async () => {
       const sources = (await readdir(FIXTURES)).filter((name) => name.endsWith('.xml')).sort().map((file) => [file, fixture(file)]);
-      for (const [file, source] of [...sources, ['matrix', IOS_MATRIX]] as const) {
+      for (const [file, source] of [...sources, ['matrix', IOS_MATRIX], ['bare root', IOS_BARE_ROOT]] as const) {
         fake.source = source;
         const full = (await driver.observe()).root;
         const pruned = (await driver.observe({ interactiveOnly: true })).root;

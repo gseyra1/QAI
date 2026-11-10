@@ -11,16 +11,18 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
   judged on the pruned tree the model is shown only, so a target with no name,
   unique while resolving, was ambiguous on replay next to an unnamed icon: green,
   then red, on identical data. Each check must now hold on both trees, and with a
-  built-in driver read the same elements on both: a `nth` that lands on another
-  element at replay is refused. Nothing the pruned tree alone refused is accepted.
-  The tree sent to the model does not change.
+  built-in driver read the same elements on both: a `nth`, the target's or a
+  container's, that lands on another element at replay is refused, `absent`
+  included. Nothing the pruned tree alone refused is accepted. The tree sent to
+  the model does not change.
 
 ### Changed
 
 - **A refusal caused by the full tree only gives counts**: how many elements replay
   reads for the target, how many lines of the model's tree show one, and to use a
   stable part of the name or `within` a named container, never the value itself.
-  When a container's `nth` is the cause, the containers are counted. When the
+  When a container's `nth` lands on another container, the containers are
+  counted; one its `nth` designates on both trees is not blamed. When the
   model's tree shows one element and a position reads it on both trees, that
   position is given. A target missing or ambiguous on the model's own tree keeps
   the single "target not found or ambiguous" message.
@@ -29,8 +31,12 @@ Versions follow [SemVer](https://semver.org/); before 1.0, a minor version may b
 - Built-in drivers are read once per look, the pruned tree being derived from the
   full one. A third-party driver is read twice, pruned then full. A capture there
   must read the same value on both reads, or designate the same element: no `nth`,
-  or as many candidates on both reads at every level that carries one. A value
-  that changed between the reads keeps the one the model saw, with a warning. A
+  or as many candidates on both reads at every level that carries one. Otherwise
+  the screen is read once more, with no model call: a value that moved on both
+  reads is live and accepted as the pruned tree alone would accept it, one that
+  did not is refused. A live value keeps the one the model saw, with a warning;
+  the full read's value only serves on the full tree, so a live capture compared
+  with another display of it in the same step holds, as on replay. A
   verification-only step no longer reads the screen before it.
 
 ## [0.5.0] - 2026-11-04

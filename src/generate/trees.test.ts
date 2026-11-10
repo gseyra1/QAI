@@ -650,6 +650,160 @@ steps:
         'capture "reference": found on your tree, but replay reads 0 element(s) matching this target where your tree shows 1: the screen changed between two reads of it',
       );
     });
+
+    /** Un minuteur dans un groupe nommé, suivi d'une icône sans nom que l'élagage retire. */
+    const clock = (tick: number, ...around: UINode[]): UINode =>
+      page(node('group', 'Timer', [node('text', 'Elapsed'), node('text', String(700 + tick)), unnamed()]), ...around);
+    const reads = parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    capture:\n      elapsed: the elapsed seconds\n');
+
+    for (const from of [{ role: 'text', nth: 1, within: { role: 'group', name: 'Timer' } }, { role: 'text', nth: 1 }]) {
+      it(`accepte ${JSON.stringify(from)} quand l'élément de plus au rejeu vient après la valeur, comme 0.5.0`, async () => {
+        const driver = ticking((tick) => clock(tick));
+        const provider = new ScriptedProvider([{ captures: { elapsed: { from, extract: 'number' } } }]);
+
+        const result = await generateResolution({ scenario: reads, driver, provider, attemptsPerStep: 1 });
+
+        assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+        assert.deepEqual(result.steps[0]?.rejections, []);
+        assert.deepEqual(result.steps[0]?.warnings, [LIVE]);
+        // Le regard d'où part la phase B, celui de la réponse, et un de plus : la
+        // valeur a bougé sur les deux lectures, elle est vivante.
+        assert.equal(driver.observations, 6);
+        const sent = JSON.stringify(provider.requests);
+        for (const full of [702, 704, 706]) assert.equal(sent.includes(String(full)), false, String(full));
+        const report = await runScenario({ scenario: reads, resolution: result.resolution, driver: ticking((tick) => clock(tick)), assertTimeoutMs: 0 });
+        assert.equal(report.status, 'passed');
+      });
+    }
+
+    it('refuse encore, après un regard de plus, un autre élément que rien ne fait bouger', async () => {
+      // Une valeur que l'élagage retire, avant celle que le modèle voit : rien ne bouge.
+      const timer = (...values: string[]) => page(node('group', 'Timer', [node('text', 'Elapsed'), ...values.map((value) => node('text', value))]));
+      const driver = new Drifting(timer('42'), timer('40', '42'));
+      const provider = new ScriptedProvider([
+        { captures: { elapsed: { from: { role: 'text', nth: 1, within: { role: 'group', name: 'Timer' } }, extract: 'number' } } },
+      ]);
+
+      const result = await generateResolution({ scenario: reads, driver, provider, attemptsPerStep: 1 });
+
+      assert.equal(result.status, 'incomplete');
+      assert.equal(
+        result.steps[0]?.rejections[0],
+        `capture "elapsed": found on your tree, but replay reads 3 element(s) matching this target where your tree shows 2: ${LEFT_OUT}. Use { "contains": "..." } on a stable part of the name, or "within" a named container, not "nth", which counts them too. Never put the value itself in "name"`,
+      );
+      assert.equal(driver.observations, 6);
+    });
+
+    it('refuse une copie cachée et figée avant la valeur vivante, que le rejeu lirait (C3)', async () => {
+      const stale = node('text', '640', [], { state: { visible: false } });
+      const driver = ticking((tick) => page(node('group', 'Timer', [node('text', 'Elapsed'), stale, node('text', String(700 + tick))])));
+      const provider = new ScriptedProvider([
+        { captures: { elapsed: { from: { role: 'text', nth: 1, within: { role: 'group', name: 'Timer' } }, extract: 'number' } } },
+      ]);
+
+      const result = await generateResolution({ scenario: reads, driver, provider, attemptsPerStep: 1 });
+
+      // Seule la valeur montrée a bougé : celle que le rejeu lit est un autre élément.
+      assert.equal(result.status, 'incomplete');
+      assert.match(result.steps[0]?.rejections[0] ?? '', /replay reads 3 element\(s\) matching this target where your tree shows 2/);
+    });
+
+    it('signale la comparaison avec soi-même que seule la lecture complète donne, avec sa propre valeur', async () => {
+      const scenario = parseScenario(`
+id: t
+title: t
+steps:
+  - id: s1
+    expect: "the order {{reference}} is shown"
+    capture:
+      reference: the order number
+`);
+      // Ambiguë sur la lecture élaguée, la cible n'y désigne rien ; sur la complète,
+      // elle désigne l'élément lu, par la valeur de cette lecture-là.
+      let tick = 0;
+      const driver = new (class extends TwoReads {
+        protected override tree(options: ObserveOptions | undefined): UINode {
+          tick += 1;
+          const value = String(700 + tick);
+          return options?.interactiveOnly === true
+            ? page(node('text', `Order ${value}`), node('text', `Ref ${value}`))
+            : page(node('text', `Order ${value}`));
+        }
+      })(page());
+      const provider = new ScriptedProvider([
+        {
+          captures: { reference: { from: { role: 'text', name: { contains: 'Order' } }, extract: 'number' } },
+          assertions: { 'the order {{reference}} is shown': { check: 'visible', target: { role: 'text', name: { contains: '{{reference}}' } } } },
+        },
+      ]);
+
+      const result = await generateResolution({ scenario, driver, provider, attemptsPerStep: 1 });
+
+      assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+      assert.ok(
+        result.steps[0]?.warnings.includes(
+          'assertion "the order {{reference}} is shown" compares {{reference}} with the element it was just read from: it cannot fail',
+        ),
+        JSON.stringify(result.steps[0]?.warnings),
+      );
+    });
+
+    describe('comparée dans la même étape à un second affichage de la même valeur', () => {
+      const KEY = 'the status shows the elapsed seconds';
+      const comparing = (capture: string) =>
+        parseScenario(`id: t\ntitle: t\nsteps:\n  - id: s1\n    capture:\n${capture}    expect: ${JSON.stringify(KEY)}\n`);
+      const elapsed = { role: 'text', name: { contains: 's ago' } };
+      /** Le même nombre en deux endroits, rendus ensemble à chaque lecture. */
+      const status = (tick: number): UINode =>
+        page(node('listitem', 'Timer', [node('text', `Updated ${700 + tick} s ago`)]), node('text', `Status: ${700 + tick} s`));
+      const mirror = (tick: number): UINode =>
+        clock(tick, node('group', 'Summary', [node('text', 'Total time'), node('text', String(700 + tick))]));
+
+      const cases: [string, string, (tick: number) => UINode, Record<string, unknown>, Check][] = [
+        [
+          'textContains sur un autre texte',
+          '      elapsed: the elapsed seconds\n',
+          status,
+          { elapsed: { from: elapsed, extract: 'number' } },
+          { check: 'textContains', target: { role: 'text', name: { contains: 'Status' } }, value: '{{elapsed}}' },
+        ],
+        [
+          'une seconde capture localisée par la première',
+          '      elapsed: the elapsed seconds\n      shown: the status seconds\n',
+          status,
+          {
+            elapsed: { from: elapsed, extract: 'number' },
+            shown: { from: { role: 'text', name: { contains: 'Status: {{elapsed}}' } }, extract: 'number' },
+          },
+          { check: 'visible', target: { role: 'text', name: { contains: 'Status: {{shown}}' } } },
+        ],
+        [
+          'textEquals par position, l\'icône après la valeur',
+          '      elapsed: the elapsed seconds\n',
+          mirror,
+          { elapsed: { from: { role: 'text', nth: 1, within: { role: 'group', name: 'Timer' } }, extract: 'number' } },
+          { check: 'textEquals', target: { role: 'text', nth: 1, within: { role: 'group', name: 'Summary' } }, value: '{{elapsed}}' },
+        ],
+      ];
+
+      for (const [label, capture, screen, captures, check] of cases) {
+        it(`accepte ${label}, comme 0.5.0, et le rejeu le passe`, async () => {
+          const scenario = comparing(capture);
+          const provider = new ScriptedProvider([{ captures, assertions: { [KEY]: check } }]);
+
+          const result = await generateResolution({ scenario, driver: ticking(screen), provider, attemptsPerStep: 1 });
+
+          assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+          assert.deepEqual(result.steps[0]?.rejections, []);
+          assert.ok(result.steps[0]?.warnings.includes(LIVE), JSON.stringify(result.steps[0]?.warnings));
+          // Aucune lecture complète (paire) ne part chez le fournisseur.
+          const sent = JSON.stringify(provider.requests);
+          for (const full of [702, 704, 706]) assert.equal(sent.includes(String(full)), false, String(full));
+          const report = await runScenario({ scenario, resolution: result.resolution, driver: ticking(screen), assertTimeoutMs: 0 });
+          assert.equal(report.status, 'passed', JSON.stringify(report.steps));
+        });
+      }
+    });
   });
 
   describe('la position d\'un conteneur que le rejeu compte parmi plus de candidats', () => {
@@ -689,6 +843,44 @@ steps:
         await refusal({ check: 'absent', target: { role: 'cell', name: 'Paid', within: { role: 'row', nth: 2 } } }),
         `assertion "${KEY}": true on your tree, but ${ROWS}`,
       );
+    });
+
+    it('ne met pas en cause un conteneur que sa position désigne sur les deux arbres', async () => {
+      // Une cellule d'icône en tête de chaque ligne, et une ligne d'espacement à la fin.
+      const icons = page(
+        node('table', '', [
+          node('row', '', [node('cell', ''), node('cell', 'Order'), node('cell', 'Status')]),
+          node('row', '', [node('cell', ''), node('cell', 'CMD-1'), node('cell', 'Paid')]),
+          node('row', '', [node('cell', ''), node('cell', 'CMD-2'), node('cell', 'Pending')]),
+          node('row', ''),
+        ]),
+      );
+      const provider = new ScriptedProvider([
+        { assertions: { [KEY]: { check: 'textEquals', target: { role: 'cell', within: { role: 'row', nth: 2 } }, value: 'CMD-2' } } },
+      ]);
+
+      const result = await generateResolution({ scenario, driver: new Aligned(icons), provider, attemptsPerStep: 1 });
+
+      assert.equal(
+        result.steps[0]?.rejections[0],
+        `assertion "${KEY}": true on your tree, but replay reads 3 element(s) matching this target where your tree shows 2: ${LEFT_OUT}. Use { "contains": "..." } on a stable part of the name, or "within" a named container, not "nth", which counts them too. Never put the value itself in "name"`,
+      );
+    });
+
+    it('donne alors la position de la cible, que la réponse suit', async () => {
+      const accounts = (): UINode =>
+        page(node('list', 'Accounts', [node('listitem', 'Checking', [node('text', '42'), unnamed()]), node('listitem', '')]));
+      const within = { role: 'listitem', nth: 0 };
+      const provider = new ScriptedProvider([reading({ role: 'text', within }), reading({ role: 'text', nth: 0, within })]);
+
+      const result = await generateResolution({ scenario: capturing, driver: new Aligned(accounts()), provider });
+
+      assert.equal(result.status, 'complete');
+      assert.deepEqual(result.steps[0]?.rejections, [
+        `capture "reference": found on your tree, but replay reads 2 element(s) matching this target where your tree shows 1: ${LEFT_OUT}. Use { "contains": "..." } on a stable part of the name, or "within" a named container; if its name is only data, keep this target and add "nth": 0 to it, where replay finds the element you see. Never put the value itself in "name"`,
+      ]);
+      const report = await runScenario({ scenario: capturing, resolution: result.resolution, driver: new Aligned(accounts()), assertTimeoutMs: 0 });
+      assert.equal(report.status, 'passed');
     });
   });
 
@@ -893,6 +1085,65 @@ describe('deux arbres, sur un vrai navigateur', () => {
         result.steps[0]?.rejections[0] ?? '',
         /^assertion "the second order is pending": true on your tree, but replay reads 4 element\(s\) matching its "within" where your tree shows 3: it also counts/,
       );
+    } finally {
+      await driver.dispose();
+    }
+  });
+
+  it('refuse un absent dont le conteneur, par sa position, est un autre au rejeu, même vrai sur les deux', async () => {
+    // Une liste vide mais visible, que l'élagage retire : la liste 1 du modèle est la 2 du rejeu.
+    const lists = (cart: string) =>
+      `<ul style="height:20px"></ul><ul aria-label="Wishlist"><li>Chair</li><li>Desk</li></ul><ul>${cart}</ul>`;
+    const { driver, url } = await open(lists('<li>Table</li><li>Sofa</li>'));
+    const bugged = await open(lists('<li>Table</li><li>Sofa</li><li>Lamp</li>'));
+    try {
+      const KEY = 'the cart holds no lamp';
+      const scenario = expecting(KEY);
+      const absent = (within: Record<string, unknown>) => ({
+        assertions: { [KEY]: { check: 'absent', target: { role: 'listitem', name: 'Lamp', within } } },
+      });
+      const provider = new ScriptedProvider([
+        absent({ role: 'list', nth: 1 }),
+        // Une position que seul l'arbre complet porte : vraie à vide sur l'arbre du modèle.
+        absent({ role: 'list', nth: 2 }),
+        { assertions: { [KEY]: { check: 'absent', target: { role: 'listitem', name: 'Lamp' } } } },
+      ]);
+
+      const result = await generateResolution({ scenario, driver, provider, baseUrl: url });
+
+      assert.equal(result.status, 'complete');
+      const LISTS = `assertion "${KEY}": true on your tree, but replay reads 3 element(s) matching its "within" where your tree shows 2: ${LEFT_OUT}`;
+      assert.deepEqual(result.steps[0]?.rejections, [LISTS, LISTS]);
+      const report = await runScenario({ scenario, resolution: result.resolution, driver: bugged.driver, baseUrl: bugged.url, assertTimeoutMs: 0 });
+      assert.equal(report.status, 'failed');
+    } finally {
+      await driver.dispose();
+      await bugged.driver.dispose();
+    }
+  });
+
+  it('accepte, par un pilote qui délègue au pilote web, une position suivie d\'une icône sur une valeur vivante', async () => {
+    const { driver: inner, url } = await open(
+      '<div role="group" aria-label="Timer"><span>Elapsed</span> <span id="t">0</span> ' +
+        '<span style="display:inline-block;width:12px;height:12px"></span></div>' +
+        '<script>let reads = 0; const t = document.getElementById("t");' +
+        't.getBoundingClientRect = function () { reads += 1; this.firstChild.data = String(reads); return Element.prototype.getBoundingClientRect.call(this); };</script>',
+    );
+    const driver = new Delegating(inner);
+    try {
+      const scenario = parseScenario('id: t\ntitle: t\nsteps:\n  - id: s1\n    capture:\n      elapsed: the elapsed time\n');
+      const from = { role: 'text', nth: 1, within: { role: 'group', name: 'Timer' } };
+      // Sur l'arbre complet, l'icône est le troisième texte : la position lit la valeur sur les deux.
+      const full = (await inner.observe()).root;
+      assert.equal(matchNodes(full, { role: 'text', within: { role: 'group', name: 'Timer' } }).length, 3);
+      const provider = new ScriptedProvider([{ captures: { elapsed: { from, extract: 'number' } } }]);
+
+      const result = await generateResolution({ scenario, driver, provider, baseUrl: url, attemptsPerStep: 1 });
+
+      assert.equal(result.status, 'complete', JSON.stringify(result.steps));
+      assert.ok(result.steps[0]?.warnings.some((warning) => warning.includes('changed between the two reads')));
+      const report = await runScenario({ scenario, resolution: result.resolution, driver, baseUrl: url, assertTimeoutMs: 0 });
+      assert.equal(report.status, 'passed');
     } finally {
       await driver.dispose();
     }

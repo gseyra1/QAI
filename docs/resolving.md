@@ -88,12 +88,14 @@ elements (an icon, a spacer, an empty cell) still match a target: judged on the
 pruned tree alone, `{ "role": "text" }` was unique while resolving and ambiguous
 on replay, on identical data. So every capture and assertion is verified on both:
 
-- A capture's target must be unique on both trees and read the same element. The
-  value is read on the full tree.
-- An assertion must hold on both. With a built-in driver it must also read the same
-  elements: the first match for `textEquals`, `numberEquals` and `stateIs`, every
-  match otherwise. A position, `nth` or a container's, that lands on another
-  element at replay is refused.
+- A capture's target must be unique on both trees and read the same element: the
+  same node with a built-in driver, and with a third-party driver as described
+  below. The value kept is the one on the model's tree.
+- An assertion must hold on both, each tree with the capture values it read. With
+  a built-in driver it must also read the same elements: the first match for
+  `textEquals`, `numberEquals` and `stateIs`, every match otherwise. A position,
+  `nth` or a container's, that lands on another element at replay is refused, even
+  for `absent` when neither container holds the element.
 - Nothing the pruned tree alone would refuse is accepted.
 
 What goes back to the model never quotes what only the full tree holds. A check
@@ -103,9 +105,10 @@ for the target, how many lines of the model's tree show one (an element inside a
 invisible container is not printed, so it is not counted), and to use a stable
 part of the name or `within` a named container, never the value itself (measured
 with DeepSeek: told only to target by name, the model copied the value into the
-name). When a container's position is the cause, the counts are the containers'.
-When the model's tree shows one element and a position reads it on both trees,
-that position is given. A position counted on the full tree alone is never
+name). When a container's position lands on another container, the counts are
+the containers'; a container its position designates on both trees is not
+blamed, even when replay counts more of them after it. When the model's tree
+shows one element and a position reads it on both trees, that position is given. A position counted on the full tree alone is never
 suggested, since the pruned tree would read another element and refuse it. A
 capture target missing or ambiguous on the model's own tree keeps the single
 "target not found or ambiguous" message: splitting the two made the model copy
@@ -118,14 +121,21 @@ value-located and self-comparison warnings are computed on both and merged.
 
 Built-in drivers are read once per look: the pruned tree is derived from the full
 one by the same rules (`src/driver/prune.ts`), which tests check on every demo page,
-every iOS source fixture, and a page and a source that hold every role. A
+every iOS source fixture, a page and a source that hold every role, and a root
+with a single unnamed child. A
 third-party driver is read twice, pruned then full, with no ids in common. The
 `interactiveOnly` contract only removes nodes, so a target with no `nth`, unique on
 both reads, is the same element, and so is a position when every level that
 carries an `nth` counts as many candidates on both reads. A capture is accepted
-when its two reads give the same value or designate the same element that way. A
-value that changed between the reads (a timer) keeps the one on the model's tree,
-and the step reports a warning: the value is live. When replay counts no more
+when its two reads give the same value or designate the same element that way.
+Otherwise the screen is looked at once more, with no model call and nothing sent:
+a value that moved on both reads since the first look is live, and is accepted as the pruned tree
+alone would accept it; one that did not move on both is another element, and is
+refused. A live value (a timer) keeps the one on the model's tree, and the step
+reports a warning. The full read's value is used on the full tree only, so an
+assertion comparing it with another display of the same value reads both in one
+read, as replay does. With a third-party driver, an assertion only has to hold on
+both reads: positions are not compared across them. When replay counts no more
 elements than the model's tree at any level, the refusal says the screen changed
 between two reads. A verification-only step no longer reads the screen before it.
 
