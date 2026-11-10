@@ -387,6 +387,8 @@ const IOS_MATRIX = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>${iosElemen
       iosElement('StaticText', 'label="Named header" traits="Header"'),
       // Un identifiant sans nom lisible : l'emballage s'efface et le lègue à son enfant.
       iosElement('Other', 'name=" " label=""', iosElement('StaticText', 'label="Inherits an id"')),
+      // …sauf si l'enfant a le sien : il le garde.
+      iosElement('Other', 'name=" " label=""', iosElement('Button', 'name="own-id" label="Keeps its id"')),
     ].join(''),
   ),
 )}</AppiumAUT>`;
@@ -422,6 +424,7 @@ describe('l\'arbre élagué tiré du complet, sur les sources iOS', () => {
     assert.ok(['button', 'tab', 'heading', 'textbox', 'switch', 'list', 'listitem', 'group'].every((role) => roles.has(role as UINode['role'])));
     assert.ok(nodes.some((each) => each.testId === ' ' && each.name === '' && each.children.length === 1));
     assert.ok(everyNode(pruned).some((each) => each.name === 'Inherits an id' && each.testId === ' '));
+    assert.ok(everyNode(pruned).some((each) => each.name === 'Keeps its id' && each.testId === 'own-id'));
     assertSame([{ derived: pruneInteractive(full), pruned }], 'matrix');
   });
 

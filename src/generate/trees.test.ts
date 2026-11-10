@@ -274,6 +274,22 @@ describe('deux arbres, pilote intégré : une assertion tient sur les deux et y 
     assert.deepEqual(result.steps[0]?.rejections, [assertionElsewhere(KEY)]);
   });
 
+  it('refuse numberEquals et stateIs dont la première correspondance est une autre au rejeu, même vrais sur les deux', async () => {
+    const checked = { state: { visible: true, checked: true } };
+    const cases: Array<[string, UINode, Check]> = [
+      ['le solde vaut 42', page(node('group', '42'), node('text', '42')), { check: 'numberEquals', target: { name: '42' }, value: '42' }],
+      ['la case est cochée', page(node('group', 'Agree', [], checked), node('checkbox', 'Agree', [], checked)), { check: 'stateIs', target: { name: 'Agree' }, value: 'checked' }],
+    ];
+    for (const [KEY, screen, check] of cases) {
+      const provider = new ScriptedProvider([{ assertions: { [KEY]: check } }]);
+
+      const result = await generateResolution({ scenario: expecting(KEY), driver: new BuiltIn(screen), provider, attemptsPerStep: 1 });
+
+      assert.equal(result.status, 'incomplete', check.check);
+      assert.deepEqual(result.steps[0]?.rejections, [assertionElsewhere(KEY)], check.check);
+    }
+  });
+
   it('refuse visible dont l\'élément montré n\'est pas lu au rejeu, même vrai sur les deux', async () => {
     const KEY = 'le solde est affiché';
     const driver = new BuiltIn(page(drawer(node('text', '42'), node('text', 'Ancien')), unnamed(), node('text', '42')));

@@ -130,10 +130,12 @@ resolved as before: one `interactiveOnly` read per look, and every capture and
 assertion judged on that tree alone, with the same messages and warnings.
 
 One limit follows: a bare value whose only identity is its position, after an
-unnamed element, has no `nth` that reads it on both trees. Without a named
-container around it, the step fails at resolving (it used to resolve, then fail
-on replay), or the model puts the value in the name, which is reported as a
-capture located by its own value.
+unnamed element of the same role, has no `nth` that reads it on both trees. It
+resolves only if it is the first element of its role in some named container
+(or in the page) with no unnamed one before it; a named container that also
+holds the unnamed element does not help. Otherwise the step fails at resolving
+(it used to resolve, then fail on replay), or the model puts the value in the
+name, which is reported as a capture located by its own value.
 
 ## What is not left to the prompt
 
