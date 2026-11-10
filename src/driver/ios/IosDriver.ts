@@ -13,6 +13,7 @@ import type {
   UISnapshot,
 } from '../types.ts';
 import { matchNodes } from '../../engine/match.ts';
+import { prunesLikeBuiltIns } from '../prune.ts';
 import { AppiumClient, AppiumError, ELEMENT_KEY } from './appium.ts';
 import { capabilitiesProblem } from './capabilities.ts';
 import { isAppPath, isBundleId, isUdid } from './entry.ts';
@@ -151,6 +152,11 @@ function flatten(node: UINode): UINode[] {
 }
 
 export class IosDriver implements Driver {
+  // `readScreen` élague comme `pruneInteractive` : la génération lit une fois.
+  static {
+    prunesLikeBuiltIns(IosDriver.prototype.observe);
+  }
+
   readonly platform: Platform = 'ios';
   /**
    * `hover` n'existe pas sous le doigt : le refus est déclaré ici pour que le
